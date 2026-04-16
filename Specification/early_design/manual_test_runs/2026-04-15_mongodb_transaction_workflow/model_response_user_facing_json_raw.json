@@ -1,0 +1,30 @@
+{
+  "id": "ofGd29T-4YNCb4-9ecd0e5a7c1041d0",
+  "object": "chat.completion",
+  "created": 1776278195,
+  "model": "openai/gpt-oss-20b",
+  "metadata": {
+    "weight_version": "default"
+  },
+  "prompt": [],
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\n  \"problem_understanding\": \"You are experiencing lost writes, inconsistent reads, and confusing retry behavior under load and network issues, despite believing your transactional guarantees are strong enough.\",\n  \"similar_practical_context\": \"MongoDB 4.2.6 Jepsen analysis: transactional anomalies, weak defaults, and snapshot-isolation gaps.\",\n  \"active_hypotheses\": [\n    \"The application is relying on database or collection defaults that do not apply inside transactions, so the effective read and write concerns are weaker than expected.\",\n    \"The anomalies are caused by weaker-than-expected isolation semantics that can surface even without network faults.\",\n    \"Retry logic is misinterpreting ambiguous transaction errors, leading to duplicate or missing effects.\"\n  ],\n  \"first_check\": \"Inspect the effective read concern and write concern attached to each transaction in the failing path, rather than assuming the client or collection defaults are inherited.\",\n  \"result_interpretation\": {\n    \"supports_primary_if\": \"Anomalies appear when the transaction's read/write concerns are not explicitly set, indicating that the defaults are weaker than assumed.\",\n    \"supports_competing_if\": \"Anomalies persist even when the transaction's read/write concerns are explicitly set to strong values, suggesting that isolation semantics themselves may be weaker than expected.\",\n    \"inconclusive_if\": null\n  },\n  \"competing_interpretation\": \"Weaker-than-expected isolation semantics can cause inconsistent reads and lost writes even in the absence of network faults.\"\n}",
+        "tool_calls": [],
+        "reasoning": "We need to produce JSON with fields. Problem understanding: summarize user problem. Similar practical context: reference matched incident card. Active hypotheses: 2-3 short sentences. First check: one check. Result interpretation: supports_primary_if, supports_competing_if, inconclusive_if. Competing interpretation: maybe MySQL case. Use evidence: first check hint says set read/write concern per transaction. Alternative context says anomalies can come from weaker isolation even without faults. So competing interpretation: weaker-than-expected isolation semantics without faults. So primary: weak defaults in transactions due to not setting per transaction. Competing: weaker isolation semantics. Provide first check: inspect effective read/write concern per transaction. Result interpretation: if read/write concerns are explicitly set and anomalies persist, supports competing. If not set and anomalies appear, supports primary. Inconclusive if concerns set but anomalies still appear? Actually that would support primary? Wait: If concerns set explicitly and anomalies still appear, that suggests other issue like retry bug or network partition. But primary hypothesis is weak defaults. If concerns set, primary less likely. So supports_primary_if: anomalies appear when concerns not set. Supports_competing_if: anomalies persist even when concerns set. Inconclusive_if: concerns set but anomalies appear only under load? Might be ambiguous. We'll set inconclusive_if null? But we can mention if concerns set but anomalies still appear, still ambiguous. But we can keep inconclusive_if null. Provide competing_interpretation: \"Weaker-than-expected isolation semantics causing anomalies even without faults.\" Good.\n\nLet's craft JSON."
+      },
+      "logprobs": null,
+      "finish_reason": "stop",
+      "seed": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 2105,
+    "total_tokens": 2739,
+    "completion_tokens": 634,
+    "reasoning_tokens": 0
+  }
+}

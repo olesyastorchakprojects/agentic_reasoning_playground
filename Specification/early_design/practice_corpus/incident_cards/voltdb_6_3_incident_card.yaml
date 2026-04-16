@@ -1,0 +1,99 @@
+case_id: voltdb_6_3_jepsen_2016_07_12
+title: "VoltDB 6.3 Jepsen analysis: stale reads, dirty reads, and lost updates despite strict-serializable claims"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/voltdb-6-3.pdf"
+vendor_or_project: "VoltDB"
+system_type: "distributed in-memory SQL database"
+version_tested: "6.3"
+report_date: "2016-07-12"
+
+short_summary: >
+  Jepsen found that VoltDB 6.3, despite strong strict-serializability claims, exhibited stale reads, dirty reads,
+  and lost updates due to internal optimizations and bugs. Fixes were made available in version 6.4.
+
+canonical_symptoms:
+  - "stale_reads"
+  - "dirty_reads"
+  - "lost_updates"
+  - "strict_serializability_claim_gap"
+affected_components:
+  - "single_partition_initiator"
+  - "read_path_bypassing_spi"
+  - "multipartition_execution"
+failure_mode_candidates:
+  - "read_path_optimization_breaks_real_time_order"
+  - "strict_serializability_gap"
+  - "lost_update_under_buggy_execution"
+observed_phases:
+  - "single_partition_transaction_testing"
+  - "read_path_testing"
+  - "fault_window_observation"
+
+incident_phases:
+  - phase_name: "read_and_transaction_testing"
+    context: >
+      Jepsen tested whether VoltDB's strong strict-serializability claims held for partitioned transactions and reads.
+    symptoms:
+      - "reads can come from the past"
+      - "dirty reads and lost updates appear"
+    user_visible_impact:
+      - "clients may not see their prior writes as promised"
+    observations:
+      - "strict-serializable claims did not hold under tested behaviors"
+    actions_taken:
+      - "run linearizability-oriented tests over single rows and partitions"
+    changes_after_actions:
+      - "problem narrows to mismatch between claims and read/optimization behavior"
+
+turning_points:
+  - "Optimizations intended to improve performance undermined the stronger safety claim."
+
+candidate_explanations:
+  - "Read path bypass or optimization violates real-time visibility expectations."
+  - "Claimed strict serializability was stronger than the actual behavior."
+
+diagnostic_patterns:
+  - >
+    system claims strict serializability by default -> read or update path optimization bypasses ordering mechanism ->
+    stale or dirty observations appear
+
+discriminating_checks:
+  - question: "Are stale reads coming from an optimized read path that bypasses the main sequencing path?"
+    why: "Separates protocol-level issues from storage corruption."
+
+expected_observations:
+  - observation: "Reads do not consistently reflect prior writes in real-time order."
+    effect: "Strengthen read_path_optimization_breaks_real_time_order."
+
+investigation_steps:
+  - "Test read-after-write guarantees directly."
+  - "Inspect whether read-only paths bypass the main transaction sequencer."
+  - "Compare claimed strict serializability to observed real-time visibility."
+
+root_cause_summary: >
+  VoltDB 6.3 had implementation and optimization issues that broke the stronger real-time guarantees implied
+  by its strict-serializable positioning, leading to stale reads, dirty reads, and lost updates.
+
+reasoning_summary: >
+  This is another strong example of why the most important question is often not 'what does the product claim'
+  but 'which execution path actually enforces the guarantee.'
+
+mitigations_or_workarounds:
+  - "Upgrade to 6.4 or later."
+  - "Test read-after-write guarantees explicitly in production-like workloads."
+
+prevention_or_design_followups:
+  - "Audit optimized read paths against claimed consistency semantics."
+
+claimed_guarantees:
+  - "strict serializability"
+violated_properties:
+  - "strict serializability"
+resolution_status: "fixed_in_6_4"
+fix_versions:
+  - "6.4"
+confidence_notes:
+  - "High confidence in top-level anomaly set and fix version from the intro."
+source_refs:
+  - "practice_corpus/raw/voltdb-6-3.pdf"

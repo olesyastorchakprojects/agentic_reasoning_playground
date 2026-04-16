@@ -1,0 +1,20 @@
+{
+  "updated_problem_understanding": "Under load and network issues, writes disappear, reads are inconsistent, and retries are confusing, likely because transaction-level read/write concerns are inherited from weaker client defaults.",
+  "hypothesis_update": {
+    "strengthened": [
+      "The application is relying on database or collection defaults that do not apply inside transactions, so the effective read and write concerns are weaker than expected."
+    ],
+    "weakened": [],
+    "still_active": [
+      "The anomalies are caused by weaker-than-expected isolation semantics that can surface even without network faults.",
+      "Retry logic is misinterpreting ambiguous transaction errors, leading to duplicate or missing effects."
+    ]
+  },
+  "next_check": "Log or query the actual readConcern and writeConcern values being applied to the transaction at runtime to confirm what defaults are in effect.",
+  "why_this_check_now": "Since the transaction-level concerns were not set explicitly, we need to verify the inherited defaults to determine if they are indeed weaker than expected.",
+  "result_interpretation": {
+    "supports_primary_if": "Anomalies appear when the transaction's read/write concerns are weak, confirming that the inherited defaults are insufficient.",
+    "supports_competing_if": "Anomalies persist even when the transaction's read/write concerns are explicitly set to strong values, suggesting isolation semantics may be weaker.",
+    "inconclusive_if": null
+  }
+}

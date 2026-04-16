@@ -1,0 +1,101 @@
+case_id: postgresql_12_3_jepsen_2020_06_12
+title: "PostgreSQL 12.3 Jepsen analysis: serializable mode admits G2-item and repeatable read is snapshot isolation"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/postgresql-12.3.pdf"
+vendor_or_project: "PostgreSQL"
+system_type: "single-node relational database"
+version_tested: "12.3"
+report_date: "2020-06-12"
+
+short_summary: >
+  Jepsen found that PostgreSQL 12.3 could exhibit G2-item even under serializable isolation during normal
+  operation, while repeatable read behaved as snapshot isolation and therefore allowed anomalies users might
+  not expect from the name.
+
+canonical_symptoms:
+  - "serializable_mode_violation"
+  - "g2_item"
+  - "repeatable_read_surprise"
+affected_components:
+  - "serializable_isolation"
+  - "repeatable_read_isolation"
+  - "ssi_implementation"
+failure_mode_candidates:
+  - "serializable_bug"
+  - "snapshot_isolation_under_repeatable_read"
+observed_phases:
+  - "normal_operation"
+  - "formal_isolation_testing"
+
+incident_phases:
+  - phase_name: "formal_isolation_testing"
+    context: >
+      Jepsen used Elle on PostgreSQL 12.3 under normal operation, without needing crashes to reproduce its main findings.
+    symptoms:
+      - "G2-item under serializable mode"
+      - "frequent G2-item under repeatable read"
+    user_visible_impact:
+      - "applications depending on serializable guarantees may still see anomalies"
+    observations:
+      - "repeatable read is actually snapshot isolation"
+      - "serializable mode bug was patchable"
+    actions_taken:
+      - "exercise append/read transaction histories and analyze with Elle"
+    changes_after_actions:
+      - "problem separates into a real serializable bug plus long-standing naming/documentation ambiguity"
+
+turning_points:
+  - "Repeatable read behaving like snapshot isolation is surprising but longstanding."
+  - "Serializable mode allowing G2-item is the truly wrong behavior."
+
+candidate_explanations:
+  - "One issue is documentation/semantics mismatch around repeatable read."
+  - "A separate bug affects serializable mode itself."
+
+diagnostic_patterns:
+  - >
+    healthy single-node database -> concurrency test under named strong isolation level -> anti-dependency cycle appears
+
+discriminating_checks:
+  - question: "Is the issue occurring under repeatable read or serializable?"
+    why: "Separates expected snapshot-isolation weakness from the serializable bug."
+
+expected_observations:
+  - observation: "Repeatable read histories remain compatible with snapshot isolation but not stronger repeatable-read expectations."
+    effect: "Strengthen snapshot_isolation_under_repeatable_read."
+  - observation: "Serializable histories still admit G2-item."
+    effect: "Strengthen serializable_bug."
+
+investigation_steps:
+  - "Separate naming/standards ambiguity from actual serializable-mode bugs."
+  - "Test application invariants under both repeatable read and serializable."
+
+root_cause_summary: >
+  PostgreSQL 12.3 had a concrete serializable-mode bug allowing G2-item, while repeatable read remained
+  snapshot isolation and therefore weaker than some users or formalizations might expect.
+
+reasoning_summary: >
+  This case is useful because it combines a true implementation defect with a semantics mismatch that can still
+  surprise application designers even after the bug is fixed.
+
+mitigations_or_workarounds:
+  - "Upgrade to a version including the serializable bug fix."
+  - "Do not interpret repeatable read as stronger than PostgreSQL actually documents and implements."
+
+prevention_or_design_followups:
+  - "Test invariants under engine-specific semantics rather than isolation-level names."
+
+claimed_guarantees:
+  - "serializable execution in serializable mode"
+  - "repeatable read naming suggests stronger protection than snapshot isolation"
+violated_properties:
+  - "serializability in serializable mode"
+resolution_status: "bug_fixed_and_behavior_documentation_needed"
+fix_versions:
+  - "Patch scheduled for next minor release after 2020-06-12"
+confidence_notes:
+  - "High confidence in the two-part structure: serializable bug plus repeatable-read semantics surprise."
+source_refs:
+  - "practice_corpus/raw/postgresql-12.3.pdf"
+

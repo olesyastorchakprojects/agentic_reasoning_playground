@@ -1,0 +1,16 @@
+{
+  "problem_understanding": "Under load and network issues, writes sometimes disappear, reads become inconsistent, and retrying transactions seems to worsen the situation, suggesting that the transactional guarantees in use may not be as strong as assumed.",
+  "similar_practical_context": "MongoDB 4.2.6 Jepsen analysis: transactional anomalies, weak defaults, and snapshot-isolation gaps - where wrapping workloads in transactions and introducing network partitions caused acknowledged writes to vanish and reads to skew, especially when transaction read/write concerns were not set explicitly.",
+  "active_hypotheses": [
+    "weak_default_read_write_concerns",
+    "transaction_retry_bug",
+    "weaker_than_expected_isolation_level"
+  ],
+  "first_check": "Inspect the effective read concern and write concern attached to each transaction in the failing path, rather than assuming client, database, or collection defaults are inherited.",
+  "result_interpretation": {
+    "supports_primary_if": "If the inspection reveals that transactions are using default (weaker) read/write concerns, this strengthens the explanation that weak defaults are causing the anomalies.",
+    "supports_competing_if": "If the inspection shows that each transaction explicitly sets strong read/write concerns yet anomalies persist, this keeps the weaker-than-expected isolation level interpretation alive.",
+    "inconclusive_if": null
+  },
+  "competing_interpretation": "Weaker-than-expected isolation semantics can produce inconsistent reads or lost writes even without network faults, as seen in some MySQL 8.0.34 deployments."
+}

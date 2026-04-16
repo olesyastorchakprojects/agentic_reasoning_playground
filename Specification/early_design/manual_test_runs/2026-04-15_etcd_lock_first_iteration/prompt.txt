@@ -1,0 +1,192 @@
+You are a diagnostic assistant for distributed systems incidents.
+
+Your task:
+Produce the first diagnostic response to the user.
+
+Do not give a final root cause.
+Do not list many checks.
+Give exactly one first discriminating check.
+
+Input contains:
+1. user_problem
+2. normalized_incident_query
+3. matched_incident_card
+4. incident_evidence_chunks
+5. theory_chunks
+6. policy_constraints
+
+Use the matched incident card as a structured precedent, not as proof.
+Use chunks as supporting evidence and nuance.
+If evidence is insufficient, say so.
+
+Your response must contain exactly these sections:
+
+1. Problem understanding
+Briefly restate how you understood the user's problem.
+
+2. Similar practical context
+Explain what kind of incident pattern this resembles.
+
+3. Active hypotheses
+List 2–3 hypotheses. Keep them tentative.
+
+4. First check
+Give exactly one next check.
+
+5. How to interpret the result
+Explain how different outcomes strengthen or weaken the hypotheses.
+
+Constraints:
+- Do not claim root cause.
+- Do not suggest destructive actions.
+- Do not overload the user with a checklist.
+- Prefer uncertainty-reducing reasoning.
+- Keep the answer compact.
+
+JSON context follows:
+{
+  "task": "draft_initial_diagnostic_response",
+  "user_problem": "We use a distributed lock in a coordination store to protect an external resource. The key-value store itself looks healthy, but sometimes two workers behave as if they both hold the lock, and after that we get conflicting updates.",
+  "normalized_incident_query": {
+    "recognized_canonical_symptoms": [
+      "unsafe_locking",
+      "duplicate_lock_holders",
+      "coordination_anomalies",
+      "lost_updates"
+    ],
+    "unmapped_user_symptoms": [
+      "two workers both behave as if they hold the same lock"
+    ],
+    "affected_components": [
+      "coordination_store",
+      "lock_service",
+      "external_resource",
+      "workers"
+    ],
+    "failure_mode_candidates": [
+      "lock_ownership_violation",
+      "stale_lock_after_lease_change",
+      "coordination_primitive_unsound_for_external_state"
+    ],
+    "observed_phase": [
+      "active_failure"
+    ],
+    "signals_present": [
+      "key_value_store_appears_healthy",
+      "conflicting_updates_after_lock_acquisition"
+    ],
+    "missing_signals": [
+      "lease_ttl",
+      "keepalive_behavior",
+      "lock_wait_path",
+      "fencing_token_usage"
+    ]
+  },
+  "matched_incident_card": {
+    "case_id": "etcd_3_4_3_jepsen_2020_01_30",
+    "source_name": "Jepsen",
+    "title": "etcd 3.4.3 Jepsen analysis: unsafe locks despite strong key-value guarantees",
+    "context": {
+      "systems": [
+        "etcd",
+        "external critical sections"
+      ],
+      "affected_components": [
+        "lock service",
+        "lease validation",
+        "key-value API",
+        "external critical sections"
+      ],
+      "initial_symptoms": [
+        "key-value API appears healthy",
+        "multiple clients may hold same lock",
+        "lost updates in lock-protected workflows"
+      ],
+      "later_symptoms": [
+        "mutex violations become easier under pauses, crashes, or partitions",
+        "conflicting updates to external state"
+      ],
+      "timeline_events": [
+        "baseline key-value behavior looks safe",
+        "lock contention testing reveals mutex violations",
+        "lease wait path worsens failures"
+      ]
+    },
+    "hypotheses": {
+      "failure_modes": [
+        "lock_ownership_violation",
+        "stale_lock_after_lease_change",
+        "missing_lease_validity_recheck",
+        "coordination_primitive_unsound_for_external_state"
+      ],
+      "hypothesis_signals": [
+        "key-value operations remain healthy while lock-protected workflow corrupts state",
+        "conflicting updates happen after lock acquisition",
+        "duplicate lock holders are possible"
+      ],
+      "hypothesis_updates": [
+        "healthy key-value behavior weakens ordinary kv inconsistency explanations",
+        "lock wait and lease interactions strengthen lock-unsafety explanations"
+      ],
+      "contributing_factors": [
+        "short lease TTLs",
+        "process pauses or delayed keepalives",
+        "using lock ownership to protect an external resource"
+      ]
+    },
+    "checks": {
+      "investigation_questions": [
+        "Are the observed inconsistencies happening in code paths protected by etcd locks rather than plain key-value transactions?",
+        "Do conflicting updates happen after lease expiry, delayed keepalive, or lock wait paths?",
+        "Is the protected resource outside etcd rather than etcd state itself?"
+      ],
+      "discriminating_checks": [
+        "Check whether conflicting updates cluster around lease expiry, delayed keepalive, or lock wait paths.",
+        "Check whether the failure disappears when the workflow uses transactional guards on etcd state itself."
+      ]
+    }
+  },
+  "incident_evidence_chunks": [
+    {
+      "role": "evidence_for_match",
+      "source_document_id": "etcd_3_4_3",
+      "chunk_tags": [
+        "chunk_role:symptom",
+        "chunk_role:failure_mode",
+        "chunk_role:root_cause"
+      ],
+      "text": "The report explicitly states that using etcd locks to protect an external resource is unsafe because multiple clients may hold the same lock simultaneously, even in healthy clusters, and this can produce lost updates when workflows rely on the mutex for safety."
+    },
+    {
+      "role": "first_check_hint",
+      "source_document_id": "etcd_3_4_3",
+      "chunk_tags": [
+        "chunk_role:investigation",
+        "chunk_role:diagnostic_step"
+      ],
+      "text": "Jepsen evaluated locks by acquiring leases, keeping them alive, and checking whether lock histories were linearizable, then used locks to protect updates to an external in-memory set to see whether lost updates still occurred."
+    },
+    {
+      "role": "supporting_explanation",
+      "source_document_id": "etcd_3_4_3",
+      "chunk_tags": [
+        "chunk_role:impact",
+        "chunk_role:lesson"
+      ],
+      "text": "The discussion separates healthy key-value semantics from unsafe lock semantics: etcd's key-value operations stayed strict serializable, but the lock primitive did not provide mutual exclusion and therefore could not safely protect external critical sections."
+    }
+  ],
+  "theory_chunks": [
+    {
+      "role": "mechanism_explanation",
+      "source_document_id": "understanding_distributed_systems_2e",
+      "text": "A lock service can coordinate access to shared state, but if the protected resource is external to the lock service, correctness often requires the storage system itself to reject stale actors or use fencing/version checks rather than trusting lock ownership alone."
+    }
+  ],
+  "policy_constraints": [
+    "do not claim final root cause",
+    "give exactly one first check",
+    "do not suggest destructive actions",
+    "state uncertainty"
+  ]
+}

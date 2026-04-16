@@ -1,0 +1,222 @@
+You are a diagnostic assistant for distributed systems incidents.
+
+Your task:
+Produce the first diagnostic response to the user as strict JSON.
+
+Do not give a final root cause.
+Do not list many checks.
+Give exactly one first discriminating check.
+
+Use the matched incident card as a structured precedent, not as proof.
+Use chunks as supporting evidence and nuance.
+Preserve uncertainty when more than one explanation is plausible.
+If the evidence pack contains `alternative_context`, preserve that uncertainty:
+- do not collapse too early to one incident story;
+- keep at least one plausible competing interpretation active when the match is not unique;
+- use the single first check to help separate the primary precedent from the competing interpretation.
+
+Important:
+- The JSON must still read like a direct answer to the user.
+- Write all field values in clear English suitable for direct display.
+- Do not use internal labels or enum-like identifiers in the output.
+- `active_hypotheses` must contain short English hypotheses, not shorthand tags.
+
+Return exactly one JSON object with this schema:
+{
+  "problem_understanding": string,
+  "similar_practical_context": string,
+  "active_hypotheses": string[],
+  "first_check": string,
+  "result_interpretation": {
+    "supports_primary_if": string,
+    "supports_competing_if": string,
+    "inconclusive_if": string | null
+  },
+  "competing_interpretation": string | null
+}
+
+Constraints:
+- `active_hypotheses` must contain 2 or 3 items.
+- `active_hypotheses` must be written as short user-facing English sentences.
+- `first_check` must be exactly one next check, not a checklist.
+- Do not claim a final diagnosis.
+- Do not suggest destructive actions.
+- Keep the answer compact.
+- If evidence is not unique, do not present the primary card as the only plausible explanation.
+- If a plausible competing interpretation exists, return it in `competing_interpretation`.
+- `competing_interpretation` must be one compact alternative explanation, not a second full answer.
+- If evidence is strongly one-sided, `competing_interpretation` may be `null`.
+- `result_interpretation.supports_primary_if` must explain which outcome strengthens the primary precedent.
+- `result_interpretation.supports_competing_if` must explain which outcome keeps the competing interpretation alive.
+- `result_interpretation.inconclusive_if` may be `null`, but if used it must describe a result that still does not separate the hypotheses well.
+- In `result_interpretation`, use uncertainty-preserving language.
+- Do not write that a result `confirms the root cause`, `proves the diagnosis`, or equivalent.
+- Prefer phrases like `strengthens the primary explanation` or `keeps the competing interpretation alive`.
+
+JSON context follows:
+{
+  "task": "draft_initial_diagnostic_response",
+  "user_problem": "We thought we were using strong enough transactional guarantees, but under load and especially during network issues we started seeing strange behavior: some writes seem to disappear, sometimes reads are inconsistent, and retries after errors seem to make things even more confusing.",
+  "normalized_incident_query": {
+    "recognized_canonical_symptoms": [
+      "lost_writes",
+      "read_skew",
+      "transaction_retry_anomalies",
+      "downgraded_transaction_safety"
+    ],
+    "unmapped_user_symptoms": [
+      "some writes seem to disappear",
+      "retries after errors seem to make things more confusing"
+    ],
+    "affected_components": [
+      "transaction_api",
+      "retry_mechanism",
+      "read_concern",
+      "write_concern",
+      "replication_or_partition_handling"
+    ],
+    "failure_mode_candidates": [
+      "weak_default_read_write_concerns",
+      "transaction_level_settings_override_safer_handles",
+      "transaction_retry_bug",
+      "network_partition_exposes_transactional_anomalies",
+      "weaker_than_expected_isolation_level"
+    ],
+    "observed_phase": [
+      "transaction_execution",
+      "fault_or_partition_window",
+      "retry_or_timeout_handling"
+    ],
+    "signals_present": [
+      "anomalies_under_load",
+      "anomalies_under_network_issues",
+      "reads_inconsistent",
+      "writes_seem_to_disappear",
+      "retry_path_involved"
+    ],
+    "missing_signals": [
+      "exact_database_engine",
+      "effective_transaction_level_read_write_settings",
+      "single_node_vs_cluster",
+      "whether_anomalies_appear_without_faults",
+      "exact_retry_error_codes"
+    ]
+  },
+  "matched_incident_card": {
+    "case_id": "mongodb_4_2_6_jepsen_2020_05_15",
+    "source_name": "Jepsen",
+    "title": "MongoDB 4.2.6 Jepsen analysis: transactional anomalies, weak defaults, and snapshot-isolation gaps",
+    "context": {
+      "systems": [
+        "MongoDB transactions",
+        "replicated or partitioned cluster behavior"
+      ],
+      "affected_components": [
+        "transaction API",
+        "read concern",
+        "write concern",
+        "session defaults",
+        "retry mechanism"
+      ],
+      "initial_symptoms": [
+        "strong-looking baseline behavior before transactional stress",
+        "users believe stronger safety settings are already applied"
+      ],
+      "later_symptoms": [
+        "lost acknowledged writes under partitions",
+        "read skew and duplicate effects",
+        "retries or ambiguous errors make transaction outcome harder to interpret"
+      ],
+      "timeline_events": [
+        "baseline looks acceptable under stronger single-operation settings",
+        "wrapping work in transactions weakens effective guarantees",
+        "faults and retries expose explicit anomalies"
+      ]
+    },
+    "hypotheses": {
+      "failure_modes": [
+        "weak_default_read_write_concerns",
+        "transaction_level_settings_override_safer_handles",
+        "transaction_retry_bug",
+        "network_partition_exposes_transactional_anomalies"
+      ],
+      "hypothesis_signals": [
+        "anomalies appear mainly when transactions, retries, or network faults are involved",
+        "writes seem acknowledged and later missing",
+        "inconsistent reads appear despite strong-sounding transactional assumptions"
+      ],
+      "hypothesis_updates": [
+        "if anomalies disappear when concerns are set explicitly on each transaction, configuration weakness is more likely than a deep engine failure",
+        "if duplicate or missing effects cluster around retries or ambiguous transaction errors, retry-path handling becomes much more likely"
+      ],
+      "contributing_factors": [
+        "assuming database or collection defaults carry into transactional contexts",
+        "network partitions or timeouts",
+        "retrying transactions after ambiguous errors"
+      ]
+    },
+    "checks": {
+      "investigation_questions": [
+        "Are read concern and write concern being set explicitly on each transaction, or only on the client handle, database, or collection?",
+        "Do anomalies appear only during partitions, retries, or timeouts, or also in healthy clusters?",
+        "Are duplicated or missing effects correlated with ambiguous transaction error handling?"
+      ],
+      "discriminating_checks": [
+        "Inspect the actual effective read concern and write concern attached to each transaction in the failing path, instead of relying on client, database, or collection defaults.",
+        "Correlate anomalies with retry-triggering error codes and network-partition windows."
+      ]
+    }
+  },
+  "incident_evidence_chunks": [
+    {
+      "role": "evidence_for_match",
+      "source_document_id": "mongodb_4_2_6",
+      "chunk_tags": [
+        "chunk_role:symptom",
+        "chunk_role:failure_mode",
+        "chunk_role:contributing_factor"
+      ],
+      "text": "MongoDB looked consistent enough under stronger single-operation settings, but once the workload was wrapped in transactions and network partitions were introduced, acknowledged writes could disappear and stronger-looking assumptions no longer held."
+    },
+    {
+      "role": "first_check_hint",
+      "source_document_id": "mongodb_4_2_6",
+      "chunk_tags": [
+        "chunk_role:lesson",
+        "chunk_role:mitigation"
+      ],
+      "text": "Settings applied at the database or collection level do not automatically transfer into transactional contexts; users must set read concern and write concern on each transaction directly."
+    },
+    {
+      "role": "supporting_explanation",
+      "source_document_id": "mongodb_4_2_6",
+      "chunk_tags": [
+        "chunk_role:contributing_factor",
+        "chunk_role:failure_mode"
+      ],
+      "text": "Under network failures, some MongoDB transaction errors that appear to indicate abort can still correspond to committed work, making retries and transaction outcome interpretation especially dangerous."
+    },
+    {
+      "role": "alternative_context",
+      "source_document_id": "mysql_8_0_34",
+      "chunk_tags": [
+        "chunk_role:symptom",
+        "chunk_role:failure_mode"
+      ],
+      "text": "Some transaction anomalies can also come from weaker-than-expected isolation semantics even without faults, so not every inconsistent read or missing effect should be immediately attributed to retries or partitions."
+    }
+  ],
+  "theory_chunks": [
+    {
+      "role": "mechanism_explanation",
+      "source_document_id": "understanding_distributed_systems_2e",
+      "text": "Concurrent transactions can show anomalies such as dirty reads, fuzzy reads, phantom reads, and lost updates when the effective isolation guarantees are weaker than the application assumes."
+    }
+  ],
+  "policy_constraints": [
+    "return strict JSON only",
+    "do not claim final root cause",
+    "give exactly one first check",
+    "state uncertainty when evidence is not unique"
+  ]
+}

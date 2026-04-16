@@ -1,0 +1,127 @@
+case_id: ravendb_6_0_2_jepsen_2024_01_31
+title: "RavenDB 6.0.2 Jepsen analysis: lost updates by default and fractured reads in transaction modes"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/ravendb-6.0.2.pdf"
+vendor_or_project: "RavenDB"
+system_type: "distributed document database"
+version_tested: "6.0.2"
+report_date: "2024-01-31"
+
+short_summary: >
+  Jepsen found surprising transactional behavior in RavenDB 6.0.2 even on healthy single-node clusters.
+  Transactions lost updates by default, and both optimistic concurrency and cluster-wide transaction modes
+  allowed fractured read, undermining claims around ACID and snapshot-style isolation.
+
+canonical_symptoms:
+  - "lost_updates_by_default"
+  - "fractured_read"
+  - "transaction_semantics_surprise"
+  - "healthy_single_node_anomaly"
+affected_components:
+  - "session_transaction_api"
+  - "optimistic_concurrency_mode"
+  - "cluster_wide_transactions"
+  - "replication_and_conflict_resolution"
+failure_mode_candidates:
+  - "lack_of_true_interactive_transactions"
+  - "fractured_read"
+  - "last_write_wins_conflict_exposure"
+  - "acquire_strong_consistency_only_in_narrow_modes"
+observed_phases:
+  - "default_transaction_path"
+  - "optimistic_concurrency_path"
+  - "cluster_wide_transaction_path"
+
+incident_phases:
+  - phase_name: "default_transaction_path"
+    context: >
+      RavenDB documentation suggested ACID transactions by default through session semantics, but Jepsen found lost updates even in healthy single-node cases.
+    symptoms:
+      - "lost updates by default"
+      - "session semantics weaker than expected"
+    user_visible_impact:
+      - "business-transaction assumptions can fail in ordinary operation"
+    observations:
+      - "default behavior did not preserve expected isolation"
+    actions_taken:
+      - "test session-based transaction model"
+    changes_after_actions:
+      - "attention shifts from marketing claims to actual transaction paths"
+
+  - phase_name: "stronger_modes_still_surprising"
+    context: >
+      Even optimistic concurrency and cluster-wide transaction modes still allowed fractured read.
+    symptoms:
+      - "fractured read under supposedly stronger modes"
+    user_visible_impact:
+      - "users can still observe a non-snapshot-consistent view"
+    observations:
+      - "stronger modes did not eliminate key anomalies"
+    actions_taken:
+      - "exercise optimistic and cluster-wide paths separately"
+    changes_after_actions:
+      - "problem becomes one of transaction-model design and semantics, not only defaults"
+
+turning_points:
+  - "Healthy single-node behavior was already surprising."
+  - "Cluster-wide mode improved some guarantees but still did not deliver the full expected model."
+
+candidate_explanations:
+  - "RavenDB's session API is weaker than users infer from 'single business transaction'."
+  - "Some paths may not offer true interactive transactions at all."
+  - "Fractured read is the key anomaly class to watch."
+
+diagnostic_patterns:
+  - >
+    application relies on RavenDB session semantics as ACID transaction -> healthy system still loses updates
+    or returns a fractured view across reads
+
+discriminating_checks:
+  - question: "Is the workload using default session behavior, optimistic concurrency, or cluster-wide transactions?"
+    why: "Separates anomaly exposure by mode."
+  - question: "Do reads observe inconsistent pieces of what should be one transactionally coherent state?"
+    why: "Tests for fractured read directly."
+
+expected_observations:
+  - observation: "Lost updates appear by default."
+    effect: "Strengthen lack_of_true_interactive_transactions."
+  - observation: "Fractured read persists even in stronger modes."
+    effect: "Strengthen fractured_read."
+
+investigation_steps:
+  - "Separate default, optimistic, and cluster-wide transaction paths."
+  - "Test for fractured read, not only obvious write loss."
+  - "Do not assume ACID marketing language maps to interactive serializable behavior."
+
+root_cause_summary: >
+  RavenDB 6.0.2 exposed weaker-than-expected transaction semantics across multiple modes, including lost updates
+  by default and fractured reads even in stronger transaction paths.
+
+reasoning_summary: >
+  This is a strong semantics-mismatch case: the practical danger comes from trusting the session abstraction more
+  than the underlying consistency model deserves.
+
+mitigations_or_workarounds:
+  - "Audit which transaction mode each workflow actually uses."
+  - "Do not assume default sessions provide ACID-style isolation."
+  - "Test fractured-read-sensitive workflows directly."
+
+prevention_or_design_followups:
+  - "Clarify documentation around which guarantees hold in each transaction path."
+  - "Prefer explicit modes and invariant tests over marketing language."
+
+claimed_guarantees:
+  - "ACID transactions"
+  - "Snapshot Isolation by default"
+violated_properties:
+  - "lost-update prevention by default"
+  - "snapshot-consistent reads across transaction modes"
+resolution_status: "behavior_characterized"
+fix_versions:
+  - "none recorded in reviewed excerpt"
+confidence_notes:
+  - "Medium confidence: card captures the primary anomaly story from the intro but not every mode nuance."
+source_refs:
+  - "practice_corpus/raw/ravendb-6.0.2.pdf"
+

@@ -1,0 +1,16 @@
+{
+  "problem_understanding": "Under heavy load and network disruptions, some writes appear to vanish, reads become inconsistent, and retry attempts seem to worsen the confusion.",
+  "similar_practical_context": "MongoDB 4.2.6 Jepsen analysis documented that when transaction defaults are weaker than expected, acknowledged writes can disappear and read skew can occur, especially under partitions.",
+  "active_hypotheses": [
+    "The transaction defaults (read and write concerns) are weaker than the application assumes, causing lost writes and read skew.",
+    "The underlying isolation level is weaker than expected, leading to anomalies even without network issues.",
+    "The retry mechanism is misinterpreting errors, adding to the apparent inconsistency."
+  ],
+  "first_check": "Inspect the actual effective read concern and write concern attached to each transaction in the failing path, instead of relying on client, database, or collection defaults.",
+  "result_interpretation": {
+    "supports_primary_if": "If the inspected concerns are weaker than the application expects, this strengthens the explanation that transaction defaults are the root cause.",
+    "supports_competing_if": "If the concerns are as expected but anomalies persist, this keeps the alternative explanation of weaker-than-expected isolation semantics alive.",
+    "inconclusive_if": null
+  },
+  "competing_interpretation": "Anomalies could stem from weaker-than-expected isolation semantics even without network issues, as observed in MySQL 8.0.34."
+}

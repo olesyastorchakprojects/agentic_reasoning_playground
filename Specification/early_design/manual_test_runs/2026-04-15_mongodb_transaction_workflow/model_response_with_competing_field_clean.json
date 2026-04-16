@@ -1,0 +1,12 @@
+{
+  "problem_understanding": "Under load and network disruptions, writes sometimes vanish, reads become inconsistent, and retrying transactions after errors adds confusion, suggesting that the transactional guarantees being relied upon are not behaving as expected.",
+  "similar_practical_context": "MongoDB 4.2.6 Jepsen analysis: transactional anomalies, weak defaults, and snapshot-isolation gaps.",
+  "active_hypotheses": [
+    "weak_default_read_write_concerns",
+    "network_partition_exposes_transactional_anomalies",
+    "transaction_retry_bug"
+  ],
+  "first_check": "Inspect the actual effective read concern and write concern attached to each transaction in the failing path, instead of relying on client, database, or collection defaults.",
+  "result_interpretation": "If the effective concerns are weaker than the application expects, the anomalies are likely due to weak defaults; if they are strong, the issues probably stem from network partitions or retry handling.",
+  "competing_interpretation": "Weaker-than-expected isolation semantics causing anomalies even without faults."
+}

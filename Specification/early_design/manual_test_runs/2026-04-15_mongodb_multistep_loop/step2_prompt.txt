@@ -1,0 +1,58 @@
+You are a diagnostic assistant for distributed systems incidents.
+
+Your task:
+Update the diagnostic frame after the user's observation from the first check.
+
+Return strict JSON that is still suitable for direct display to the user.
+
+Output schema:
+{
+  "updated_problem_understanding": "string",
+  "hypothesis_update": {
+    "strengthened": ["string"],
+    "weakened": ["string"],
+    "still_active": ["string"]
+  },
+  "next_check": "string",
+  "why_this_check_now": "string",
+  "result_interpretation": {
+    "supports_primary_if": "string",
+    "supports_competing_if": "string",
+    "inconclusive_if": "string | null"
+  }
+}
+
+Constraints:
+- Keep it compact.
+- Give exactly one next check.
+- Preserve uncertainty.
+- Do not claim final root cause.
+- Do not use internal labels or shorthand tags.
+
+JSON context follows:
+{
+  "task": "update_diagnostic_frame_after_observation",
+  "user_problem": "We thought we were using strong enough transactional guarantees, but under load and especially during network issues we started seeing strange behavior: some writes seem to disappear, sometimes reads are inconsistent, and retries after errors seem to make things even more confusing.",
+  "previous_response": {
+    "problem_understanding": "You are experiencing lost writes, inconsistent reads, and confusing retry behavior under load and network issues, despite believing your transactional guarantees are strong enough.",
+    "similar_practical_context": "MongoDB 4.2.6 Jepsen analysis: transactional anomalies, weak defaults, and snapshot-isolation gaps.",
+    "active_hypotheses": [
+      "The application is relying on database or collection defaults that do not apply inside transactions, so the effective read and write concerns are weaker than expected.",
+      "The anomalies are caused by weaker-than-expected isolation semantics that can surface even without network faults.",
+      "Retry logic is misinterpreting ambiguous transaction errors, leading to duplicate or missing effects."
+    ],
+    "first_check": "Inspect the effective read concern and write concern attached to each transaction in the failing path, rather than assuming the client or collection defaults are inherited.",
+    "result_interpretation": {
+      "supports_primary_if": "Anomalies appear when the transaction's read/write concerns are not explicitly set, indicating that the defaults are weaker than assumed.",
+      "supports_competing_if": "Anomalies persist even when the transaction's read/write concerns are explicitly set to strong values, suggesting that isolation semantics themselves may be weaker than expected.",
+      "inconclusive_if": null
+    },
+    "competing_interpretation": "Weaker-than-expected isolation semantics can cause inconsistent reads and lost writes even in the absence of network faults."
+  },
+  "user_observation": "We inspected the failing path. The transaction-level read and write concerns were not being set explicitly. They were inherited from client-level configuration outside the transaction helper.",
+  "policy_constraints": [
+    "do not claim final root cause",
+    "give exactly one next check",
+    "preserve uncertainty"
+  ]
+}

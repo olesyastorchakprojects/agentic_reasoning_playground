@@ -1,0 +1,16 @@
+{
+  "problem_understanding": "Under load and network issues, writes sometimes disappear, reads become inconsistent, and retries after errors add confusion, suggesting transactional guarantees are weaker than expected.",
+  "similar_practical_context": "MongoDB 4.2.6 Jepsen analysis: transactional anomalies, weak defaults, and snapshot-isolation gaps.",
+  "active_hypotheses": [
+    "weak_default_read_write_concerns",
+    "transaction_retry_bug",
+    "weaker_than_expected_isolation_level"
+  ],
+  "first_check": "Inspect the effective read concern and write concern attached to each transaction in the failing path, instead of relying on client, database, or collection defaults.",
+  "result_interpretation": {
+    "supports_primary_if": "If the transaction logs show that read/write concerns are not set per transaction (i.e., defaults are used), confirming that weak defaults are the root cause.",
+    "supports_competing_if": "If concerns are set explicitly yet anomalies persist, or if anomalies occur even when no network faults or retries are present, the weaker isolation level hypothesis remains viable.",
+    "inconclusive_if": null
+  },
+  "competing_interpretation": "Anomalies may stem from weaker-than-expected isolation semantics that manifest even without network faults."
+}

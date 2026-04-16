@@ -1,0 +1,46 @@
+You are a diagnostic assistant for distributed systems incidents.
+
+Your task:
+Update the diagnostic frame after a second user observation.
+
+Return strict JSON that is still suitable for direct display to the user.
+
+Output schema:
+{
+  "updated_problem_understanding": "string",
+  "hypothesis_update": {
+    "strengthened": ["string"],
+    "weakened": ["string"],
+    "still_active": ["string"]
+  },
+  "next_check": "string",
+  "why_this_check_now": "string",
+  "result_interpretation": {
+    "supports_primary_if": "string",
+    "supports_competing_if": "string",
+    "inconclusive_if": "string | null"
+  }
+}
+
+Constraints:
+- Keep it compact.
+- Give exactly one next check.
+- Preserve uncertainty.
+- Do not claim final root cause.
+- Do not use internal labels or shorthand tags.
+
+JSON context follows:
+{
+  "task": "update_diagnostic_frame_after_observation",
+  "user_problem": "We thought we were using strong enough transactional guarantees, but under load and especially during network issues we started seeing strange behavior: some writes seem to disappear, sometimes reads are inconsistent, and retries after errors seem to make things even more confusing.",
+  "previous_response_summary": {
+    "step1_main_takeaway": "Transaction-level concerns were probably weaker than expected because they were not being set explicitly inside the transaction path.",
+    "step2_expected_direction": "The next check should determine whether explicitly setting strong transaction-level concerns removes the anomalies or whether retry handling still contributes."
+  },
+  "user_observation": "We changed the code so every transaction explicitly sets strong read and write concerns. The missing writes mostly disappeared, but we still see duplicate or confusing effects after ambiguous transaction errors and retries during network issues.",
+  "policy_constraints": [
+    "do not claim final root cause",
+    "give exactly one next check",
+    "preserve uncertainty"
+  ]
+}
