@@ -63,9 +63,10 @@ Tokenizer-emitted token strings are normalized as follows:
 1. If `lowercase = true`, convert token to lowercase.
 2. Strip leading and trailing tokenizer marker characters used by the tokenizer
    artifact when they are not part of the lexical token itself.
-3. If token length is less than `min_token_length`, discard it.
-4. Discard tokens that contain no alphanumeric characters after normalization.
-5. Keep the remaining token byte-for-byte as the canonical token string.
+3. Discard tokenizer-emitted unknown placeholder tokens such as `[UNK]` and `unk`.
+4. If token length is less than `min_token_length`, discard it.
+5. Discard tokens that contain no alphanumeric characters after normalization.
+6. Keep the remaining token byte-for-byte as the canonical token string.
 
 No stemming, lemmatization, stop-word removal, accent folding, or synonym
 expansion is allowed in the current version.

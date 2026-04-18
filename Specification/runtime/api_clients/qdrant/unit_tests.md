@@ -22,6 +22,7 @@ The current Qdrant runtime API-client test scope covers:
 - `qdrant.cards_collection`
 - `qdrant.practice_chunks_collection`
 - `qdrant.theory_chunks_collection`
+- `qdrant.sparse_preparation`
 
 ## 3) Required Unit Tests By Module
 
@@ -164,3 +165,19 @@ Generated unit tests for `TheoryChunksCollection` implementations must include a
 - empty transport result returns `TheoryChunkSearchResult { hits: vec![] }`;
 - hybrid constructor fails when required sparse artifacts are absent or invalid;
 - hybrid constructor validates sparse-artifact compatibility according to the spec.
+
+### 3.7) `qdrant.sparse_preparation`
+
+Generated unit tests for `qdrant.sparse_preparation` must include all of the following cases:
+
+- loading sparse artifacts for `bag_of_words` succeeds when tokenizer config, tokenizer artifact, and vocabulary artifact are valid and mutually compatible;
+- loading sparse artifacts fails when tokenizer library is unsupported for the current runtime contract;
+- loading sparse artifacts for `bm25_like` fails when BM25 term-stats artifacts are missing when required by the effective sparse strategy;
+- loading sparse artifacts for `bm25_like` fails when BM25 term-stats metadata is incompatible with the expected vocabulary identity or collection identity according to the spec;
+- sparse tokenization discards unknown placeholder tokens such as `[UNK]` and `unk` during sparse query preparation;
+- sparse tokenization preserves configured normalization semantics used by the runtime sparse text-space contract;
+- `bag_of_words` sparse-vector construction deduplicates repeated retained vocabulary terms;
+- sparse-vector construction sorts emitted token ids ascending and keeps `indices` and `values` aligned;
+- sparse-vector construction fails when no canonical tokens remain after normalization and vocabulary lookup;
+- `bm25_like` sparse-vector construction succeeds when compatible corpus statistics are available and produces a non-empty aligned sparse vector;
+- `bm25_like` sparse-vector construction fails when required corpus statistics are absent.

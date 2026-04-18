@@ -9,17 +9,14 @@ Any component that builds sparse vectors with
 `sparse.strategy.kind = "bm25_like"` must use this document as the source of
 truth.
 
-## Required Library
+## Implementation Constraint
 
-For the current version, `bm25_like` must use the following libraries:
+For the current version, `bm25_like` must preserve the weighting semantics
+defined by this document and by the related BM25 term-stats contract.
 
-- Python ingest implementation:
-  - `rank_bm25`
-- Rust runtime retrieval implementation:
-  - `bm25`
-
-The implementation must not replace these with a handwritten BM25-like formula
-while still claiming conformance to the current `bm25_like` strategy contract.
+The implementation may be handwritten or library-backed, as long as the
+resulting weighting behavior remains conformant to the current `bm25_like`
+strategy contract.
 
 ## Strategy Meaning
 
@@ -70,8 +67,8 @@ Implementation contract for `bm25_like`:
    - document count
    - average document length
    - document frequency per token id
-8. compute BM25-like weight for each retained token id using the required
-   language-appropriate BM25 library and current config parameters;
+8. compute BM25-like weight for each retained token id using the configured
+   BM25-like formula and current config parameters;
 9. sort resulting token ids ascending;
 10. emit aligned `indices` and `values`.
 
