@@ -100,3 +100,29 @@ Rules:
 - retry is implementation-owned;
 - retry settings are passed to the constructor and held for the full client lifetime;
 - request validation must happen before retry-capable HTTP execution begins.
+
+## 8) Settings Propagation Rules
+
+The shared `ModelClient` boundary must not depend directly on the whole
+crate-level `Settings` object.
+
+The current crate-level source settings path is:
+- `Settings.model.transport`
+
+Propagation rules:
+- future bootstrap or a parent runtime module may pattern-match on `Settings.model.transport` in order to choose the active concrete model client;
+- when `Settings.model.transport = ModelTransportSettings::Ollama(settings)`, a future parent runtime module may construct:
+  - `OllamaModelClientConfig`
+  - `RetryPolicyConfig`
+  - `OllamaModelClient`
+- when `Settings.model.transport = ModelTransportSettings::Together(settings)`, a future parent runtime module may construct:
+  - `TogetherModelClientConfig`
+  - `RetryPolicyConfig`
+  - `TogetherModelClient`
+- the selected concrete client may then be stored behind the shared `ModelClient` trait boundary once such a higher-level runtime wiring layer is added.
+
+Rules:
+- the shared `ModelClient` trait must stay provider-neutral;
+- leaf concrete model clients must not depend on crate-level `Settings`;
+- the current minimal crate-skeleton stage does not require production code that performs this wiring;
+- whenever a higher-level runtime layer performs this wiring, conversion from crate-level settings slices into model-client-owned config types must happen before concrete client construction.

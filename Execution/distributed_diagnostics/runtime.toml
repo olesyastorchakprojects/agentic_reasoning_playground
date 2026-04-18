@@ -1,0 +1,57 @@
+[runtime]
+config_version = "v1"
+
+[retrieval.cards]
+top_k = 8
+score_threshold = 0.2
+
+[retrieval.cards.embedding_retry]
+max_attempts = 3
+backoff = "exponential"
+
+[retrieval.cards.qdrant_retry]
+max_attempts = 3
+backoff = "exponential"
+
+[retrieval.practice]
+top_k = 12
+score_threshold = 0.2
+
+[retrieval.practice.embedding_retry]
+max_attempts = 3
+backoff = "exponential"
+
+[retrieval.practice.qdrant_retry]
+max_attempts = 3
+backoff = "exponential"
+
+[retrieval.theory]
+top_k = 12
+score_threshold = 0.2
+
+[retrieval.theory.embedding_retry]
+max_attempts = 3
+backoff = "exponential"
+
+[retrieval.theory.qdrant_retry]
+max_attempts = 3
+backoff = "exponential"
+
+[model]
+transport_kind = "ollama"
+
+[model.ollama]
+model_name = "qwen2.5:1.5b-instruct"
+timeout_sec = 120
+
+[model.ollama.retry]
+max_attempts = 3
+backoff = "exponential"
+
+[model.together]
+model_name = "openai/gpt-oss-20b"
+timeout_sec = 120
+
+[model.together.retry]
+max_attempts = 3
+backoff = "exponential"

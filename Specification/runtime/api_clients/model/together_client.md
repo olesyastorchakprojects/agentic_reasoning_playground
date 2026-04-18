@@ -1,9 +1,9 @@
 ## 1) Purpose / Scope
 
-`openai_client` defines the concrete OpenAI-compatible runtime model client.
+`together_client` defines the concrete Together-compatible runtime model client.
 
 This module:
-- implements `ModelClient` for OpenAI-compatible chat-completions APIs;
+- implements `ModelClient` for Together-compatible chat-completions APIs;
 - validates request shape;
 - constructs the outbound HTTP JSON body;
 - executes the provider call with retry behavior;
@@ -29,9 +29,9 @@ This module depends on:
 The generated Rust module must define:
 
 ```rust
-pub struct OpenAiModelClient {
+pub struct TogetherModelClient {
     http_client: reqwest::Client,
-    config: OpenAiModelClientConfig,
+    config: TogetherModelClientConfig,
     retry_policy: RetryPolicyConfig,
 }
 ```
@@ -39,9 +39,9 @@ pub struct OpenAiModelClient {
 The generated Rust module must expose:
 
 ```rust
-impl OpenAiModelClient {
+impl TogetherModelClient {
     pub fn new(
-        config: OpenAiModelClientConfig,
+        config: TogetherModelClientConfig,
         retry_policy: RetryPolicyConfig,
     ) -> Result<Self, ModelClientError>;
 }
@@ -54,6 +54,8 @@ Constructor rules:
 - `retry_policy.max_attempts == 0` is invalid constructor config;
 - created HTTP client and validated config must be held for the full lifetime of the client;
 - `generate()` must not recreate the HTTP client per request.
+- when a future higher-level runtime layer wires this client from crate-level settings, it must construct `TogetherModelClientConfig` and `RetryPolicyConfig` from `Settings.model.transport` before calling this constructor;
+- this leaf constructor must not accept crate-level `Settings` directly.
 
 ## 4) Trait Implementation
 
@@ -61,7 +63,7 @@ The module must implement:
 
 ```rust
 #[async_trait::async_trait]
-impl ModelClient for OpenAiModelClient {
+impl ModelClient for TogetherModelClient {
     async fn generate(
         &self,
         request: &ModelGenerationRequest,
@@ -77,8 +79,8 @@ Implementation rules:
 
 ## 5) External Service Usage
 
-Base OpenAI-compatible API:
-- `https://api.openai.com/`
+Base Together-compatible API:
+- `https://api.together.xyz/`
 
 The current version must use:
 - `POST /v1/chat/completions`
@@ -97,7 +99,7 @@ The request JSON body may contain:
 - `response_format`
 
 Message mapping rules:
-- each `ModelMessage` must map to one OpenAI chat message object;
+- each `ModelMessage` must map to one Together-compatible chat message object;
 - `ModelMessageRole::System` maps to `"system"`;
 - `ModelMessageRole::User` maps to `"user"`;
 - `ModelMessageRole::Assistant` maps to `"assistant"`;
@@ -182,7 +184,7 @@ Expected successful response shape:
 Rules:
 - the provider response must be a JSON object;
 - the response must contain `choices` as a non-empty array;
-- `choices` is the OpenAI-compatible list of completion candidates returned for one request;
+- `choices` is the Together-compatible list of completion candidates returned for one request;
 - the implementation must use `choices[0]` as the canonical assistant answer and ignore any later choices;
 - the first choice must contain `message`;
 - if `message.role` is present, it is transport metadata only and must be ignored by response validation and mapping;
@@ -204,4 +206,4 @@ Finish-reason mapping rules:
 This module must not:
 - parse assistant content into domain-specific JSON structs;
 - mutate or reorder validated messages;
-- expose raw OpenAI wire structs at module boundary.
+- expose raw Together wire structs at module boundary.

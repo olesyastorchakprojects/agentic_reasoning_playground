@@ -1,0 +1,256 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "execution/schemas/ingest_config.schema.json",
+  "title": "Distributed Diagnostics Ingest Config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pipeline",
+    "embedding",
+    "qdrant"
+  ],
+  "properties": {
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ingest_config_version"
+      ],
+      "properties": {
+        "ingest_config_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "embedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model"
+      ],
+      "properties": {
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "dimension"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "dimension": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    },
+    "qdrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collections"
+      ],
+      "properties": {
+        "collections": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cards",
+            "practice",
+            "theory"
+          ],
+          "properties": {
+            "cards": { "$ref": "#/$defs/logical_collection" },
+            "practice": { "$ref": "#/$defs/logical_collection" },
+            "theory": { "$ref": "#/$defs/logical_collection" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "dense_collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "vector_name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vector_name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "tokenizer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "library",
+        "source"
+      ],
+      "properties": {
+        "library": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "preprocessing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "lowercase",
+        "min_token_length"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lowercase": {
+          "type": "boolean"
+        },
+        "min_token_length": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "bag_of_words": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "query"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "bm25_like": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "query",
+        "k1",
+        "b",
+        "idf_smoothing"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1
+        },
+        "k1": {
+          "type": "number"
+        },
+        "b": {
+          "type": "number"
+        },
+        "idf_smoothing": {
+          "type": "number"
+        }
+      }
+    },
+    "hybrid_collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dense_vector_name",
+        "sparse_vector_name",
+        "sparse"
+      ],
+      "properties": {
+        "dense_vector_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sparse_vector_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sparse": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "strategy",
+            "tokenizer",
+            "preprocessing",
+            "bag_of_words",
+            "bm25_like"
+          ],
+          "properties": {
+            "strategy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "kind"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": ["bag_of_words", "bm25_like"]
+                }
+              }
+            },
+            "tokenizer": { "$ref": "#/$defs/tokenizer" },
+            "preprocessing": { "$ref": "#/$defs/preprocessing" },
+            "bag_of_words": { "$ref": "#/$defs/bag_of_words" },
+            "bm25_like": { "$ref": "#/$defs/bm25_like" }
+          }
+        }
+      }
+    },
+    "logical_collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "corpus_version",
+        "dense",
+        "hybrid"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["dense", "hybrid"]
+        },
+        "corpus_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dense": { "$ref": "#/$defs/dense_collection" },
+        "hybrid": { "$ref": "#/$defs/hybrid_collection" }
+      }
+    }
+  }
+}

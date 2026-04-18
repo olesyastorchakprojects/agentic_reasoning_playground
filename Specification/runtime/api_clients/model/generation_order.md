@@ -17,7 +17,7 @@ The current runtime model-client specification set consists of:
 - `Specification/runtime/api_clients/client_common.md`
 - `Specification/runtime/api_clients/model/shared_types.md`
 - `Specification/runtime/api_clients/model/model_client.md`
-- `Specification/runtime/api_clients/model/openai_client.md`
+- `Specification/runtime/api_clients/model/together_client.md`
 - `Specification/runtime/api_clients/model/ollama_client.md`
 - `Specification/runtime/unit_tests_common.md`
 - `Specification/runtime/api_clients/model/unit_tests.md`
@@ -28,7 +28,7 @@ The runtime model-client slice should generate code for these Rust files first:
 
 - `distributed_diagnostics::api_clients::model::shared_types`
 - `distributed_diagnostics::api_clients::model::model_client`
-- `distributed_diagnostics::api_clients::model::openai_client`
+- `distributed_diagnostics::api_clients::model::together_client`
 - `distributed_diagnostics::api_clients::model::ollama_client`
 
 The current version does not require generating dedicated Rust modules from:
@@ -44,7 +44,7 @@ Generate in this order:
 
 1. `shared_types`
 2. `model_client`
-3. `openai_client`
+3. `together_client`
 4. `ollama_client`
 5. generate unit tests for all modules above using:
    - `Specification/runtime/unit_tests_common.md`

@@ -1,0 +1,111 @@
+[pipeline]
+ingest_config_version = "v1"
+
+[embedding.model]
+name = "qwen3-embedding:0.6b"
+dimension = 1024
+
+[qdrant.collections.cards]
+kind = "hybrid"
+corpus_version = "v1"
+
+[qdrant.collections.cards.dense]
+name = "todo_cards_dense_collection"
+vector_name = "dense"
+
+[qdrant.collections.cards.hybrid]
+dense_vector_name = "dense"
+sparse_vector_name = "sparse"
+
+[qdrant.collections.cards.hybrid.sparse.strategy]
+kind = "bm25_like"
+
+[qdrant.collections.cards.hybrid.sparse.tokenizer]
+library = "tokenizers"
+source = "Qwen/Qwen3-Embedding-0.6B"
+
+[qdrant.collections.cards.hybrid.sparse.preprocessing]
+kind = "basic_word_v1"
+lowercase = true
+min_token_length = 2
+
+[qdrant.collections.cards.hybrid.sparse.bag_of_words]
+name = "todo_cards_hybrid_bow_collection"
+query = "binary_presence"
+
+[qdrant.collections.cards.hybrid.sparse.bm25_like]
+name = "todo_cards_hybrid_bm25_collection"
+query = "bm25_query_weight"
+k1 = 1.2
+b = 0.75
+idf_smoothing = 0.5
+
+[qdrant.collections.practice]
+kind = "hybrid"
+corpus_version = "v1"
+
+[qdrant.collections.practice.dense]
+name = "todo_practice_dense_collection"
+vector_name = "dense"
+
+[qdrant.collections.practice.hybrid]
+dense_vector_name = "dense"
+sparse_vector_name = "sparse"
+
+[qdrant.collections.practice.hybrid.sparse.strategy]
+kind = "bm25_like"
+
+[qdrant.collections.practice.hybrid.sparse.tokenizer]
+library = "tokenizers"
+source = "Qwen/Qwen3-Embedding-0.6B"
+
+[qdrant.collections.practice.hybrid.sparse.preprocessing]
+kind = "basic_word_v1"
+lowercase = true
+min_token_length = 2
+
+[qdrant.collections.practice.hybrid.sparse.bag_of_words]
+name = "todo_practice_hybrid_bow_collection"
+query = "binary_presence"
+
+[qdrant.collections.practice.hybrid.sparse.bm25_like]
+name = "practice_failure_cases_amazon_rds_pg_bm25"
+query = "bm25_query_weight"
+k1 = 1.2
+b = 0.75
+idf_smoothing = 0.5
+
+[qdrant.collections.theory]
+kind = "hybrid"
+corpus_version = "v1"
+
+[qdrant.collections.theory.dense]
+name = "chunks_dense_qwen3"
+vector_name = "dense"
+
+[qdrant.collections.theory.hybrid]
+dense_vector_name = "dense"
+sparse_vector_name = "sparse"
+
+[qdrant.collections.theory.hybrid.sparse.strategy]
+kind = "bm25_like"
+
+[qdrant.collections.theory.hybrid.sparse.tokenizer]
+library = "tokenizers"
+source = "Qwen/Qwen3-Embedding-0.6B"
+
+[qdrant.collections.theory.hybrid.sparse.preprocessing]
+kind = "basic_word_v1"
+lowercase = true
+min_token_length = 2
+
+[qdrant.collections.theory.hybrid.sparse.bag_of_words]
+name = "chunks_hybrid_structural_qwen3_bow"
+query = "binary_presence"
+
+[qdrant.collections.theory.hybrid.sparse.bm25_like]
+name = "chunks_hybrid_structural_qwen3_bm25"
+query = "bm25_query_weight"
+k1 = 1.2
+b = 0.75
+idf_smoothing = 0.5

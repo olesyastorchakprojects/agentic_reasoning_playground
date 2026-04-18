@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "execution/schemas/runtime_config.schema.json",
+  "title": "Distributed Diagnostics Runtime Config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "runtime",
+    "retrieval",
+    "model",
+    "observability"
+  ],
+  "properties": {
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config_version"
+      ],
+      "properties": {
+        "config_version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cards",
+        "practice",
+        "theory"
+      ],
+      "properties": {
+        "cards": { "$ref": "#/$defs/collection_retrieval" },
+        "practice": { "$ref": "#/$defs/collection_retrieval" },
+        "theory": { "$ref": "#/$defs/collection_retrieval" }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "transport_kind",
+        "ollama",
+        "together"
+      ],
+      "properties": {
+        "transport_kind": {
+          "type": "string",
+          "enum": ["ollama", "together"]
+        },
+        "ollama": { "$ref": "#/$defs/model_transport" },
+        "together": { "$ref": "#/$defs/model_transport" }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tracing_enabled",
+        "metrics_enabled",
+        "trace_batch_scheduled_delay_ms",
+        "metrics_export_interval_ms"
+      ],
+      "properties": {
+        "tracing_enabled": {
+          "type": "boolean"
+        },
+        "metrics_enabled": {
+          "type": "boolean"
+        },
+        "trace_batch_scheduled_delay_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "metrics_export_interval_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_attempts",
+        "backoff"
+      ],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "backoff": {
+          "type": "string",
+          "enum": ["exponential"]
+        }
+      }
+    },
+    "collection_retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "top_k",
+        "score_threshold",
+        "embedding_retry",
+        "qdrant_retry"
+      ],
+      "properties": {
+        "top_k": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "score_threshold": {
+          "type": "number"
+        },
+        "embedding_retry": { "$ref": "#/$defs/retry" },
+        "qdrant_retry": { "$ref": "#/$defs/retry" }
+      }
+    },
+    "model_transport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_name",
+        "timeout_sec",
+        "retry"
+      ],
+      "properties": {
+        "model_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeout_sec": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retry": { "$ref": "#/$defs/retry" }
+      }
+    }
+  }
+}

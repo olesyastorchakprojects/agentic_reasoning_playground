@@ -14,14 +14,14 @@ This document must be read together with:
 
 The current runtime model-client test scope covers:
 
-- `model.openai_client`
+- `model.together_client`
 - `model.ollama_client`
 
 ## 3) Required Unit Tests By Module
 
-### 3.1) `model.openai_client`
+### 3.1) `model.together_client`
 
-Generated unit tests for `OpenAiModelClient` must include all of the following cases:
+Generated unit tests for `TogetherModelClient` must include all of the following cases:
 
 - constructor fails when `base_url` has invalid runtime shape according to the spec;
 - constructor fails when `api_key` is empty;
@@ -42,7 +42,7 @@ Generated unit tests for `OpenAiModelClient` must include all of the following c
 - when response `choices` contains more than one element, the implementation uses the first choice as the canonical answer;
 - response `message.role` is ignored during response validation and mapping;
 - successful response maps `message.content` into `ModelGenerationResponse.content`;
-- successful response maps OpenAI usage fields into token counts;
+- successful response maps Together-compatible usage fields into token counts;
 - successful response maps known finish reasons correctly;
 - unknown finish reason maps to `ModelFinishReason::Unknown(...)`;
 - HTTP or network transport failure returns the exact `ModelClientError::Transport` variant;

@@ -52,6 +52,9 @@ Required shared types:
 - `Bm25TermStatsArtifact`
 - `Embedding`
 - `SparseVector`
+- `CollectionRetrievalSettings`
+- `CollectionSettings`
+- `EmbeddingModelSettings`
 
 Source of truth:
 - `Specification/runtime/api_clients/qdrant/shared_types.md`
@@ -133,6 +136,7 @@ Field rules:
 - shared collection-construction and lifecycle rules must follow `Specification/runtime/api_clients/qdrant/collections_common.md`;
 - when `SparseStrategyConfig::BagOfWords` is selected, `bm25_term_stats` must be `None`;
 - when `SparseStrategyConfig::Bm25Like` is selected, `bm25_term_stats` must be `Some(...)`.
+- concrete implementations must not store crate-level `Settings` directly.
 
 ### 6.1 Dense Implementation Responsibility
 
@@ -176,16 +180,17 @@ Hybrid implementation validation rules:
 
 ## 7) Constructor Rules
 
-Each concrete implementation must expose a public constructor.
+Each concrete implementation must expose a public constructor that accepts typed
+settings slices rather than raw TOML values or whole crate-level `Settings`.
 
 Dense constructor:
 
 ```rust
 impl QdrantTheoryChunksCollectionDense {
-    pub fn new(
-        embedding: EmbeddingConfig,
-        qdrant: QdrantDenseCollectionConfig,
-        retry_policy: RetryPolicyConfig,
+    pub fn from_settings(
+        collection_settings: &CollectionRetrievalSettings,
+        embedding_model: &EmbeddingModelSettings,
+        qdrant_url: &str,
     ) -> Result<Self, TheoryChunksCollectionError>;
 }
 ```
@@ -194,11 +199,10 @@ Hybrid constructor:
 
 ```rust
 impl QdrantTheoryChunksCollectionHybrid {
-    pub fn new(
-        embedding: EmbeddingConfig,
-        qdrant: QdrantHybridCollectionConfig,
-        sparse: SparseStrategyConfig,
-        retry_policy: RetryPolicyConfig,
+    pub fn from_settings(
+        collection_settings: &CollectionRetrievalSettings,
+        embedding_model: &EmbeddingModelSettings,
+        qdrant_url: &str,
     ) -> Result<Self, TheoryChunksCollectionError>;
 }
 ```
@@ -206,6 +210,25 @@ impl QdrantTheoryChunksCollectionHybrid {
 Constructor rules:
 - shared constructor rules must follow `Specification/runtime/api_clients/qdrant/collections_common.md`;
 - constructors must reject invalid configuration through `TheoryChunksCollectionError`.
+- constructors must not accept raw TOML maps or the whole crate-level `Settings` object;
+- constructors must convert the supplied typed settings slices into:
+  - `EmbeddingConfig`
+  - `QdrantDenseCollectionConfig` or `QdrantHybridCollectionConfig`
+  - `SparseStrategyConfig` when the active collection variant is hybrid
+- dense constructor path requires:
+  - `collection_settings.collection = CollectionSettings::Dense(...)`
+- hybrid constructor path requires:
+  - `collection_settings.collection = CollectionSettings::Hybrid(...)`
+- a mismatch between the expected constructor path and the supplied collection variant must fail with `TheoryChunksCollectionError::InvalidRequest`.
+
+Required settings-slice field mappings:
+- `EmbeddingConfig.base_url` <- `embedding_model.url`
+- `EmbeddingConfig.model_name` <- `embedding_model.name`
+- `EmbeddingConfig.embedding_dimension` <- `embedding_model.dimension`
+- embedding retry policy <- `collection_settings.embedding_retry`
+- Qdrant retry policy <- `collection_settings.qdrant_retry`
+- dense or hybrid Qdrant config fields <- `collection_settings.collection`
+- `qdrant_url` <- `Settings.retrieval.qdrant_url`
 
 Hybrid sparse-artifact compatibility rules:
 - loaded `SparseVocabularyArtifact` must be compatible with the configured sparse-vocabulary artifact path;

@@ -19,7 +19,7 @@ The current PostgreSQL incident-card test scope covers:
 
 Generated unit tests for `PostgresIncidentCardStore` must include all of the following cases:
 
-- `new(...)` fails when `postgres_url` is empty;
+- `new(...)` fails when `PostgresIncidentCardStoreConfig.postgres_url` is empty;
 - `put_card(...)` validates the input card before any database write is attempted;
 - schema-invalid `IncidentCard` fails with the exact `IncidentCardStoreError::Validation` variant;
 - serialization failure while constructing storage payload fails with the exact `IncidentCardStoreError::Serialization` variant;

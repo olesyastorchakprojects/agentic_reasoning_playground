@@ -23,13 +23,17 @@ This module does not:
 The generated Rust module must define:
 
 ```rust
+pub struct PostgresIncidentCardStoreConfig {
+    pub postgres_url: String,
+}
+
 pub struct PostgresIncidentCardStore {
     pool: sqlx::PgPool,
 }
 
 impl PostgresIncidentCardStore {
     pub async fn new(
-        postgres_url: &str,
+        config: PostgresIncidentCardStoreConfig,
     ) -> Result<Self, IncidentCardStoreError>;
 
     pub async fn put_card(
@@ -59,7 +63,7 @@ Interface rules:
 
 Input types:
 - `IncidentCard`
-- `postgres_url`
+- `PostgresIncidentCardStoreConfig`
 - `case_id`
 - `case_ids`
 
@@ -83,13 +87,35 @@ Type rules:
 ## 4) Configuration Usage
 
 The current version requires only:
-- `postgres_url`
+- `PostgresIncidentCardStoreConfig.postgres_url`
 
 Configuration rules:
-- `postgres_url` must be non-empty after trimming;
+- `PostgresIncidentCardStoreConfig.postgres_url` must be non-empty after trimming;
 - the module must not read raw TOML directly;
 - the module must not read raw config maps directly;
 - the module must not read raw environment variables directly.
+- the leaf store constructor must not accept crate-level `Settings` directly.
+
+## 4.1) Settings Propagation Rules
+
+The crate-level runtime settings model must not be used directly as the config type
+for `PostgresIncidentCardStore`.
+
+The current crate-level source settings path is:
+- `Settings.postgres`
+
+The full crate-level source field path is:
+- `Settings.postgres.url`
+
+Propagation rules:
+- a future bootstrap or parent runtime module may construct `PostgresIncidentCardStoreConfig` before calling `PostgresIncidentCardStore::new(...)`;
+- `PostgresIncidentCardStoreConfig.postgres_url` <- `Settings.postgres.url`
+
+Rules:
+- `PostgresIncidentCardStore` must receive only `PostgresIncidentCardStoreConfig`;
+- `PostgresIncidentCardStore` must not depend on crate-level `Settings`;
+- the current minimal crate-skeleton stage does not require production code that performs this wiring;
+- whenever a higher-level runtime layer performs this wiring, conversion from crate-level settings slices into module-owned config types must happen before store construction.
 
 ## 5) Validation Rules Before Write
 
@@ -203,3 +229,4 @@ Implementation rules:
 - SQL statements must use parameterized queries;
 - PostgreSQL constraints are the final storage-level enforcement layer, not the first validation layer;
 - `sqlx::PgPool` must be created once in `new(...)` and reused for the store lifetime.
+- `new(...)` must validate `PostgresIncidentCardStoreConfig.postgres_url` before attempting pool creation.

@@ -54,6 +54,8 @@ Constructor rules:
 - `retry_policy.max_attempts == 0` is invalid constructor config;
 - created HTTP client and validated config must be held for the full lifetime of the client;
 - `generate()` must not recreate the HTTP client per request.
+- when a future higher-level runtime layer wires this client from crate-level settings, it must construct `OllamaModelClientConfig` and `RetryPolicyConfig` from `Settings.model.transport` before calling this constructor;
+- this leaf constructor must not accept crate-level `Settings` directly.
 
 ## 4) Trait Implementation
 
@@ -125,7 +127,7 @@ Outbound request example:
 
 ```json
 {
-  "model": "openai/gpt-oss-20b",
+  "model": "qwen3:8b",
   "messages": [
     { "role": "system", "content": "You are a diagnostic assistant." },
     { "role": "user", "content": "The service recovered, then metadata latency spiked." }
@@ -144,7 +146,7 @@ Outbound request example:
 
 ```json
 {
-  "model": "openai/gpt-oss-20b",
+  "model": "qwen3:8b",
   "messages": [
     { "role": "system", "content": "Return valid JSON only." },
     { "role": "user", "content": "Summarize the likely incident class." }

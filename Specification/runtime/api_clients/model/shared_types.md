@@ -4,7 +4,7 @@ This document defines the shared public types for runtime model clients.
 
 It applies to:
 - `model_client.md`
-- `openai_client.md`
+- `together_client.md`
 - `ollama_client.md`
 
 This document is the source of truth for:
@@ -12,7 +12,8 @@ This document is the source of truth for:
 - shared message and response-mode types;
 - shared retry-config type shape for model clients;
 - shared finish-reason types;
-- concrete client config types.
+- concrete client config types;
+- how crate-level model settings are converted into model-client-owned config types.
 
 ## 2) Shared Types
 
@@ -67,7 +68,7 @@ pub struct ModelGenerationResponse {
     pub total_tokens: Option<usize>,
 }
 
-pub struct OpenAiModelClientConfig {
+pub struct TogetherModelClientConfig {
     pub base_url: url::Url,
     pub api_key: String,
     pub model_name: String,
@@ -94,7 +95,7 @@ Rules:
 - `ModelGenerationResponse.content` must be non-empty after trimming;
 - when all three token counts are present, `total_tokens` must equal `prompt_tokens + completion_tokens`;
 - when only some token counts are available from the provider, missing values must remain `None`;
-- `OpenAiModelClientConfig.base_url` and `OllamaModelClientConfig.base_url` must be valid `http` or `https` URLs;
+- `TogetherModelClientConfig.base_url` and `OllamaModelClientConfig.base_url` must be valid `http` or `https` URLs;
 - config URLs must contain a host;
 - config URLs must not contain query parameters;
 - config URLs must not contain fragments;
@@ -111,3 +112,41 @@ Rules:
 - shared types in this file must be imported by concrete model-client modules, not redefined there;
 - provider-specific wire request and wire response structs must remain private to concrete client modules;
 - this file defines the model-client boundary types only, not raw HTTP payload shapes.
+
+## 5) Settings Propagation Rules
+
+The crate-level runtime settings model must not be used directly as the config type
+for leaf model clients.
+
+Leaf model clients must instead receive module-owned config types from this file.
+
+The current crate-level source settings are the active variants of:
+- `Settings.model.transport`
+
+The full crate-level settings paths are:
+- `Settings.model.transport = ModelTransportSettings::Ollama(OllamaModelSettings)`
+- `Settings.model.transport = ModelTransportSettings::Together(TogetherModelSettings)`
+
+Propagation rules:
+- when `Settings.model.transport = ModelTransportSettings::Ollama(settings)`, future bootstrap or a parent runtime module may construct:
+  - `OllamaModelClientConfig`
+  - `RetryPolicyConfig`
+- when `Settings.model.transport = ModelTransportSettings::Together(settings)`, future bootstrap or a parent runtime module may construct:
+  - `TogetherModelClientConfig`
+  - `RetryPolicyConfig`
+
+Required field mappings:
+- `OllamaModelClientConfig.base_url` <- `OllamaModelSettings.url`
+- `OllamaModelClientConfig.model_name` <- `OllamaModelSettings.model_name`
+- `OllamaModelClientConfig.timeout_sec` <- `OllamaModelSettings.timeout_sec`
+- `RetryPolicyConfig` for Ollama model clients <- `OllamaModelSettings.retry`
+- `TogetherModelClientConfig.base_url` <- `TogetherModelSettings.url`
+- `TogetherModelClientConfig.api_key` <- `TogetherModelSettings.api_key`
+- `TogetherModelClientConfig.model_name` <- `TogetherModelSettings.model_name`
+- `TogetherModelClientConfig.timeout_sec` <- `TogetherModelSettings.timeout_sec`
+- `RetryPolicyConfig` for Together model clients <- `TogetherModelSettings.retry`
+
+Rules:
+- leaf model clients must not depend on crate-level `Settings`;
+- leaf model clients must not read environment variables directly;
+- whenever a higher-level runtime module later wires concrete model clients from crate-level settings, conversion from typed settings slices into module-owned config types must happen before concrete model clients are constructed.

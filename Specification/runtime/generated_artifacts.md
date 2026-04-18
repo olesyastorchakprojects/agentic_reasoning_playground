@@ -24,6 +24,10 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/lib.rs`
 - `src/main.rs`
 - `src/errors/mod.rs`
+- `src/config/mod.rs`
+- `src/config/settings.rs`
+- `src/config/load.rs`
+- `src/observability/mod.rs`
 - `src/api_clients/mod.rs`
 - `src/api_clients/model/mod.rs`
 - `src/api_clients/qdrant/mod.rs`
@@ -36,7 +40,12 @@ Artifact rules:
 - `Cargo.toml` must define a valid Rust crate for the generated runtime skeleton;
 - `src/lib.rs` must declare the crate-level public module tree;
 - `src/main.rs` must exist as the binary entrypoint;
+- `src/main.rs` must implement the crate-level CLI contract from `Specification/runtime/runtime.md` and delegate config loading to library-owned code;
 - `src/errors/mod.rs` must define the parent error hierarchy required by `Specification/runtime/runtime.md`;
+- `src/config/mod.rs` must expose the parent config interface and parent config error type;
+- `src/config/settings.rs` must define the resolved typed settings model required by `Specification/runtime/runtime.md`;
+- `src/config/load.rs` must define config loading and merge logic for runtime TOML, ingest TOML, and environment values;
+- `src/observability/mod.rs` must define startup-time observability initialization from typed settings;
 - parent `mod.rs` files are required structural artifacts and must not be omitted;
 - the current crate-level artifact contract is structural and compositional, not behavior-duplicating.
 
@@ -74,6 +83,8 @@ Current delegated child specifications:
 Rules:
 - the generated crate must include both library and binary entrypoints;
 - the generated crate must include a dedicated parent `errors` module;
+- the generated crate must include a dedicated parent `config` module;
+- the generated crate must include a dedicated parent `observability` module;
 - the generated crate must include a dedicated parent `api_clients` module;
 - the generated crate must include a dedicated `utils` module for reusable crate-wide helpers;
 - `src/api_clients/mod.rs` must expose the delegated root child module `embedding_client` in addition to the structural child subtrees;
@@ -81,6 +92,7 @@ Rules:
 - the generated Qdrant subtree may include internal decomposition files such as `sparse_preparation.rs` when required by child specifications;
 - structural parent modules must remain present even when most child implementation files are generated from delegated child specifications;
 - structural files must contain real Rust module declarations and required parent-level definitions, not placeholders or TODO-only stubs.
+- the generated config subtree must contain executable config-loading code and typed settings definitions rather than prose placeholders.
 
 ## 6) Generation Completion Rule
 
@@ -94,5 +106,4 @@ Generation for the runtime crate skeleton is complete only when all of the follo
 - required structural files are real Rust source files rather than comments, placeholders, or empty stubs;
 - when active specifications require executable Rust tests for the generated crate-level files, those tests must be generated in the same generation pass as the implementation;
 - required tests for generated crate-level files must not be replaced by comments, TODO markers, prose, pseudo-tests, placeholder test functions without assertions, or empty test modules;
-- crate-level test requirements are inactive until a dedicated runtime test specification is added;
 - the generated crate must be valid Rust and pass `cargo check`.
