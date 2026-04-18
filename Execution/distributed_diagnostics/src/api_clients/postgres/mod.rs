@@ -4,7 +4,7 @@ use thiserror::Error;
 
 pub use incident_card_store::{
     DiscriminatingCheck, ExpectedObservation, IncidentCard, IncidentCardStoreError,
-    IncidentPhase, PostgresIncidentCardStore,
+    IncidentPhase, PostgresIncidentCardStore, PostgresIncidentCardStoreConfig,
 };
 
 #[derive(Debug, Error)]

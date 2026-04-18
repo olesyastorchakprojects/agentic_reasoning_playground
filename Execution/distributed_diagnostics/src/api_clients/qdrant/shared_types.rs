@@ -1,4 +1,8 @@
 pub use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
+use crate::config::{
+    CollectionRetrievalSettings, CollectionSettings, EmbeddingModelSettings,
+    SparseStrategySettings,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -232,4 +236,82 @@ pub enum QdrantPayloadValue {
 pub struct RawQdrantHit {
     pub score: f32,
     pub payload: RawQdrantPayload,
+}
+
+pub(crate) fn embedding_config_from_settings(
+    settings: &EmbeddingModelSettings,
+) -> Result<EmbeddingConfig, String> {
+    let base_url = url::Url::parse(&settings.url)
+        .map_err(|e| format!("invalid embedding model url: {e}"))?;
+
+    Ok(EmbeddingConfig {
+        base_url,
+        model_name: settings.name.clone(),
+        embedding_dimension: settings.dimension,
+    })
+}
+
+pub(crate) fn dense_collection_config_from_settings(
+    collection_settings: &CollectionRetrievalSettings,
+    qdrant_url: &str,
+) -> Result<QdrantDenseCollectionConfig, String> {
+    let qdrant_base_url =
+        url::Url::parse(qdrant_url).map_err(|e| format!("invalid qdrant url: {e}"))?;
+
+    let dense = match &collection_settings.collection {
+        CollectionSettings::Dense(settings) => settings,
+        CollectionSettings::Hybrid(_) => {
+            return Err("expected dense collection settings variant".to_string())
+        }
+    };
+
+    Ok(QdrantDenseCollectionConfig {
+        qdrant_base_url,
+        collection_name: QdrantCollectionName(dense.name.clone()),
+        vector_name: Some(QdrantVectorName(dense.vector_name.clone())),
+    })
+}
+
+pub(crate) fn hybrid_collection_config_from_settings(
+    collection_settings: &CollectionRetrievalSettings,
+    qdrant_url: &str,
+) -> Result<(QdrantHybridCollectionConfig, SparseStrategyConfig), String> {
+    let qdrant_base_url =
+        url::Url::parse(qdrant_url).map_err(|e| format!("invalid qdrant url: {e}"))?;
+
+    let hybrid = match &collection_settings.collection {
+        CollectionSettings::Hybrid(settings) => settings,
+        CollectionSettings::Dense(_) => {
+            return Err("expected hybrid collection settings variant".to_string())
+        }
+    };
+
+    let (collection_name, sparse) = match &hybrid.sparse.strategy {
+        SparseStrategySettings::BagOfWords(settings) => (
+            settings.name.clone(),
+            SparseStrategyConfig::BagOfWords {
+                sparse_vocabulary_path: settings.sparse_vocabulary_path.clone(),
+            },
+        ),
+        SparseStrategySettings::Bm25Like(settings) => (
+            settings.name.clone(),
+            SparseStrategyConfig::Bm25Like {
+                sparse_vocabulary_path: settings.sparse_vocabulary_path.clone(),
+                bm25_term_stats_path: settings.bm25_term_stats_path.clone(),
+                k1: settings.k1,
+                b: settings.b,
+                idf_smoothing: settings.idf_smoothing,
+            },
+        ),
+    };
+
+    Ok((
+        QdrantHybridCollectionConfig {
+            qdrant_base_url,
+            collection_name: QdrantCollectionName(collection_name),
+            vector_name: QdrantVectorName(hybrid.dense_vector_name.clone()),
+            sparse_vector_name: QdrantVectorName(hybrid.sparse_vector_name.clone()),
+        },
+        sparse,
+    ))
 }

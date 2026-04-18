@@ -200,9 +200,16 @@ Required sparse strategy mappings:
 - when `Settings.retrieval.<collection>.collection.HybridCollectionSettings.sparse.strategy = SparseStrategySettings::Bm25Like(settings)`, construct:
   - `SparseStrategyConfig::Bm25Like { sparse_vocabulary_path, bm25_term_stats_path, k1, b, idf_smoothing }`
 
+Required artifact-path field mappings:
+- `SparseStrategyConfig::BagOfWords.sparse_vocabulary_path` <- `BagOfWordsSettings.sparse_vocabulary_path`
+- `SparseStrategyConfig::Bm25Like.sparse_vocabulary_path` <- `Bm25LikeSettings.sparse_vocabulary_path`
+- `SparseStrategyConfig::Bm25Like.bm25_term_stats_path` <- `Bm25LikeSettings.bm25_term_stats_path`
+
 Rules:
 - the collection name used in `QdrantHybridCollectionConfig.collection_name` must come from the active sparse strategy settings variant because physical hybrid collection names are strategy-specific;
-- the vocabulary and BM25 term-stats artifact paths may be derived by the parent runtime module or collection constructor from the active sparse strategy settings and repository conventions;
+- the vocabulary and BM25 term-stats artifact paths must come from typed settings rather than being derived from repository conventions at runtime;
+- collection-layer modules must load sparse artifacts only from the paths stored inside `SparseStrategyConfig`;
+- collection-layer modules must not accept sparse artifact paths as separate constructor arguments once `SparseStrategyConfig` has been constructed from settings;
 - leaf Qdrant transport clients must not depend on crate-level `Settings`;
 - the current minimal crate-skeleton stage does not require production code that performs this wiring;
 - whenever a higher-level runtime layer performs this wiring, conversion from crate-level retrieval settings into module-owned config types must happen before concrete Qdrant transport clients are constructed.

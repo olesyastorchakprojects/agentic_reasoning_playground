@@ -85,8 +85,8 @@ For the current version:
 
 ## Additional Artifact Requirement
 
-`bm25_like` requires corpus-level sparse statistics to be persisted at the
-derived BM25 term-stats artifact path for the effective collection name.
+`bm25_like` requires corpus-level sparse statistics to be persisted as a
+configured BM25 term-stats artifact referenced by runtime settings.
 
 That artifact must minimally contain:
 
@@ -103,6 +103,13 @@ Its semantic contract is defined by:
 Its machine-readable schema is:
 
 - `Execution/ingest/schemas/common/bm25_term_stats.schema.json`
+
+Runtime rule:
+
+- runtime collection modules must load this artifact from the explicit
+  `bm25_term_stats_path` carried by the active `SparseStrategyConfig`;
+- runtime collection modules must not derive the BM25 term-stats artifact path
+  from collection naming conventions.
 
 ## Unsupported Variants
 

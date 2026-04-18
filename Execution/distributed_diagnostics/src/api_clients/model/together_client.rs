@@ -4,23 +4,24 @@ use async_trait::async_trait;
 use backon::Retryable;
 use serde::{Deserialize, Serialize};
 
+use crate::config::TogetherModelSettings;
 use crate::utils::retry::build_backoff;
 
 use super::model_client::{validate_request, ModelClient, ModelClientError};
 use super::shared_types::{
     ModelFinishReason, ModelGenerationRequest, ModelGenerationResponse, ModelMessageRole,
-    ModelResponseMode, OpenAiModelClientConfig, RetryPolicyConfig,
+    ModelResponseMode, RetryPolicyConfig, TogetherModelClientConfig,
 };
 
-pub struct OpenAiModelClient {
+pub struct TogetherModelClient {
     http_client: reqwest::Client,
-    config: OpenAiModelClientConfig,
+    config: TogetherModelClientConfig,
     retry_policy: RetryPolicyConfig,
 }
 
-impl OpenAiModelClient {
+impl TogetherModelClient {
     pub fn new(
-        config: OpenAiModelClientConfig,
+        config: TogetherModelClientConfig,
         retry_policy: RetryPolicyConfig,
     ) -> Result<Self, ModelClientError> {
         validate_client_config(&config, &retry_policy)?;
@@ -30,12 +31,28 @@ impl OpenAiModelClient {
             .build()
             .map_err(|e| ModelClientError::Transport(e.to_string()))?;
 
-        Ok(Self { http_client, config, retry_policy })
+        Ok(Self {
+            http_client,
+            config,
+            retry_policy,
+        })
+    }
+
+    pub fn from_settings(settings: &TogetherModelSettings) -> Result<Self, ModelClientError> {
+        let config = TogetherModelClientConfig {
+            base_url: url::Url::parse(&settings.url)
+                .map_err(|_| ModelClientError::InvalidRequest("base_url must be a valid URL"))?,
+            api_key: settings.api_key.clone(),
+            model_name: settings.model_name.clone(),
+            timeout_sec: settings.timeout_sec,
+        };
+
+        Self::new(config, settings.retry.clone())
     }
 }
 
 fn validate_client_config(
-    config: &OpenAiModelClientConfig,
+    config: &TogetherModelClientConfig,
     policy: &RetryPolicyConfig,
 ) -> Result<(), ModelClientError> {
     let scheme = config.base_url.scheme();
@@ -46,7 +63,9 @@ fn validate_client_config(
         return Err(ModelClientError::InvalidRequest("base_url must contain a host"));
     }
     if config.base_url.query().is_some() {
-        return Err(ModelClientError::InvalidRequest("base_url must not contain query parameters"));
+        return Err(ModelClientError::InvalidRequest(
+            "base_url must not contain query parameters",
+        ));
     }
     if config.base_url.fragment().is_some() {
         return Err(ModelClientError::InvalidRequest("base_url must not contain a fragment"));
@@ -61,12 +80,12 @@ fn validate_client_config(
         return Err(ModelClientError::InvalidRequest("timeout_sec must be > 0"));
     }
     if policy.max_attempts == 0 {
-        return Err(ModelClientError::InvalidRequest("retry_policy.max_attempts must be > 0"));
+        return Err(ModelClientError::InvalidRequest(
+            "retry_policy.max_attempts must be > 0",
+        ));
     }
     Ok(())
 }
-
-// ─── Wire types (private) ────────────────────────────────────────────────────
 
 #[derive(Serialize)]
 struct WireRequest<'a> {
@@ -114,10 +133,8 @@ struct WireUsage {
     total_tokens: Option<usize>,
 }
 
-// ─── ModelClient impl ────────────────────────────────────────────────────────
-
 #[async_trait]
-impl ModelClient for OpenAiModelClient {
+impl ModelClient for TogetherModelClient {
     async fn generate(
         &self,
         request: &ModelGenerationRequest,
@@ -141,7 +158,9 @@ impl ModelClient for OpenAiModelClient {
 
         let response_format = match request.response_mode {
             ModelResponseMode::Text => None,
-            ModelResponseMode::JsonObject => Some(WireResponseFormat { r#type: "json_object" }),
+            ModelResponseMode::JsonObject => Some(WireResponseFormat {
+                r#type: "json_object",
+            }),
         };
 
         let wire_req = WireRequest {
@@ -252,19 +271,21 @@ fn map_response(wire: WireResponse) -> Result<ModelGenerationResponse, ModelClie
 }
 
 fn is_retryable(err: &ModelClientError) -> bool {
-    matches!(err, ModelClientError::Transport(_) | ModelClientError::UnexpectedStatus(500..=599))
+    matches!(
+        err,
+        ModelClientError::Transport(_) | ModelClientError::UnexpectedStatus(500..=599)
+    )
 }
-
-// ─── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::TogetherModelSettings;
     use crate::test_utils::{MockHttpServer, MockResponse};
     use crate::utils::retry::RetryBackoffKind;
 
-    fn config(base_url: &str) -> OpenAiModelClientConfig {
-        OpenAiModelClientConfig {
+    fn config(base_url: &str) -> TogetherModelClientConfig {
+        TogetherModelClientConfig {
             base_url: url::Url::parse(base_url).unwrap(),
             api_key: "test-key".into(),
             model_name: "gpt-test".into(),
@@ -273,7 +294,20 @@ mod tests {
     }
 
     fn policy() -> RetryPolicyConfig {
-        RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
+        RetryPolicyConfig {
+            max_attempts: 1,
+            backoff: RetryBackoffKind::Exponential,
+        }
+    }
+
+    fn settings(url: &str) -> TogetherModelSettings {
+        TogetherModelSettings {
+            url: url.to_string(),
+            api_key: "test-key".into(),
+            model_name: "gpt-test".into(),
+            timeout_sec: 5,
+            retry: policy(),
+        }
     }
 
     fn simple_request() -> ModelGenerationRequest {
@@ -288,47 +322,65 @@ mod tests {
         }
     }
 
-    // ── Constructor validation ────────────────────────────────────────────────
-
     #[test]
     fn constructor_rejects_empty_api_key() {
         let mut cfg = config("https://api.openai.com/");
         cfg.api_key = "  ".into();
-        assert!(OpenAiModelClient::new(cfg, policy()).is_err());
+        assert!(TogetherModelClient::new(cfg, policy()).is_err());
     }
 
     #[test]
     fn constructor_rejects_empty_model_name() {
         let mut cfg = config("https://api.openai.com/");
         cfg.model_name = "".into();
-        assert!(OpenAiModelClient::new(cfg, policy()).is_err());
+        assert!(TogetherModelClient::new(cfg, policy()).is_err());
     }
 
     #[test]
     fn constructor_rejects_zero_timeout() {
         let mut cfg = config("https://api.openai.com/");
         cfg.timeout_sec = 0;
-        assert!(OpenAiModelClient::new(cfg, policy()).is_err());
+        assert!(TogetherModelClient::new(cfg, policy()).is_err());
     }
 
     #[test]
     fn constructor_rejects_zero_max_attempts() {
         let cfg = config("https://api.openai.com/");
-        let p = RetryPolicyConfig { max_attempts: 0, backoff: RetryBackoffKind::Exponential };
-        assert!(OpenAiModelClient::new(cfg, p).is_err());
+        let p = RetryPolicyConfig {
+            max_attempts: 0,
+            backoff: RetryBackoffKind::Exponential,
+        };
+        assert!(TogetherModelClient::new(cfg, p).is_err());
     }
 
     #[test]
     fn constructor_rejects_invalid_scheme() {
-        assert!(OpenAiModelClient::new(config("ftp://example.com/"), policy()).is_err());
+        assert!(TogetherModelClient::new(config("ftp://example.com/"), policy()).is_err());
     }
 
-    // ── Request validation (before HTTP) ─────────────────────────────────────
+    #[test]
+    fn from_settings_maps_valid_together_settings() {
+        let client =
+            TogetherModelClient::from_settings(&settings("https://api.together.xyz/")).unwrap();
+        assert_eq!(client.config.api_key, "test-key");
+        assert_eq!(client.config.model_name, "gpt-test");
+        assert_eq!(client.config.timeout_sec, 5);
+        assert_eq!(client.config.base_url.as_str(), "https://api.together.xyz/");
+        assert_eq!(client.retry_policy.max_attempts, 1);
+    }
+
+    #[test]
+    fn from_settings_rejects_invalid_url() {
+        let err = TogetherModelClient::from_settings(&settings("not a url"))
+            .err()
+            .expect("should fail");
+        assert!(matches!(err, ModelClientError::InvalidRequest(_)));
+    }
 
     #[tokio::test]
     async fn empty_messages_fails_before_http() {
         let server = MockHttpServer::new(vec![]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
         req.messages.clear();
         let err = client.generate(&req).await.unwrap_err();
@@ -339,7 +391,7 @@ mod tests {
     #[tokio::test]
     async fn empty_content_fails_before_http() {
         let server = MockHttpServer::new(vec![]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
         req.messages[0].content = "   ".into();
         let err = client.generate(&req).await.unwrap_err();
@@ -349,31 +401,38 @@ mod tests {
     #[tokio::test]
     async fn negative_temperature_fails_before_http() {
         let server = MockHttpServer::new(vec![]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
         req.temperature = -0.1;
-        assert!(matches!(client.generate(&req).await.unwrap_err(), ModelClientError::InvalidRequest(_)));
+        assert!(matches!(
+            client.generate(&req).await.unwrap_err(),
+            ModelClientError::InvalidRequest(_)
+        ));
     }
 
     #[tokio::test]
     async fn nan_temperature_fails_before_http() {
         let server = MockHttpServer::new(vec![]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
         req.temperature = f32::NAN;
-        assert!(matches!(client.generate(&req).await.unwrap_err(), ModelClientError::InvalidRequest(_)));
+        assert!(matches!(
+            client.generate(&req).await.unwrap_err(),
+            ModelClientError::InvalidRequest(_)
+        ));
     }
 
     #[tokio::test]
     async fn zero_max_output_tokens_fails_before_http() {
         let server = MockHttpServer::new(vec![]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
         req.max_output_tokens = Some(0);
-        assert!(matches!(client.generate(&req).await.unwrap_err(), ModelClientError::InvalidRequest(_)));
+        assert!(matches!(
+            client.generate(&req).await.unwrap_err(),
+            ModelClientError::InvalidRequest(_)
+        ));
     }
-
-    // ── Request body shape ────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn outbound_body_contains_model_name() {
@@ -382,7 +441,7 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         client.generate(&simple_request()).await.unwrap();
         let bodies = server.take_bodies().await;
         let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
@@ -396,11 +455,17 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let req = ModelGenerationRequest {
             messages: vec![
-                super::super::shared_types::ModelMessage { role: ModelMessageRole::System, content: "sys".into() },
-                super::super::shared_types::ModelMessage { role: ModelMessageRole::User, content: "usr".into() },
+                super::super::shared_types::ModelMessage {
+                    role: ModelMessageRole::System,
+                    content: "sys".into(),
+                },
+                super::super::shared_types::ModelMessage {
+                    role: ModelMessageRole::User,
+                    content: "usr".into(),
+                },
             ],
             temperature: 0.0,
             max_output_tokens: None,
@@ -420,7 +485,7 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         client.generate(&simple_request()).await.unwrap();
         let bodies = server.take_bodies().await;
         let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
@@ -434,7 +499,7 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         client.generate(&simple_request()).await.unwrap();
         let bodies = server.take_bodies().await;
         let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
@@ -448,7 +513,7 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
         req.response_mode = ModelResponseMode::JsonObject;
         client.generate(&req).await.unwrap();
@@ -456,8 +521,6 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
         assert_eq!(body["response_format"]["type"], "json_object");
     }
-
-    // ── Response mapping ──────────────────────────────────────────────────────
 
     #[tokio::test]
     async fn uses_first_choice_when_multiple() {
@@ -469,7 +532,7 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let result = client.generate(&simple_request()).await.unwrap();
         assert_eq!(result.content, "first");
     }
@@ -482,7 +545,7 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let result = client.generate(&simple_request()).await.unwrap();
         assert_eq!(result.prompt_tokens, Some(10));
         assert_eq!(result.completion_tokens, Some(5));
@@ -502,7 +565,7 @@ mod tests {
             })
             .to_string();
             let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-            let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+            let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
             let result = client.generate(&simple_request()).await.unwrap();
             assert_eq!(result.finish_reason, Some(expected));
         }
@@ -515,9 +578,12 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let result = client.generate(&simple_request()).await.unwrap();
-        assert!(matches!(result.finish_reason, Some(ModelFinishReason::Unknown(_))));
+        assert!(matches!(
+            result.finish_reason,
+            Some(ModelFinishReason::Unknown(_))
+        ));
     }
 
     #[tokio::test]
@@ -527,17 +593,15 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         let result = client.generate(&simple_request()).await.unwrap();
         assert_eq!(result.content, "hi");
     }
 
-    // ── Error variants ────────────────────────────────────────────────────────
-
     #[tokio::test]
     async fn non_2xx_returns_unexpected_status() {
         let server = MockHttpServer::new(vec![MockResponse::status(500, b"err".to_vec())]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         assert!(matches!(
             client.generate(&simple_request()).await.unwrap_err(),
             ModelClientError::UnexpectedStatus(500)
@@ -548,7 +612,7 @@ mod tests {
     async fn missing_choices_returns_invalid_response() {
         let resp_body = serde_json::json!({"choices": []}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         assert!(matches!(
             client.generate(&simple_request()).await.unwrap_err(),
             ModelClientError::InvalidResponse(_)
@@ -562,7 +626,7 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         assert!(matches!(
             client.generate(&simple_request()).await.unwrap_err(),
             ModelClientError::InvalidResponse(_)
@@ -576,7 +640,7 @@ mod tests {
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
-        let client = OpenAiModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
         assert!(matches!(
             client.generate(&simple_request()).await.unwrap_err(),
             ModelClientError::InvalidResponse(_)

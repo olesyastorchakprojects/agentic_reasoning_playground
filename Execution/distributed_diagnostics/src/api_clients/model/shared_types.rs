@@ -47,7 +47,7 @@ pub struct ModelGenerationResponse {
 }
 
 #[derive(Debug, Clone)]
-pub struct OpenAiModelClientConfig {
+pub struct TogetherModelClientConfig {
     pub base_url: url::Url,
     pub api_key: String,
     pub model_name: String,

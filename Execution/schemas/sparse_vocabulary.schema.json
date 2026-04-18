@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "Execution/ingest/schemas/common/sparse_vocabulary.schema.json",
+  "title": "Sparse Vocabulary",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "vocabulary_name",
+    "collection_name",
+    "text_processing",
+    "tokenizer",
+    "created_at",
+    "tokens"
+  ],
+  "properties": {
+    "vocabulary_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "collection_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "text_processing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lowercase", "min_token_length"],
+      "properties": {
+        "lowercase": { "type": "boolean" },
+        "min_token_length": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "tokenizer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["library", "source"],
+      "properties": {
+        "library": { "type": "string", "enum": ["tokenizers"] },
+        "source": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "tokens": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["token", "token_id"],
+        "properties": {
+          "token": { "type": "string", "minLength": 1 },
+          "token_id": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

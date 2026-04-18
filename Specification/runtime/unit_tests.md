@@ -86,6 +86,7 @@ Generated unit tests for the crate-level `config` boundary must include all of t
 - `qdrant.collections.<collection>.kind = "hybrid"` resolves into the exact `CollectionSettings::Hybrid(...)` variant;
 - `hybrid.sparse.strategy.kind = "bag_of_words"` resolves into the exact `SparseStrategySettings::BagOfWords(...)` variant;
 - `hybrid.sparse.strategy.kind = "bm25_like"` resolves into the exact `SparseStrategySettings::Bm25Like(...)` variant;
+- sparse artifact paths from ingest config are preserved in the resolved sparse strategy settings variant;
 - unsupported transport kinds fail before runtime request processing begins;
 - unsupported collection kinds fail before runtime request processing begins;
 - unsupported sparse strategy kinds fail before runtime request processing begins;

@@ -55,3 +55,9 @@ timeout_sec = 120
 [model.together.retry]
 max_attempts = 3
 backoff = "exponential"
+
+[observability]
+tracing_enabled = true
+metrics_enabled = true
+trace_batch_scheduled_delay_ms = 5000
+metrics_export_interval_ms = 60000

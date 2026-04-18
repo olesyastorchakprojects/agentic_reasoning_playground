@@ -25,14 +25,6 @@ For the current version:
 - vocabulary name = `<collection_name>__sparse_vocabulary`
 - vocabulary filename = `<collection_name>__sparse_vocabulary.json`
 
-Runtime lookup rule:
-
-- these naming rules define the canonical artifact identity and recommended
-  filename format;
-- runtime modules must load the sparse vocabulary artifact from the explicit
-  configured path carried by settings, not by deriving a filename from
-  `collection_name`.
-
 ## Required Top-Level Fields
 
 The vocabulary JSON object must contain:

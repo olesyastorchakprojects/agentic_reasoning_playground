@@ -1,5 +1,7 @@
 pub mod api_clients;
+pub mod config;
 pub mod errors;
+pub mod observability;
 pub mod utils;
 
 #[cfg(test)]

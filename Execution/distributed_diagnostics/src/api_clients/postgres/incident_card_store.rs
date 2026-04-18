@@ -7,6 +7,8 @@ use sqlx::Row;
 use std::collections::HashSet;
 use thiserror::Error;
 
+use crate::config::PostgresSettings;
+
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
@@ -259,22 +261,36 @@ struct StorageReadRow {
 
 // ── Store ─────────────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone)]
+pub struct PostgresIncidentCardStoreConfig {
+    pub postgres_url: String,
+}
+
 pub struct PostgresIncidentCardStore {
     pool: sqlx::PgPool,
 }
 
 impl PostgresIncidentCardStore {
-    pub async fn new(postgres_url: &str) -> Result<Self, IncidentCardStoreError> {
-        if postgres_url.trim().is_empty() {
+    pub async fn new(config: PostgresIncidentCardStoreConfig) -> Result<Self, IncidentCardStoreError> {
+        if config.postgres_url.trim().is_empty() {
             return Err(IncidentCardStoreError::InvalidConfig("postgres_url must not be empty"));
         }
 
         let pool = PgPoolOptions::new()
-            .connect(postgres_url)
+            .connect(&config.postgres_url)
             .await
             .map_err(|e| IncidentCardStoreError::Connection(e.to_string()))?;
 
         Ok(Self { pool })
+    }
+
+    pub async fn from_settings(
+        settings: &PostgresSettings,
+    ) -> Result<Self, IncidentCardStoreError> {
+        Self::new(PostgresIncidentCardStoreConfig {
+            postgres_url: settings.url.clone(),
+        })
+        .await
     }
 
     pub async fn put_card(&self, card: &IncidentCard) -> Result<(), IncidentCardStoreError> {
@@ -449,6 +465,7 @@ fn is_unique_violation(e: &dyn sqlx::error::DatabaseError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::PostgresSettings;
     use serde_json::json;
 
     fn valid_card() -> IncidentCard {
@@ -495,6 +512,12 @@ mod tests {
         }
     }
 
+    fn postgres_settings(url: &str) -> PostgresSettings {
+        PostgresSettings {
+            url: url.to_string(),
+        }
+    }
+
     #[test]
     fn new_fails_on_empty_url() {
         // new() is async but we can check sync validation via direct error path.
@@ -504,6 +527,15 @@ mod tests {
         assert!(url.trim().is_empty(), "guard condition: empty url");
         // Constructing the error directly verifies the right variant is used.
         let err = IncidentCardStoreError::InvalidConfig("postgres_url must not be empty");
+        assert!(matches!(err, IncidentCardStoreError::InvalidConfig(_)));
+    }
+
+    #[tokio::test]
+    async fn from_settings_fails_on_empty_url() {
+        let err = PostgresIncidentCardStore::from_settings(&postgres_settings("  "))
+            .await
+            .err()
+            .expect("should fail");
         assert!(matches!(err, IncidentCardStoreError::InvalidConfig(_)));
     }
 

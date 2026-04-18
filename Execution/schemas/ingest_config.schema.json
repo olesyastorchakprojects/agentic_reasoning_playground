@@ -138,7 +138,8 @@
       "additionalProperties": false,
       "required": [
         "name",
-        "query"
+        "query",
+        "sparse_vocabulary_path"
       ],
       "properties": {
         "name": {
@@ -146,6 +147,10 @@
           "minLength": 1
         },
         "query": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sparse_vocabulary_path": {
           "type": "string",
           "minLength": 1
         }
@@ -157,6 +162,8 @@
       "required": [
         "name",
         "query",
+        "sparse_vocabulary_path",
+        "bm25_term_stats_path",
         "k1",
         "b",
         "idf_smoothing"
@@ -167,6 +174,14 @@
           "minLength": 1
         },
         "query": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sparse_vocabulary_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bm25_term_stats_path": {
           "type": "string",
           "minLength": 1
         },

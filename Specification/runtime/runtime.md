@@ -443,11 +443,14 @@ pub enum SparseStrategySettings {
 pub struct BagOfWordsSettings {
     pub name: String,
     pub query: String,
+    pub sparse_vocabulary_path: String,
 }
 
 pub struct Bm25LikeSettings {
     pub name: String,
     pub query: String,
+    pub sparse_vocabulary_path: String,
+    pub bm25_term_stats_path: String,
     pub k1: f32,
     pub b: f32,
     pub idf_smoothing: f32,
@@ -542,10 +545,13 @@ Required sparse preprocessing field mappings:
 Required bag-of-words field mappings:
 - `name` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bag_of_words].name`
 - `query` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bag_of_words].query`
+- `sparse_vocabulary_path` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bag_of_words].sparse_vocabulary_path`
 
 Required BM25-like field mappings:
 - `name` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bm25_like].name`
 - `query` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bm25_like].query`
+- `sparse_vocabulary_path` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bm25_like].sparse_vocabulary_path`
+- `bm25_term_stats_path` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bm25_like].bm25_term_stats_path`
 - `k1` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bm25_like].k1`
 - `b` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bm25_like].b`
 - `idf_smoothing` <- `ingest.toml [qdrant.collections.<collection>.hybrid.sparse.bm25_like].idf_smoothing`

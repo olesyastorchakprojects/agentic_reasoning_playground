@@ -1,0 +1,53 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  max_block_bytes: 100_000_000
+  lifecycler:
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+    final_sleep: 0s
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/blocks
+    wal:
+      path: /tmp/tempo/wal
+    block:
+      version: vParquet4
+      parquet_dedicated_columns:
+        - name: enduser_id
+          type: string
+          scope: span
+        - name: enduser_email
+          type: string
+          scope: span
+        - name: target_user_id
+          type: string
+          scope: span
+        - name: target_user_email
+          type: string
+          scope: span
+        - name: todo_id
+          type: string
+          scope: span
+        - name: session_id
+          type: string
+          scope: span
+
+compactor:
+  compaction:
+    block_retention: 1h

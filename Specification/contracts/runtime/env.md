@@ -10,7 +10,7 @@ It is the source of truth for:
 - service endpoint URLs;
 - connection strings;
 - API keys and similar secret-like values;
-- observability endpoint values that will be used by later runtime stages.
+- observability endpoint values used by current startup-time settings construction.
 
 Rules:
 - empty lines are allowed;
@@ -43,13 +43,13 @@ The current runtime startup path consumes directly:
 - `POSTGRES_URL`
 - `OPENAI_COMPATIBLE_URL`
 - `TOGETHER_API_KEY`
+- `TRACING_ENDPOINT`
+- `METRICS_ENDPOINT`
 
 The current spec keeps these keys in the contract but does not yet require runtime execution logic to consume them:
 - `RERANKER_ENDPOINT`
 - `VOYAGEAI_RERANK_URL`
 - `VOYAGEAI_API_KEY`
-- `TRACING_ENDPOINT`
-- `METRICS_ENDPOINT`
 - `RUST_LOG`
 
 ## Mapping To Resolved Settings
@@ -61,3 +61,5 @@ Required current mapping rules:
 - `Settings.model.transport = ModelTransportSettings::Ollama(OllamaModelSettings { url, .. })` <- `OLLAMA_URL`
 - `Settings.model.transport = ModelTransportSettings::Together(TogetherModelSettings { url, .. })` <- `OPENAI_COMPATIBLE_URL`
 - `Settings.model.transport = ModelTransportSettings::Together(TogetherModelSettings { api_key, .. })` <- `TOGETHER_API_KEY`
+- `Settings.observability.tracing_endpoint` <- `TRACING_ENDPOINT`
+- `Settings.observability.metrics_endpoint` <- `METRICS_ENDPOINT`

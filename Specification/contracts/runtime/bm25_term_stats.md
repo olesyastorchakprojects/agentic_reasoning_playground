@@ -3,7 +3,7 @@
 This document defines the canonical on-disk contract for the artifact referenced
 by:
 
-- the configured BM25 term-stats artifact path for hybrid ingest/runtime wiring
+- the derived BM25 term-stats artifact path for hybrid ingest
 
 It is used only when:
 
@@ -85,12 +85,6 @@ Rules:
 
 - basename should equal:
   - `<collection_name>__term_stats.json`
-
-Runtime lookup rule:
-
-- this naming rule describes the canonical artifact filename format;
-- runtime modules must load the artifact from the explicit configured path, not
-  by deriving a filename from `collection_name`.
 
 ## Scope Boundary
 

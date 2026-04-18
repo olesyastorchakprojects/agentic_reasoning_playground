@@ -59,10 +59,13 @@ Invalid `ingest.toml`:
 `[qdrant.collections.cards.hybrid.sparse.bag_of_words]`
 - `name`
 - `query`
+- `sparse_vocabulary_path`
 
 `[qdrant.collections.cards.hybrid.sparse.bm25_like]`
 - `name`
 - `query`
+- `sparse_vocabulary_path`
+- `bm25_term_stats_path`
 - `k1`
 - `b`
 - `idf_smoothing`
@@ -115,8 +118,17 @@ The same structure applies to:
 `qdrant.collections.<collection>.hybrid.sparse.bag_of_words.name`
 - physical Qdrant collection name used when the active sparse strategy is `bag_of_words`.
 
+`qdrant.collections.<collection>.hybrid.sparse.bag_of_words.sparse_vocabulary_path`
+- repository-relative or runtime-readable path to the sparse vocabulary artifact used by `bag_of_words`.
+
 `qdrant.collections.<collection>.hybrid.sparse.bm25_like.name`
 - physical Qdrant collection name used when the active sparse strategy is `bm25_like`.
+
+`qdrant.collections.<collection>.hybrid.sparse.bm25_like.sparse_vocabulary_path`
+- repository-relative or runtime-readable path to the sparse vocabulary artifact used by `bm25_like`.
+
+`qdrant.collections.<collection>.hybrid.sparse.bm25_like.bm25_term_stats_path`
+- repository-relative or runtime-readable path to the BM25 term-stats artifact used by `bm25_like`.
 
 `qdrant.collections.<collection>.hybrid.sparse.bm25_like.k1`
 `qdrant.collections.<collection>.hybrid.sparse.bm25_like.b`
@@ -133,6 +145,7 @@ The same structure applies to:
 - sparse tokenizer settings;
 - sparse preprocessing settings;
 - sparse strategy settings.
+- sparse artifact paths.
 
 `ingest.toml` must not redefine:
 - per-collection `top_k`;
@@ -143,4 +156,3 @@ The same structure applies to:
 
 Those fields belong to:
 - `Execution/distributed_diagnostics/runtime.toml`
-

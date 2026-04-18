@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use crate::api_clients::embedding_client::{EmbeddingClient, EmbeddingClientError};
 use crate::utils::tokenizer::SparseTokenizer;
+use crate::config::{CollectionRetrievalSettings, EmbeddingModelSettings};
 
 use super::dense_search_client::{DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient};
 use super::hybrid_search_client::{
@@ -12,6 +13,8 @@ use super::shared_types::{
     Bm25TermStatsArtifact, EmbeddingConfig, NormalizedUserQuery,
     QdrantDenseCollectionConfig, QdrantHybridCollectionConfig, QdrantPayloadValue,
     RetryPolicyConfig, SparseStrategyConfig, SparseVocabularyArtifact,
+    dense_collection_config_from_settings, embedding_config_from_settings,
+    hybrid_collection_config_from_settings,
 };
 
 // ─── Error ────────────────────────────────────────────────────────────────────
@@ -73,6 +76,19 @@ pub struct QdrantCardsCollectionDense {
 }
 
 impl QdrantCardsCollectionDense {
+    pub fn from_settings(
+        collection_settings: &CollectionRetrievalSettings,
+        embedding_model: &EmbeddingModelSettings,
+        qdrant_url: &str,
+    ) -> Result<Self, CardsCollectionError> {
+        let embedding = embedding_config_from_settings(embedding_model)
+            .map_err(|_| CardsCollectionError::InvalidRequest("invalid embedding settings"))?;
+        let qdrant = dense_collection_config_from_settings(collection_settings, qdrant_url)
+            .map_err(|_| CardsCollectionError::InvalidRequest("invalid dense collection settings"))?;
+
+        Self::new(embedding, qdrant, collection_settings.embedding_retry.clone())
+    }
+
     pub fn new(
         embedding: EmbeddingConfig,
         qdrant: QdrantDenseCollectionConfig,
@@ -141,6 +157,21 @@ pub struct QdrantCardsCollectionHybrid {
 }
 
 impl QdrantCardsCollectionHybrid {
+    pub fn from_settings(
+        collection_settings: &CollectionRetrievalSettings,
+        embedding_model: &EmbeddingModelSettings,
+        qdrant_url: &str,
+    ) -> Result<Self, CardsCollectionError> {
+        let embedding = embedding_config_from_settings(embedding_model)
+            .map_err(|_| CardsCollectionError::InvalidRequest("invalid embedding settings"))?;
+        let (qdrant, sparse) =
+            hybrid_collection_config_from_settings(collection_settings, qdrant_url).map_err(
+                |_| CardsCollectionError::InvalidRequest("invalid hybrid collection settings"),
+            )?;
+
+        Self::new(embedding, qdrant, sparse, collection_settings.embedding_retry.clone())
+    }
+
     pub fn new(
         embedding: EmbeddingConfig,
         qdrant: QdrantHybridCollectionConfig,
@@ -255,6 +286,11 @@ fn map_hit_to_card_hit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{
+        BagOfWordsSettings, CollectionRetrievalSettings, CollectionSettings, DenseCollectionSettings,
+        EmbeddingModelSettings, HybridCollectionSettings, SparsePreprocessingSettings,
+        SparseSettings, SparseStrategySettings, TokenizerSettings,
+    };
     use crate::api_clients::qdrant::shared_types::{
         QdrantCollectionName, QdrantVectorName, RetryBackoffKind,
     };
@@ -289,6 +325,58 @@ mod tests {
         }
     }
 
+    fn embedding_model_settings(url: &str) -> EmbeddingModelSettings {
+        EmbeddingModelSettings {
+            url: url.to_string(),
+            name: "embed-model".into(),
+            dimension: 2,
+        }
+    }
+
+    fn dense_collection_settings() -> CollectionRetrievalSettings {
+        CollectionRetrievalSettings {
+            top_k: 5,
+            score_threshold: 0.2,
+            embedding_retry: policy(),
+            qdrant_retry: policy(),
+            collection: CollectionSettings::Dense(DenseCollectionSettings {
+                name: "cards_dense".into(),
+                vector_name: "dense".into(),
+                corpus_version: "v1".into(),
+            }),
+        }
+    }
+
+    fn hybrid_collection_settings(vocab_path: &str) -> CollectionRetrievalSettings {
+        CollectionRetrievalSettings {
+            top_k: 5,
+            score_threshold: 0.2,
+            embedding_retry: policy(),
+            qdrant_retry: policy(),
+            collection: CollectionSettings::Hybrid(HybridCollectionSettings {
+                dense_vector_name: "dense".into(),
+                sparse_vector_name: "sparse".into(),
+                corpus_version: "v1".into(),
+                sparse: SparseSettings {
+                    tokenizer: TokenizerSettings {
+                        library: "tokenizers".into(),
+                        source: "Qwen/Qwen3-Embedding-0.6B".into(),
+                    },
+                    preprocessing: SparsePreprocessingSettings {
+                        kind: "basic_word_v1".into(),
+                        lowercase: true,
+                        min_token_length: 2,
+                    },
+                    strategy: SparseStrategySettings::BagOfWords(BagOfWordsSettings {
+                        name: "cards_bow".into(),
+                        query: "binary_presence".into(),
+                        sparse_vocabulary_path: vocab_path.into(),
+                    }),
+                },
+            }),
+        }
+    }
+
     fn valid_request() -> CardSearchRequest {
         CardSearchRequest {
             user_query: NormalizedUserQuery("service down".into()),
@@ -308,19 +396,6 @@ mod tests {
                 {"token": "service", "token_id": 0},
                 {"token": "down", "token_id": 1}
             ]
-        })
-        .to_string()
-    }
-
-    fn bm25_stats_json(vocab_name: &str, col: &str) -> String {
-        serde_json::json!({
-            "collection_name": col,
-            "vocabulary_name": vocab_name,
-            "sparse_strategy": {"kind": "bm25_like", "version": "v1"},
-            "document_count": 100,
-            "average_document_length": 50.0,
-            "document_frequency_by_token_id": {"0": 30, "1": 20},
-            "created_at": "2024-01-01T00:00:00Z"
         })
         .to_string()
     }
@@ -358,6 +433,42 @@ mod tests {
             CardsCollectionError::InvalidRequest(_)
         ));
         assert!(emb_server.take_bodies().await.is_empty());
+    }
+
+    #[test]
+    fn dense_from_settings_constructs_client() {
+        let client = QdrantCardsCollectionDense::from_settings(
+            &dense_collection_settings(),
+            &embedding_model_settings("http://localhost:11434/"),
+            "http://localhost:6333/",
+        )
+        .unwrap();
+
+        assert_eq!(client.qdrant.collection_name.0, "cards_dense");
+        assert_eq!(client.embedding.model_name, "embed-model");
+    }
+
+    #[test]
+    fn dense_from_settings_rejects_hybrid_variant() {
+        let dir = TempArtifactDir::new();
+        let tokenizer_path = dir.write_basic_tokenizer("tokenizer.json");
+        let vocab_path = dir.write_json(
+            "vocab.json",
+            &vocab_json(
+                "cards__sparse_vocabulary",
+                "cards",
+                tokenizer_path.to_str().unwrap(),
+            ),
+        );
+        let err = QdrantCardsCollectionDense::from_settings(
+            &hybrid_collection_settings(vocab_path.to_str().unwrap()),
+            &embedding_model_settings("http://localhost:11434/"),
+            "http://localhost:6333/",
+        )
+        .err()
+        .expect("should fail");
+
+        assert!(matches!(err, CardsCollectionError::InvalidRequest(_)));
     }
 
     #[tokio::test]
@@ -624,6 +735,28 @@ mod tests {
             policy(),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn hybrid_from_settings_constructs_client() {
+        let dir = TempArtifactDir::new();
+        let tokenizer_path = dir.write_basic_tokenizer("tokenizer.json");
+        let vocab_path = dir.write_json(
+            "vocab.json",
+            &vocab_json(
+                "cards__sparse_vocabulary",
+                "cards",
+                tokenizer_path.to_str().unwrap(),
+            ),
+        );
+        let client = QdrantCardsCollectionHybrid::from_settings(
+            &hybrid_collection_settings(vocab_path.to_str().unwrap()),
+            &embedding_model_settings("http://localhost:11434/"),
+            "http://localhost:6333/",
+        )
+        .unwrap();
+
+        assert_eq!(client.qdrant.collection_name.0, "cards_bow");
     }
 
     #[tokio::test]

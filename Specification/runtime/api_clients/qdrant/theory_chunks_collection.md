@@ -211,6 +211,7 @@ Constructor rules:
 - shared constructor rules must follow `Specification/runtime/api_clients/qdrant/collections_common.md`;
 - constructors must reject invalid configuration through `TheoryChunksCollectionError`.
 - constructors must not accept raw TOML maps or the whole crate-level `Settings` object;
+- constructors must not accept sparse artifact paths as standalone parameters;
 - constructors must convert the supplied typed settings slices into:
   - `EmbeddingConfig`
   - `QdrantDenseCollectionConfig` or `QdrantHybridCollectionConfig`
@@ -229,8 +230,11 @@ Required settings-slice field mappings:
 - Qdrant retry policy <- `collection_settings.qdrant_retry`
 - dense or hybrid Qdrant config fields <- `collection_settings.collection`
 - `qdrant_url` <- `Settings.retrieval.qdrant_url`
+- sparse vocabulary artifact path <- active `collection_settings.collection.HybridCollectionSettings.sparse.strategy` variant
+- BM25 term-stats artifact path <- active `collection_settings.collection.HybridCollectionSettings.sparse.strategy` variant when `SparseStrategySettings::Bm25Like(...)` is selected
 
 Hybrid sparse-artifact compatibility rules:
+- sparse artifacts must be loaded from the paths stored in the constructed `SparseStrategyConfig`;
 - loaded `SparseVocabularyArtifact` must be compatible with the configured sparse-vocabulary artifact path;
 - loaded sparse artifacts must be compatible with the selected `SparseStrategyConfig` kind;
 - when `SparseStrategyConfig::Bm25Like` is selected, loaded `Bm25TermStatsArtifact.vocabulary_name` must match loaded `SparseVocabularyArtifact.vocabulary_name`;

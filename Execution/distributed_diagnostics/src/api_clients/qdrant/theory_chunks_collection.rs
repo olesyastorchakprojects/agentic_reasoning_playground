@@ -2,6 +2,7 @@ use async_trait::async_trait;
 
 use crate::api_clients::embedding_client::{EmbeddingClient, EmbeddingClientError};
 use crate::utils::tokenizer::SparseTokenizer;
+use crate::config::{CollectionRetrievalSettings, EmbeddingModelSettings};
 
 use super::dense_search_client::{DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient};
 use super::hybrid_search_client::{
@@ -11,7 +12,8 @@ use super::sparse_preparation;
 use super::shared_types::{
     Bm25TermStatsArtifact, EmbeddingConfig, NormalizedUserQuery, QdrantDenseCollectionConfig,
     QdrantHybridCollectionConfig, QdrantPayloadValue, RetryPolicyConfig, SparseStrategyConfig,
-    SparseVocabularyArtifact,
+    SparseVocabularyArtifact, dense_collection_config_from_settings,
+    embedding_config_from_settings, hybrid_collection_config_from_settings,
 };
 
 // ─── Error ────────────────────────────────────────────────────────────────────
@@ -74,6 +76,19 @@ pub struct QdrantTheoryChunksCollectionDense {
 }
 
 impl QdrantTheoryChunksCollectionDense {
+    pub fn from_settings(
+        collection_settings: &CollectionRetrievalSettings,
+        embedding_model: &EmbeddingModelSettings,
+        qdrant_url: &str,
+    ) -> Result<Self, TheoryChunksCollectionError> {
+        let embedding = embedding_config_from_settings(embedding_model)
+            .map_err(|_| TheoryChunksCollectionError::InvalidRequest("invalid embedding settings"))?;
+        let qdrant = dense_collection_config_from_settings(collection_settings, qdrant_url)
+            .map_err(|_| TheoryChunksCollectionError::InvalidRequest("invalid dense collection settings"))?;
+
+        Self::new(embedding, qdrant, collection_settings.embedding_retry.clone())
+    }
+
     pub fn new(
         embedding: EmbeddingConfig,
         qdrant: QdrantDenseCollectionConfig,
@@ -141,6 +156,21 @@ pub struct QdrantTheoryChunksCollectionHybrid {
 }
 
 impl QdrantTheoryChunksCollectionHybrid {
+    pub fn from_settings(
+        collection_settings: &CollectionRetrievalSettings,
+        embedding_model: &EmbeddingModelSettings,
+        qdrant_url: &str,
+    ) -> Result<Self, TheoryChunksCollectionError> {
+        let embedding = embedding_config_from_settings(embedding_model)
+            .map_err(|_| TheoryChunksCollectionError::InvalidRequest("invalid embedding settings"))?;
+        let (qdrant, sparse) =
+            hybrid_collection_config_from_settings(collection_settings, qdrant_url).map_err(
+                |_| TheoryChunksCollectionError::InvalidRequest("invalid hybrid collection settings"),
+            )?;
+
+        Self::new(embedding, qdrant, sparse, collection_settings.embedding_retry.clone())
+    }
+
     pub fn new(
         embedding: EmbeddingConfig,
         qdrant: QdrantHybridCollectionConfig,

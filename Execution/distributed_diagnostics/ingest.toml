@@ -32,10 +32,13 @@ min_token_length = 2
 [qdrant.collections.cards.hybrid.sparse.bag_of_words]
 name = "todo_cards_hybrid_bow_collection"
 query = "binary_presence"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/todo_cards__sparse_vocabulary.json"
 
 [qdrant.collections.cards.hybrid.sparse.bm25_like]
 name = "todo_cards_hybrid_bm25_collection"
 query = "bm25_query_weight"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/todo_cards_bm25__sparse_vocabulary.json"
+bm25_term_stats_path = "Execution/artifacts/term_stats/todo_cards_bm25__term_stats.json"
 k1 = 1.2
 b = 0.75
 idf_smoothing = 0.5
@@ -67,10 +70,13 @@ min_token_length = 2
 [qdrant.collections.practice.hybrid.sparse.bag_of_words]
 name = "todo_practice_hybrid_bow_collection"
 query = "binary_presence"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/todo_practice__sparse_vocabulary.json"
 
 [qdrant.collections.practice.hybrid.sparse.bm25_like]
 name = "practice_failure_cases_amazon_rds_pg_bm25"
 query = "bm25_query_weight"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/practice_failure_cases__sparse_vocabulary.json"
+bm25_term_stats_path = "Execution/artifacts/term_stats/practice_failure_cases_bm25__term_stats.json"
 k1 = 1.2
 b = 0.75
 idf_smoothing = 0.5
@@ -102,10 +108,13 @@ min_token_length = 2
 [qdrant.collections.theory.hybrid.sparse.bag_of_words]
 name = "chunks_hybrid_structural_qwen3_bow"
 query = "binary_presence"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/chunks_hybrid_structural_qwen3__sparse_vocabulary.json"
 
 [qdrant.collections.theory.hybrid.sparse.bm25_like]
 name = "chunks_hybrid_structural_qwen3_bm25"
 query = "bm25_query_weight"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/chunks_hybrid_structural_qwen3__sparse_vocabulary.json"
+bm25_term_stats_path = "Execution/artifacts/term_stats/chunks_hybrid_structural_qwen3_bm25__term_stats.json"
 k1 = 1.2
 b = 0.75
 idf_smoothing = 0.5

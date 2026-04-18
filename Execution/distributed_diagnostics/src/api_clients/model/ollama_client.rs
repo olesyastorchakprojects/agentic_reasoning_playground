@@ -5,6 +5,7 @@ use backon::Retryable;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::retry::build_backoff;
+use crate::config::OllamaModelSettings;
 
 use super::model_client::{validate_request, ModelClient, ModelClientError};
 use super::shared_types::{
@@ -31,6 +32,17 @@ impl OllamaModelClient {
             .map_err(|e| ModelClientError::Transport(e.to_string()))?;
 
         Ok(Self { http_client, config, retry_policy })
+    }
+
+    pub fn from_settings(settings: &OllamaModelSettings) -> Result<Self, ModelClientError> {
+        let config = OllamaModelClientConfig {
+            base_url: url::Url::parse(&settings.url)
+                .map_err(|_| ModelClientError::InvalidRequest("base_url must be a valid URL"))?,
+            model_name: settings.model_name.clone(),
+            timeout_sec: settings.timeout_sec,
+        };
+
+        Self::new(config, settings.retry.clone())
     }
 }
 
@@ -246,6 +258,7 @@ fn is_retryable(err: &ModelClientError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::OllamaModelSettings;
     use crate::test_utils::{MockHttpServer, MockResponse};
     use crate::utils::retry::RetryBackoffKind;
 
@@ -259,6 +272,15 @@ mod tests {
 
     fn policy() -> RetryPolicyConfig {
         RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
+    }
+
+    fn settings(url: &str) -> OllamaModelSettings {
+        OllamaModelSettings {
+            url: url.to_string(),
+            model_name: "llama-test".into(),
+            timeout_sec: 5,
+            retry: policy(),
+        }
     }
 
     fn simple_request() -> ModelGenerationRequest {
@@ -299,6 +321,23 @@ mod tests {
     #[test]
     fn constructor_rejects_invalid_scheme() {
         assert!(OllamaModelClient::new(config("ftp://localhost/"), policy()).is_err());
+    }
+
+    #[test]
+    fn from_settings_maps_valid_ollama_settings() {
+        let client = OllamaModelClient::from_settings(&settings("http://localhost:11434/")).unwrap();
+        assert_eq!(client.config.model_name, "llama-test");
+        assert_eq!(client.config.timeout_sec, 5);
+        assert_eq!(client.config.base_url.as_str(), "http://localhost:11434/");
+        assert_eq!(client.retry_policy.max_attempts, 1);
+    }
+
+    #[test]
+    fn from_settings_rejects_invalid_url() {
+        let err = OllamaModelClient::from_settings(&settings("not a url"))
+            .err()
+            .expect("should fail");
+        assert!(matches!(err, ModelClientError::InvalidRequest(_)));
     }
 
     // ── Request validation ────────────────────────────────────────────────────

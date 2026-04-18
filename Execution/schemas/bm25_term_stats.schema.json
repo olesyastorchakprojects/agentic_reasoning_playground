@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "Execution/ingest/schemas/common/bm25_term_stats.schema.json",
+  "title": "BM25 Term Stats",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "collection_name",
+    "sparse_strategy",
+    "vocabulary_name",
+    "document_count",
+    "average_document_length",
+    "document_frequency_by_token_id",
+    "created_at"
+  ],
+  "properties": {
+    "collection_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sparse_strategy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "version"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["bm25_like"] },
+        "version": { "type": "string", "enum": ["v1"] }
+      }
+    },
+    "vocabulary_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "document_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "average_document_length": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "document_frequency_by_token_id": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^(0|[1-9][0-9]*)$"
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
