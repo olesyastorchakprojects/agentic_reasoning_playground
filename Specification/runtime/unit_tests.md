@@ -100,15 +100,30 @@ The current crate-level `utils` test scope is limited.
 Generated unit tests for crate-level `utils` modules must include all of the following cases:
 
 - retry helpers reject invalid retry-policy inputs when the runtime contract requires constructor validation;
-- tokenizer helpers load the configured Hugging Face tokenizer artifact from a local file;
-- tokenizer helpers strip tokenizer marker prefixes required by the runtime sparse text-space contract;
-- tokenizer helpers discard unknown placeholder tokens such as `[UNK]` and `unk`;
-- tokenizer helpers discard tokens rejected by configured normalization rules.
+- tokenizer helper test coverage must follow `Specification/runtime/utils/tokenizer.md`;
+- sparse-text-space filtering and normalization beyond the tokenizer utility must be tested by the Qdrant runtime specs that depend on that contract.
 
 These crate-level `utils` tests remain helper-focused.
 Qdrant-specific sparse query preparation tests remain owned by the Qdrant unit-test specification.
 
-### 4.5) `observability`
+### 4.5) `input_normalization`
+
+Generated unit tests for the `input_normalization` runtime module must include all of the following cases:
+
+- constructor succeeds when the configured tokenizer can be loaded successfully;
+- leading and trailing whitespace are trimmed from the query;
+- newlines are flattened during normalization;
+- tabs and mixed whitespace runs are canonicalized into single ASCII spaces;
+- a query that becomes empty after normalization fails with `InputNormalizationError::EmptyQuery`;
+- a non-empty query whose normalized form produces zero tokens fails with `InputNormalizationError::EmptyQuery`;
+- a query whose token count is exactly equal to `max_input_tokens` succeeds;
+- a query whose token count is greater than `max_input_tokens` fails with `InputNormalizationError::InputTooLong`;
+- successful normalization returns the expected canonical query string;
+- successful normalization returns the correct `input_token_count` for the canonical query.
+
+Tokenizer utility behavior such as download, cache reuse, and tokenizer-load failure handling that is already owned by `Specification/runtime/utils/tokenizer.md` must not be duplicated here.
+
+### 4.6) `observability`
 
 Generated unit tests for the crate-level `observability` boundary must include all of the following cases:
 
@@ -118,7 +133,7 @@ Generated unit tests for the crate-level `observability` boundary must include a
 - initialization uses `trace_batch_scheduled_delay_ms` when constructing the tracing pipeline;
 - initialization uses `metrics_export_interval_ms` when constructing the metrics pipeline.
 
-### 4.6) `main`
+### 4.7) `main`
 
 Generated unit tests for the crate-level `main` CLI boundary must include all of the following cases:
 

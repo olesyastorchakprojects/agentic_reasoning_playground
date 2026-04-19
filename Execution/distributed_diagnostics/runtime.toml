@@ -37,6 +37,10 @@ backoff = "exponential"
 max_attempts = 3
 backoff = "exponential"
 
+[input_normalization]
+max_input_tokens = 3000
+tokenizer_source = "Qwen/Qwen3-Embedding-0.6B"
+
 [model]
 transport_kind = "ollama"
 

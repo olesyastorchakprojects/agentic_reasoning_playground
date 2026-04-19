@@ -12,9 +12,19 @@ This document exists to define:
 This document does not redefine:
 - child API-client artifacts already owned by dedicated generation-order specifications;
 - detailed behavior contracts for child runtime modules;
-- future runtime layers that are not yet part of the current skeleton.
+- future runtime layers that are not yet part of the current skeleton;
+- pre-ingest incident-card chunk generation and its generated JSONL artifacts.
 
 Generation for the runtime crate skeleton is incomplete if any required crate-level artifact from this document is missing.
+
+Related non-crate artifact specification:
+- `Specification/card_to_chunk_converter/incident_card_chunk_conversion.md`
+
+That specification owns:
+- conversion of canonical incident cards from PostgreSQL into pre-ingest
+  `chunks.jsonl` files;
+- the generated card-derived chunk payload contract used before hybrid ingest;
+- the card-to-chunk converter CLI and its file-level artifact behavior.
 
 ## 2) Required Crate-Level Artifacts
 
@@ -32,6 +42,8 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/api_clients/model/mod.rs`
 - `src/api_clients/qdrant/mod.rs`
 - `src/api_clients/postgres/mod.rs`
+- `src/request_pipeline/mod.rs`
+- `src/request_pipeline/input_normalization.rs`
 - `src/utils/mod.rs`
 - `src/utils/retry.rs`
 - `src/utils/tokenizer.rs`
@@ -46,6 +58,7 @@ Artifact rules:
 - `src/config/settings.rs` must define the resolved typed settings model required by `Specification/runtime/runtime.md`;
 - `src/config/load.rs` must define config loading and merge logic for runtime TOML, ingest TOML, and environment values;
 - `src/observability/mod.rs` must define startup-time observability initialization from typed settings;
+- `src/request_pipeline/mod.rs` must expose request-pipeline child modules required by active runtime slice specifications;
 - parent `mod.rs` files are required structural artifacts and must not be omitted;
 - the current crate-level artifact contract is structural and compositional, not behavior-duplicating.
 
@@ -58,6 +71,12 @@ Child artifacts for the model API-client subtree are owned by:
 
 Child artifacts for the Qdrant API-client subtree are owned by:
 - `Specification/runtime/api_clients/qdrant/generation_order.md`
+
+Child artifacts for the request-pipeline leaf module `input_normalization` are owned by:
+- `Specification/runtime/request_pipeline/input_normalization.md`
+
+Child artifacts for the tokenizer utility module are owned by:
+- `Specification/runtime/utils/tokenizer.md`
 
 Child artifact delegation rules:
 - this document must not redefine the child generated-file lists already owned by those specifications;
@@ -77,6 +96,9 @@ Compatibility rules:
 Current delegated child specifications:
 - `Specification/runtime/api_clients/model/generation_order.md`
 - `Specification/runtime/api_clients/qdrant/generation_order.md`
+- `Specification/runtime/request_pipeline/input_normalization.md`
+- `Specification/runtime/utils/tokenizer.md`
+- `Specification/card_to_chunk_converter/incident_card_chunk_conversion.md`
 
 ## 5) Structural Generation Rules
 
@@ -86,9 +108,10 @@ Rules:
 - the generated crate must include a dedicated parent `config` module;
 - the generated crate must include a dedicated parent `observability` module;
 - the generated crate must include a dedicated parent `api_clients` module;
+- the generated crate must include a dedicated parent `request_pipeline` module when request-pipeline child specifications are active;
 - the generated crate must include a dedicated `utils` module for reusable crate-wide helpers;
 - `src/api_clients/mod.rs` must expose the delegated root child module `embedding_client` in addition to the structural child subtrees;
-- the generated crate must include structural parent modules for `model`, `qdrant`, and `postgres`;
+- the generated crate must include structural parent modules for `model`, `qdrant`, `postgres`, and `request_pipeline`;
 - the generated Qdrant subtree may include internal decomposition files such as `sparse_preparation.rs` when required by child specifications;
 - structural parent modules must remain present even when most child implementation files are generated from delegated child specifications;
 - structural files must contain real Rust module declarations and required parent-level definitions, not placeholders or TODO-only stubs.

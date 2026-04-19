@@ -31,13 +31,15 @@ For the current version:
 ## `basic_word_v1` Semantics
 
 Tokenization must use a Hugging Face compatible tokenizer loaded through the
-Python `tokenizers` library, following the same library choice already used by
-the fixed chunker.
+runtime tokenizer utility defined in:
+
+- `Specification/runtime/utils/tokenizer.md`
 
 Current tokenizer loading model:
 
 - `tokenizer.library` must be `tokenizers`
-- tokenizer artifacts must be loaded from an explicit configured source
+- tokenizer loading, cache-path resolution, download behavior, JSON validation,
+  and marker stripping must follow `Specification/runtime/utils/tokenizer.md`
 - one tokenizer instance must be initialized once and reused for the whole run
 
 Tokenizer artifact selection for sparse text space must be defined by config,
@@ -61,8 +63,7 @@ token ids while still reusing a library tokenizer instead of a handwritten one.
 Tokenizer-emitted token strings are normalized as follows:
 
 1. If `lowercase = true`, convert token to lowercase.
-2. Strip leading and trailing tokenizer marker characters used by the tokenizer
-   artifact when they are not part of the lexical token itself.
+2. Use the raw stripped token strings produced by `Specification/runtime/utils/tokenizer.md`.
 3. Discard tokenizer-emitted unknown placeholder tokens such as `[UNK]` and `unk`.
 4. If token length is less than `min_token_length`, discard it.
 5. Discard tokens that contain no alphanumeric characters after normalization.

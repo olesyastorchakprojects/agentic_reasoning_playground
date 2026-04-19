@@ -1,18 +1,19 @@
-use crate::utils::tokenizer::SparseTokenizer;
+use std::collections::BTreeMap;
+
+use crate::utils::tokenizer::HfTokenizer;
 
 use super::shared_types::{
     Bm25TermStatsArtifact, SparseStrategyConfig, SparseVector, SparseVocabularyArtifact,
 };
-use std::collections::BTreeMap;
 
 #[derive(Debug)]
 pub struct LoadedSparseArtifacts {
     pub vocabulary: SparseVocabularyArtifact,
     pub bm25_term_stats: Option<Bm25TermStatsArtifact>,
-    pub tokenizer: SparseTokenizer,
+    pub tokenizer: HfTokenizer,
 }
 
-pub fn load_sparse_artifacts(
+pub async fn load_sparse_artifacts(
     strategy: &SparseStrategyConfig,
     collection_name: &str,
 ) -> Result<LoadedSparseArtifacts, &'static str> {
@@ -32,12 +33,9 @@ pub fn load_sparse_artifacts(
         return Err("unsupported tokenizer library in sparse vocabulary");
     }
 
-    let tokenizer = SparseTokenizer::from_file(
-        &vocabulary.tokenizer_source,
-        vocabulary.lowercase,
-        vocabulary.min_token_length,
-    )
-    .map_err(|_| "failed to load tokenizer artifact")?;
+    let tokenizer = HfTokenizer::load(&vocabulary.tokenizer_source)
+        .await
+        .map_err(|_| "failed to load tokenizer artifact")?;
 
     let bm25_term_stats = if let Some(path) = stats_path {
         let stats = Bm25TermStatsArtifact::load_from_file(path)
@@ -53,12 +51,13 @@ pub fn load_sparse_artifacts(
 
 pub fn build_sparse_vector(
     text: &str,
-    tokenizer: &SparseTokenizer,
+    tokenizer: &HfTokenizer,
     vocab: &SparseVocabularyArtifact,
     bm25_stats: Option<&Bm25TermStatsArtifact>,
     strategy: &SparseStrategyConfig,
 ) -> Result<SparseVector, &'static str> {
-    let tokens = tokenizer.tokenize(text);
+    let raw_tokens = tokenizer.tokenize(text);
+    let tokens = apply_sparse_normalization(raw_tokens, vocab.lowercase, vocab.min_token_length);
 
     match strategy {
         SparseStrategyConfig::BagOfWords { .. } => {
@@ -96,6 +95,34 @@ fn validate_artifact_compatibility(
         return Err("bm25 term stats collection_name does not match configured collection");
     }
     Ok(())
+}
+
+/// Apply sparse text space normalization rules to raw tokenizer output.
+fn apply_sparse_normalization(
+    tokens: Vec<String>,
+    lowercase: bool,
+    min_token_length: usize,
+) -> Vec<String> {
+    tokens
+        .into_iter()
+        .filter_map(|t| {
+            let token = if lowercase { t.to_lowercase() } else { t };
+            if token.len() < min_token_length {
+                return None;
+            }
+            if !token.chars().any(|c| c.is_alphanumeric()) {
+                return None;
+            }
+            if is_unknown_placeholder(&token) {
+                return None;
+            }
+            Some(token)
+        })
+        .collect()
+}
+
+fn is_unknown_placeholder(token: &str) -> bool {
+    matches!(token, "[unk]" | "unk")
 }
 
 fn build_bag_of_words_query(
@@ -171,7 +198,7 @@ fn build_bm25_like_query(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::TempArtifactDir;
+    use crate::test_utils::{TempArtifactDir, populate_tokenizer_cache};
 
     fn vocab_json(
         vocabulary_name: &str,
@@ -212,17 +239,18 @@ mod tests {
         .to_string()
     }
 
-    fn make_tokenizer() -> (TempArtifactDir, String) {
-        let dir = TempArtifactDir::new();
-        let tokenizer_path = dir.write_basic_tokenizer("tokenizer.json");
-        (dir, tokenizer_path.to_str().unwrap().to_string())
+    const TEST_SOURCE: &str = "test/model";
+
+    fn make_artifacts_dir() -> TempArtifactDir {
+        populate_tokenizer_cache(TEST_SOURCE);
+        TempArtifactDir::new()
     }
 
-    fn load_tokenizer(path: &str) -> SparseTokenizer {
-        SparseTokenizer::from_file(path, true, 2).unwrap()
+    async fn load_tokenizer() -> HfTokenizer {
+        HfTokenizer::load(TEST_SOURCE).await.unwrap()
     }
 
-    fn vocab_artifact(path: &str) -> SparseVocabularyArtifact {
+    fn vocab_artifact() -> SparseVocabularyArtifact {
         SparseVocabularyArtifact {
             vocabulary_name: "cards__sparse_vocabulary".into(),
             collection_name: "cards".into(),
@@ -234,22 +262,17 @@ mod tests {
             lowercase: true,
             min_token_length: 2,
             tokenizer_library: "tokenizers".into(),
-            tokenizer_source: path.into(),
+            tokenizer_source: TEST_SOURCE.into(),
             tokenizer_revision: None,
         }
     }
 
-    #[test]
-    fn load_sparse_artifacts_loads_vocab_and_tokenizer_for_bag_of_words() {
-        let (dir, tokenizer_path) = make_tokenizer();
+    #[tokio::test]
+    async fn load_sparse_artifacts_loads_vocab_and_tokenizer_for_bag_of_words() {
+        let dir = make_artifacts_dir();
         let vocab_path = dir.write_json(
             "vocab.json",
-            &vocab_json(
-                "cards__sparse_vocabulary",
-                "cards",
-                &tokenizer_path,
-                "tokenizers",
-            ),
+            &vocab_json("cards__sparse_vocabulary", "cards", TEST_SOURCE, "tokenizers"),
         );
 
         let loaded = load_sparse_artifacts(
@@ -258,6 +281,7 @@ mod tests {
             },
             "cards",
         )
+        .await
         .unwrap();
 
         assert_eq!(loaded.vocabulary.vocabulary_name, "cards__sparse_vocabulary");
@@ -268,12 +292,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn load_sparse_artifacts_rejects_unsupported_tokenizer_library() {
-        let (dir, tokenizer_path) = make_tokenizer();
+    #[tokio::test]
+    async fn load_sparse_artifacts_rejects_unsupported_tokenizer_library() {
+        let dir = make_artifacts_dir();
         let vocab_path = dir.write_json(
             "vocab.json",
-            &vocab_json("cards__sparse_vocabulary", "cards", &tokenizer_path, "other"),
+            &vocab_json("cards__sparse_vocabulary", "cards", TEST_SOURCE, "other"),
         );
 
         let err = load_sparse_artifacts(
@@ -282,22 +306,18 @@ mod tests {
             },
             "cards",
         )
+        .await
         .unwrap_err();
 
         assert_eq!(err, "unsupported tokenizer library in sparse vocabulary");
     }
 
-    #[test]
-    fn load_sparse_artifacts_rejects_incompatible_bm25_stats() {
-        let (dir, tokenizer_path) = make_tokenizer();
+    #[tokio::test]
+    async fn load_sparse_artifacts_rejects_incompatible_bm25_stats() {
+        let dir = make_artifacts_dir();
         let vocab_path = dir.write_json(
             "vocab.json",
-            &vocab_json(
-                "cards__sparse_vocabulary",
-                "cards",
-                &tokenizer_path,
-                "tokenizers",
-            ),
+            &vocab_json("cards__sparse_vocabulary", "cards", TEST_SOURCE, "tokenizers"),
         );
         let stats_path = dir.write_json(
             "stats.json",
@@ -314,16 +334,40 @@ mod tests {
             },
             "cards",
         )
+        .await
         .unwrap_err();
 
         assert_eq!(err, "bm25 term stats vocabulary_name does not match sparse vocabulary");
     }
 
+    // ── apply_sparse_normalization ───────────────────────────────────────────
+
     #[test]
-    fn build_sparse_vector_bag_of_words_deduplicates_and_sorts() {
-        let (_dir, tokenizer_path) = make_tokenizer();
-        let tokenizer = load_tokenizer(&tokenizer_path);
-        let vocab = vocab_artifact(&tokenizer_path);
+    fn normalization_applies_lowercase_and_filters_short_and_non_alnum_tokens() {
+        let tokens = vec![
+            "Service".to_string(),
+            "!".to_string(),
+            "a".to_string(),
+            "down".to_string(),
+        ];
+        let result = apply_sparse_normalization(tokens, true, 2);
+        assert_eq!(result, vec!["service".to_string(), "down".to_string()]);
+    }
+
+    #[test]
+    fn normalization_filters_unknown_placeholders() {
+        let tokens = vec!["[unk]".to_string(), "service".to_string(), "unk".to_string()];
+        let result = apply_sparse_normalization(tokens, false, 2);
+        assert_eq!(result, vec!["service".to_string()]);
+    }
+
+    // ── build_sparse_vector ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn build_sparse_vector_bag_of_words_deduplicates_and_sorts() {
+        let _dir = make_artifacts_dir();
+        let tokenizer = load_tokenizer().await;
+        let vocab = vocab_artifact();
 
         let vector = build_sparse_vector(
             "down service down",
@@ -340,11 +384,11 @@ mod tests {
         assert_eq!(vector.values, vec![1.0, 1.0]);
     }
 
-    #[test]
-    fn build_sparse_vector_rejects_zero_terms_after_vocab_lookup() {
-        let (_dir, tokenizer_path) = make_tokenizer();
-        let tokenizer = load_tokenizer(&tokenizer_path);
-        let vocab = vocab_artifact(&tokenizer_path);
+    #[tokio::test]
+    async fn build_sparse_vector_rejects_zero_terms_after_vocab_lookup() {
+        let _dir = make_artifacts_dir();
+        let tokenizer = load_tokenizer().await;
+        let vocab = vocab_artifact();
 
         let err = build_sparse_vector(
             "unknown tokens",
@@ -360,11 +404,11 @@ mod tests {
         assert_eq!(err, "no sparse terms after vocabulary lookup");
     }
 
-    #[test]
-    fn build_sparse_vector_bm25_requires_stats() {
-        let (_dir, tokenizer_path) = make_tokenizer();
-        let tokenizer = load_tokenizer(&tokenizer_path);
-        let vocab = vocab_artifact(&tokenizer_path);
+    #[tokio::test]
+    async fn build_sparse_vector_bm25_requires_stats() {
+        let _dir = make_artifacts_dir();
+        let tokenizer = load_tokenizer().await;
+        let vocab = vocab_artifact();
 
         let err = build_sparse_vector(
             "service down",
@@ -384,11 +428,11 @@ mod tests {
         assert_eq!(err, "bm25 term stats must be loaded for Bm25Like");
     }
 
-    #[test]
-    fn build_sparse_vector_bm25_returns_sorted_aligned_vector() {
-        let (_dir, tokenizer_path) = make_tokenizer();
-        let tokenizer = load_tokenizer(&tokenizer_path);
-        let vocab = vocab_artifact(&tokenizer_path);
+    #[tokio::test]
+    async fn build_sparse_vector_bm25_returns_sorted_aligned_vector() {
+        let _dir = make_artifacts_dir();
+        let tokenizer = load_tokenizer().await;
+        let vocab = vocab_artifact();
         let stats = Bm25TermStatsArtifact {
             collection_name: "cards".into(),
             vocabulary_name: "cards__sparse_vocabulary".into(),

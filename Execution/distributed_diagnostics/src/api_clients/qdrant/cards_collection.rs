@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::api_clients::embedding_client::{EmbeddingClient, EmbeddingClientError};
-use crate::utils::tokenizer::SparseTokenizer;
+use crate::utils::tokenizer::HfTokenizer;
 use crate::config::{CollectionRetrievalSettings, EmbeddingModelSettings};
 
 use super::dense_search_client::{DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient};
@@ -153,11 +153,11 @@ pub struct QdrantCardsCollectionHybrid {
     qdrant_client: QdrantHybridSearchClient,
     sparse_vocabulary: SparseVocabularyArtifact,
     bm25_term_stats: Option<Bm25TermStatsArtifact>,
-    tokenizer: SparseTokenizer,
+    tokenizer: HfTokenizer,
 }
 
 impl QdrantCardsCollectionHybrid {
-    pub fn from_settings(
+    pub async fn from_settings(
         collection_settings: &CollectionRetrievalSettings,
         embedding_model: &EmbeddingModelSettings,
         qdrant_url: &str,
@@ -169,16 +169,17 @@ impl QdrantCardsCollectionHybrid {
                 |_| CardsCollectionError::InvalidRequest("invalid hybrid collection settings"),
             )?;
 
-        Self::new(embedding, qdrant, sparse, collection_settings.embedding_retry.clone())
+        Self::new(embedding, qdrant, sparse, collection_settings.embedding_retry.clone()).await
     }
 
-    pub fn new(
+    pub async fn new(
         embedding: EmbeddingConfig,
         qdrant: QdrantHybridCollectionConfig,
         sparse: SparseStrategyConfig,
         retry_policy: RetryPolicyConfig,
     ) -> Result<Self, CardsCollectionError> {
         let loaded = sparse_preparation::load_sparse_artifacts(&sparse, &qdrant.collection_name.0)
+            .await
             .map_err(CardsCollectionError::InvalidRequest)?;
 
         let embedding_client = EmbeddingClient::new(embedding.clone(), retry_policy.clone())
@@ -294,7 +295,7 @@ mod tests {
     use crate::api_clients::qdrant::shared_types::{
         QdrantCollectionName, QdrantVectorName, RetryBackoffKind,
     };
-    use crate::test_utils::{MockHttpServer, MockResponse, TempArtifactDir};
+    use crate::test_utils::{MockHttpServer, MockResponse, TempArtifactDir, populate_tokenizer_cache};
 
     fn policy() -> RetryPolicyConfig {
         RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
@@ -451,14 +452,9 @@ mod tests {
     #[test]
     fn dense_from_settings_rejects_hybrid_variant() {
         let dir = TempArtifactDir::new();
-        let tokenizer_path = dir.write_basic_tokenizer("tokenizer.json");
         let vocab_path = dir.write_json(
             "vocab.json",
-            &vocab_json(
-                "cards__sparse_vocabulary",
-                "cards",
-                tokenizer_path.to_str().unwrap(),
-            ),
+            &vocab_json("cards__sparse_vocabulary", "cards", "test/model"),
         );
         let err = QdrantCardsCollectionDense::from_settings(
             &hybrid_collection_settings(vocab_path.to_str().unwrap()),
@@ -718,42 +714,38 @@ mod tests {
 
     // ── Hybrid constructor artifact validation ────────────────────────────────
 
-    #[test]
-    fn hybrid_constructor_fails_when_vocabulary_absent() {
-        let qdrant_server_url = "http://localhost:6333/"; // not used
-        let emb_url = "http://localhost:11434/";
+    #[tokio::test]
+    async fn hybrid_constructor_fails_when_vocabulary_absent() {
         let result = QdrantCardsCollectionHybrid::new(
             EmbeddingConfig {
-                base_url: url::Url::parse(emb_url).unwrap(),
+                base_url: url::Url::parse("http://localhost:11434/").unwrap(),
                 model_name: "m".into(),
                 embedding_dimension: 2,
             },
-            hybrid_collection_config(qdrant_server_url),
+            hybrid_collection_config("http://localhost:6333/"),
             SparseStrategyConfig::BagOfWords {
                 sparse_vocabulary_path: "/nonexistent/vocab.json".into(),
             },
             policy(),
-        );
+        )
+        .await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn hybrid_from_settings_constructs_client() {
+    #[tokio::test]
+    async fn hybrid_from_settings_constructs_client() {
         let dir = TempArtifactDir::new();
-        let tokenizer_path = dir.write_basic_tokenizer("tokenizer.json");
+        populate_tokenizer_cache("test/model");
         let vocab_path = dir.write_json(
             "vocab.json",
-            &vocab_json(
-                "cards__sparse_vocabulary",
-                "cards",
-                tokenizer_path.to_str().unwrap(),
-            ),
+            &vocab_json("cards__sparse_vocabulary", "cards", "test/model"),
         );
         let client = QdrantCardsCollectionHybrid::from_settings(
             &hybrid_collection_settings(vocab_path.to_str().unwrap()),
             &embedding_model_settings("http://localhost:11434/"),
             "http://localhost:6333/",
         )
+        .await
         .unwrap();
 
         assert_eq!(client.qdrant.collection_name.0, "cards_bow");
@@ -762,14 +754,10 @@ mod tests {
     #[tokio::test]
     async fn hybrid_validates_before_embedding() {
         let dir = TempArtifactDir::new();
-        let tokenizer_path = dir.write_basic_tokenizer("tokenizer.json");
+        populate_tokenizer_cache("test/model");
         let vocab_path = dir.write_json(
             "vocab.json",
-            &vocab_json(
-                "cards__sparse_vocabulary",
-                "cards",
-                tokenizer_path.to_str().unwrap(),
-            ),
+            &vocab_json("cards__sparse_vocabulary", "cards", "test/model"),
         );
 
         let emb_server = MockHttpServer::new(vec![]).await;
@@ -783,6 +771,7 @@ mod tests {
             },
             policy(),
         )
+        .await
         .unwrap();
 
         let req = CardSearchRequest {
@@ -800,14 +789,10 @@ mod tests {
     #[tokio::test]
     async fn hybrid_transport_error_wrapped_as_qdrant_hybrid() {
         let dir = TempArtifactDir::new();
-        let tokenizer_path = dir.write_basic_tokenizer("tokenizer.json");
+        populate_tokenizer_cache("test/model");
         let vocab_path = dir.write_json(
             "vocab.json",
-            &vocab_json(
-                "cards__sparse_vocabulary",
-                "cards",
-                tokenizer_path.to_str().unwrap(),
-            ),
+            &vocab_json("cards__sparse_vocabulary", "cards", "test/model"),
         );
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
         let qdrant_server = MockHttpServer::new(vec![MockResponse::status(500, b"err".to_vec())]).await;
@@ -820,6 +805,7 @@ mod tests {
             },
             policy(),
         )
+        .await
         .unwrap();
 
         let err = client.search(&valid_request()).await.unwrap_err();

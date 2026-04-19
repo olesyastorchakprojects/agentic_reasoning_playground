@@ -171,6 +171,7 @@ Generated unit tests for `TheoryChunksCollection` implementations must include a
 Generated unit tests for `qdrant.sparse_preparation` must include all of the following cases:
 
 - loading sparse artifacts for `bag_of_words` succeeds when tokenizer config, tokenizer artifact, and vocabulary artifact are valid and mutually compatible;
+- tokenizer utility behavior such as cache reuse and download/caching must follow `Specification/runtime/utils/tokenizer.md` and does not need to be redefined by this document;
 - loading sparse artifacts fails when tokenizer library is unsupported for the current runtime contract;
 - loading sparse artifacts for `bm25_like` fails when BM25 term-stats artifacts are missing when required by the effective sparse strategy;
 - loading sparse artifacts for `bm25_like` fails when BM25 term-stats metadata is incompatible with the expected vocabulary identity or collection identity according to the spec;

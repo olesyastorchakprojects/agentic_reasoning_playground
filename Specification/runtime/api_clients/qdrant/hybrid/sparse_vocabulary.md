@@ -78,6 +78,8 @@ Rule:
 
 - these fields identify the concrete tokenizer artifact used during vocabulary
   bootstrap
+- `tokenizer.source` identifies the Hugging Face tokenizer repository used for bootstrap
+- runtime tokenizer helpers must resolve that source through the utility contract defined in `Specification/runtime/utils/tokenizer.md`
 
 ### `created_at`
 

@@ -15,7 +15,8 @@ This document does not define:
 - orchestration flows;
 - domain logic;
 - request/response workflows above the current runtime API-client layer;
-- detailed behavior of individual API-client modules already specified elsewhere.
+- detailed behavior of individual API-client modules already specified elsewhere;
+- pre-ingest incident-card chunk generation from PostgreSQL.
 
 The current version must be minimal.
 It must define only the crate structure, error-model rules, and configuration rules required to generate a clean Rust crate skeleton that can be extended later.
@@ -28,7 +29,17 @@ This document is the crate-level source of truth for:
 - `src/config/mod.rs`
 - crate-level composition and re-export rules
 
-Detailed API-client behavior and child-module generation remain defined in their dedicated specifications under `Specification/runtime/api_clients/`.
+Detailed child-module behavior and child-module generation remain defined in their dedicated specifications under:
+- `Specification/runtime/api_clients/`
+- `Specification/runtime/request_pipeline/`
+- `Specification/runtime/utils/`
+
+Related external preprocessing specification:
+- `Specification/card_to_chunk_converter/incident_card_chunk_conversion.md`
+
+That specification defines the converter that reads canonical incident cards
+from PostgreSQL and produces the pre-ingest chunk files later consumed by
+hybrid ingest.
 
 ## 2) Crate Structure
 
@@ -43,6 +54,7 @@ The current crate-level structure consists of:
 - `config`
 - `observability`
 - `api_clients`
+- `request_pipeline`
 - `utils`
 
 The current required crate-level module tree is:
@@ -56,6 +68,8 @@ The current required crate-level module tree is:
     - `model`
     - `qdrant`
     - `postgres`
+  - `request_pipeline`
+    - `input_normalization`
   - `utils`
     - `retry`
     - `tokenizer`
@@ -67,6 +81,7 @@ Structure rules:
 - `config` owns runtime config loading, resolved settings, and configuration errors;
 - `observability` owns observability initialization and lifetime management;
 - `api_clients` is the parent boundary for runtime external-service clients;
+- `request_pipeline` is the parent boundary for request-processing leaf modules above the current API-client layer;
 - `utils` owns reusable crate-wide helpers that are intentionally shared across multiple runtime areas;
 - child API-client subtrees keep their own dedicated module contracts;
 - the generated crate structure must remain extension-friendly for future runtime layers.
@@ -309,6 +324,13 @@ The human-readable contracts for those files are:
 - `Specification/contracts/runtime/ingest_config.md`
 - `Specification/contracts/runtime/env.md`
 
+Related external ingest-preparation contract:
+- `Specification/card_to_chunk_converter/incident_card_chunk_conversion.md`
+
+That contract defines how canonical incident cards are converted into
+pre-ingest `chunks.jsonl` files before they are ingested into Qdrant-backed
+collections.
+
 ### Settings Model
 
 The runtime must define one internal resolved config type named `Settings`.
@@ -321,6 +343,7 @@ The generated Rust settings model must define top-level types equivalent in owne
 pub struct Settings {
     pub runtime: RuntimeSettings,
     pub retrieval: RetrievalSettings,
+    pub input_normalization: InputNormalizationSettings,
     pub model: ModelSettings,
     pub embedding_model: EmbeddingModelSettings,
     pub observability: ObservabilitySettings,
@@ -329,6 +352,11 @@ pub struct Settings {
 
 pub struct RuntimeSettings {
     pub config_version: String,
+}
+
+pub struct InputNormalizationSettings {
+    pub max_input_tokens: usize,
+    pub tokenizer_source: String,
 }
 
 pub struct EmbeddingModelSettings {
@@ -358,6 +386,47 @@ Settings model rules:
 - the runtime must not keep a parallel top-level `IngestSettings` object once the resolved `Settings` object has been constructed;
 - metadata-only config sections that are not used after startup do not need to be preserved inside resolved `Settings`.
 
+### Shared Types
+
+This section defines the types that move between runtime modules.
+Only cross-module types belong here.
+Types that are private to a single module must be defined in that module specification instead.
+
+For the current request-pipeline stage, the required shared types are:
+- `UserRequest`
+- `NormalizedUserRequest`
+
+The generated Rust runtime must define shared types equivalent in ownership to:
+
+```rust
+pub struct UserRequest {
+    pub query: String,
+}
+
+pub struct NormalizedUserRequest {
+    pub query: String,
+    pub input_token_count: usize,
+}
+```
+
+Shared type rules:
+
+1. `UserRequest`
+   - `UserRequest` is the raw request received by the runtime from the caller;
+   - `UserRequest` must contain exactly one field:
+     - `query: String`
+   - `query` is the raw user-provided request text before normalization;
+   - `UserRequest` must not contain normalized fields, token counts, config values, derived values, or module-private processing metadata.
+
+2. `NormalizedUserRequest`
+   - `NormalizedUserRequest` is the normalized request produced by the input-normalization boundary;
+   - `NormalizedUserRequest` must contain exactly two fields:
+     - `query: String`
+     - `input_token_count: usize`
+   - `query` is the normalized form of `UserRequest.query`;
+   - `input_token_count` is the token count computed for `NormalizedUserRequest.query` using the tokenizer defined by the input-normalization contract;
+   - `NormalizedUserRequest` must not contain raw input copies, config values, or module-private processing metadata.
+
 ### Retrieval Settings
 
 The generated Rust settings model must define retrieval settings equivalent in ownership to:
@@ -383,6 +452,22 @@ Rules:
 - `RetrievalSettings` is the single typed retrieval settings section used by retrieval-facing runtime code;
 - each collection section must contain runtime-owned retrieval knobs plus one typed resolved collection description;
 - retrieval code must be able to access collection name selection, top-k, threshold, and retry settings from one `CollectionRetrievalSettings` value without separately reading raw ingest config.
+
+### Input Normalization Settings
+
+The generated Rust settings model must define input-normalization settings equivalent in ownership to:
+
+```rust
+pub struct InputNormalizationSettings {
+    pub max_input_tokens: usize,
+    pub tokenizer_source: String,
+}
+```
+
+Rules:
+- `InputNormalizationSettings` is the single typed settings slice used by request-level input normalization code;
+- input-normalization runtime modules must receive this typed settings slice rather than reading raw TOML values;
+- tokenizer loading behavior itself is defined by `Specification/runtime/utils/tokenizer.md` rather than by the crate-level settings model.
 
 ### Collection Variants
 
@@ -503,6 +588,8 @@ Variant-selection rules:
 
 Required top-level field mappings:
 - `Settings.runtime.config_version` <- `runtime.toml [runtime].config_version`
+- `Settings.input_normalization.max_input_tokens` <- `runtime.toml [input_normalization].max_input_tokens`
+- `Settings.input_normalization.tokenizer_source` <- `runtime.toml [input_normalization].tokenizer_source`
 - `Settings.embedding_model.url` <- environment variable `OLLAMA_URL`
 - `Settings.embedding_model.name` <- `ingest.toml [embedding.model].name`
 - `Settings.embedding_model.dimension` <- `ingest.toml [embedding.model].dimension`

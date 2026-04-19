@@ -4,10 +4,11 @@ mod settings;
 pub use load::load;
 pub use settings::{
     BagOfWordsSettings, Bm25LikeSettings, CollectionRetrievalSettings, CollectionSettings,
-    DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings, ModelSettings,
-    ModelTransportSettings, ObservabilitySettings, OllamaModelSettings, PostgresSettings,
-    RetrievalSettings, RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
-    SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
+    DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
+    InputNormalizationSettings, ModelSettings, ModelTransportSettings, ObservabilitySettings,
+    OllamaModelSettings, PostgresSettings, RetrievalSettings, RuntimeSettings, Settings,
+    SparsePreprocessingSettings, SparseSettings, SparseStrategySettings, TogetherModelSettings,
+    TokenizerSettings,
 };
 
 use thiserror::Error;

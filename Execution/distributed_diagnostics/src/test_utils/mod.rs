@@ -113,11 +113,50 @@ fn find_body_start(buf: &[u8]) -> Option<usize> {
 
 // ─── TempArtifactDir ─────────────────────────────────────────────────────────
 
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::{LazyLock, Mutex as StdMutex};
 use tempfile::TempDir;
 use tokenizers::models::wordlevel::WordLevel;
 use tokenizers::pre_tokenizers::whitespace::Whitespace;
 use tokenizers::Tokenizer;
+
+use crate::utils::tokenizer::tokenizer_cache_root;
+
+static POPULATED_CACHES: LazyLock<StdMutex<HashSet<String>>> =
+    LazyLock::new(|| StdMutex::new(HashSet::new()));
+
+/// Pre-populate the tokenizer cache for `source` at the same path `HfTokenizer::load` uses.
+/// Safe to call from multiple threads — writes are serialized and each source is written once.
+pub fn populate_tokenizer_cache(source: &str) {
+    let mut populated = POPULATED_CACHES.lock().unwrap();
+    if populated.contains(source) {
+        return;
+    }
+    let cache = tokenizer_cache_root().join(source).join("tokenizer.json");
+    std::fs::create_dir_all(cache.parent().unwrap()).expect("create tokenizer cache dir");
+    let model = WordLevel::builder()
+        .vocab(
+            [
+                ("[UNK]".to_string(), 0u32),
+                ("service".to_string(), 1u32),
+                ("down".to_string(), 2u32),
+                ("query".to_string(), 3u32),
+                ("text".to_string(), 4u32),
+                ("consensus".to_string(), 5u32),
+                ("fault".to_string(), 6u32),
+            ]
+            .into_iter()
+            .collect(),
+        )
+        .unk_token("[UNK]".to_string())
+        .build()
+        .expect("build wordlevel tokenizer");
+    let mut tokenizer = Tokenizer::new(model);
+    tokenizer.with_pre_tokenizer(Some(Whitespace));
+    tokenizer.save(&cache, false).expect("save tokenizer to cache");
+    populated.insert(source.to_string());
+}
 
 /// Wraps a `tempfile::TempDir` and exposes helpers for writing JSON artifacts.
 pub struct TempArtifactDir {

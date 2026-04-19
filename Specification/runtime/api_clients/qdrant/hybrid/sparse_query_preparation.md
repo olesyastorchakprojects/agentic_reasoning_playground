@@ -35,6 +35,7 @@ Rules:
 - `SparseStrategyConfig` paths are repository-root-relative artifact paths;
 - hybrid collection implementations must resolve sparse artifact paths against repository root before opening them;
 - hybrid collection implementations must load the sparse vocabulary artifact from the configured sparse-vocabulary path;
+- hybrid collection implementations must load the tokenizer according to the configured `tokenizer.source` recorded in the sparse vocabulary artifact and the utility contract defined in `Specification/runtime/utils/tokenizer.md`;
 - hybrid collection implementations must map canonical query tokens through that vocabulary;
 - hybrid collection implementations must ignore out-of-vocabulary tokens in the current version;
 - sparse query vector shape must contain aligned `indices` and `values`;

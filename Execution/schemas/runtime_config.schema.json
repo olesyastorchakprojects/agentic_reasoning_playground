@@ -7,6 +7,7 @@
   "required": [
     "runtime",
     "retrieval",
+    "input_normalization",
     "model",
     "observability"
   ],
@@ -54,6 +55,9 @@
         "ollama": { "$ref": "#/$defs/model_transport" },
         "together": { "$ref": "#/$defs/model_transport" }
       }
+    },
+    "input_normalization": {
+      "$ref": "#/$defs/input_normalization"
     },
     "observability": {
       "type": "object",
@@ -140,6 +144,24 @@
           "minimum": 1
         },
         "retry": { "$ref": "#/$defs/retry" }
+      }
+    },
+    "input_normalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_input_tokens",
+        "tokenizer_source"
+      ],
+      "properties": {
+        "max_input_tokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tokenizer_source": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }

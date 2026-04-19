@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::api_clients::embedding_client::{EmbeddingClient, EmbeddingClientError};
-use crate::utils::tokenizer::SparseTokenizer;
+use crate::utils::tokenizer::HfTokenizer;
 use crate::config::{CollectionRetrievalSettings, EmbeddingModelSettings};
 
 use super::dense_search_client::{DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient};
@@ -152,11 +152,11 @@ pub struct QdrantTheoryChunksCollectionHybrid {
     qdrant_client: QdrantHybridSearchClient,
     sparse_vocabulary: SparseVocabularyArtifact,
     bm25_term_stats: Option<Bm25TermStatsArtifact>,
-    tokenizer: SparseTokenizer,
+    tokenizer: HfTokenizer,
 }
 
 impl QdrantTheoryChunksCollectionHybrid {
-    pub fn from_settings(
+    pub async fn from_settings(
         collection_settings: &CollectionRetrievalSettings,
         embedding_model: &EmbeddingModelSettings,
         qdrant_url: &str,
@@ -168,16 +168,17 @@ impl QdrantTheoryChunksCollectionHybrid {
                 |_| TheoryChunksCollectionError::InvalidRequest("invalid hybrid collection settings"),
             )?;
 
-        Self::new(embedding, qdrant, sparse, collection_settings.embedding_retry.clone())
+        Self::new(embedding, qdrant, sparse, collection_settings.embedding_retry.clone()).await
     }
 
-    pub fn new(
+    pub async fn new(
         embedding: EmbeddingConfig,
         qdrant: QdrantHybridCollectionConfig,
         sparse: SparseStrategyConfig,
         retry_policy: RetryPolicyConfig,
     ) -> Result<Self, TheoryChunksCollectionError> {
         let loaded = sparse_preparation::load_sparse_artifacts(&sparse, &qdrant.collection_name.0)
+            .await
             .map_err(TheoryChunksCollectionError::InvalidRequest)?;
 
         let embedding_client = EmbeddingClient::new(embedding.clone(), retry_policy.clone())
@@ -297,7 +298,7 @@ mod tests {
     use crate::api_clients::qdrant::shared_types::{
         QdrantCollectionName, QdrantVectorName, RetryBackoffKind,
     };
-    use crate::test_utils::{MockHttpServer, MockResponse, TempArtifactDir};
+    use crate::test_utils::{MockHttpServer, MockResponse, TempArtifactDir, populate_tokenizer_cache};
 
     fn policy() -> RetryPolicyConfig {
         RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
@@ -582,8 +583,8 @@ mod tests {
 
     // ── Hybrid artifact validation ─────────────────────────────────────────────
 
-    #[test]
-    fn hybrid_constructor_fails_when_vocabulary_absent() {
+    #[tokio::test]
+    async fn hybrid_constructor_fails_when_vocabulary_absent() {
         let result = QdrantTheoryChunksCollectionHybrid::new(
             EmbeddingConfig {
                 base_url: url::Url::parse("http://localhost/").unwrap(),
@@ -600,19 +601,20 @@ mod tests {
                 sparse_vocabulary_path: "/nonexistent/vocab.json".into(),
             },
             policy(),
-        );
+        )
+        .await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn hybrid_constructor_validates_artifact_compatibility() {
+    #[tokio::test]
+    async fn hybrid_constructor_validates_artifact_compatibility() {
         let dir = TempArtifactDir::new();
-        let tokenizer_path = dir.write_basic_tokenizer("tokenizer.json");
+        populate_tokenizer_cache("test/model");
         let vocab_json = serde_json::json!({
             "vocabulary_name": "theory__sparse_vocabulary",
             "collection_name": "theory",
             "text_processing": {"lowercase": true, "min_token_length": 2},
-            "tokenizer": {"library": "tokenizers", "source": tokenizer_path},
+            "tokenizer": {"library": "tokenizers", "source": "test/model"},
             "created_at": "2024-01-01T00:00:00Z",
             "tokens": []
         })
@@ -651,7 +653,8 @@ mod tests {
                 idf_smoothing: 0.5,
             },
             policy(),
-        );
+        )
+        .await;
         assert!(result.is_err());
     }
 }

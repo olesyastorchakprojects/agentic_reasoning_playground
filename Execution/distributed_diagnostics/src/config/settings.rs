@@ -3,11 +3,18 @@ use crate::utils::retry::RetryPolicyConfig;
 #[derive(Debug, Clone)]
 pub struct Settings {
     pub runtime: RuntimeSettings,
+    pub input_normalization: InputNormalizationSettings,
     pub retrieval: RetrievalSettings,
     pub model: ModelSettings,
     pub embedding_model: EmbeddingModelSettings,
     pub observability: ObservabilitySettings,
     pub postgres: PostgresSettings,
+}
+
+#[derive(Debug, Clone)]
+pub struct InputNormalizationSettings {
+    pub max_input_tokens: usize,
+    pub tokenizer_source: String,
 }
 
 #[derive(Debug, Clone)]

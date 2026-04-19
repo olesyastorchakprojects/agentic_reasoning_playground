@@ -9,6 +9,7 @@ This document defines the contract for:
 
 It is the source of truth for:
 - runtime-owned retrieval behavior;
+- request-level input normalization settings;
 - active model transport selection;
 - model transport runtime settings.
 - observability enablement and export timing settings.
@@ -59,6 +60,10 @@ Invalid `runtime.toml`:
 - `max_attempts`
 - `backoff`
 
+`[input_normalization]`
+- `max_input_tokens`
+- `tokenizer_source`
+
 `[model]`
 - `transport_kind`: active model transport; allowed values:
   - `ollama`
@@ -100,6 +105,14 @@ Invalid `runtime.toml`:
 - minimum accepted retrieval score for the given collection;
 - this is runtime behavior, not ingest compatibility.
 
+`input_normalization.max_input_tokens`
+- maximum accepted token count for normalized user input;
+- this is an operational runtime ceiling, not the tokenizer or model's theoretical maximum context length.
+
+`input_normalization.tokenizer_source`
+- Hugging Face tokenizer repository identifier used for runtime token counting;
+- the tokenizer utility resolves this identifier according to `Specification/runtime/utils/tokenizer.md`.
+
 `retrieval.<collection>.embedding_retry.backoff`
 `retrieval.<collection>.qdrant_retry.backoff`
 `model.<transport>.retry.backoff`
@@ -126,6 +139,7 @@ Invalid `runtime.toml`:
 
 `runtime.toml` owns:
 - runtime retrieval knobs such as `top_k` and `score_threshold`;
+- request-level input normalization knobs such as `max_input_tokens` and `tokenizer_source`;
 - retry settings;
 - active model transport selection;
 - model transport runtime settings.

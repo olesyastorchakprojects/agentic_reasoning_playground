@@ -7,9 +7,10 @@ use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
 use super::{
     BagOfWordsSettings, Bm25LikeSettings, CollectionRetrievalSettings, CollectionSettings,
     ConfigError, DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
-    ModelSettings, ModelTransportSettings, ObservabilitySettings, OllamaModelSettings,
-    PostgresSettings, RetrievalSettings, RuntimeSettings, Settings, SparsePreprocessingSettings,
-    SparseSettings, SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
+    InputNormalizationSettings, ModelSettings, ModelTransportSettings, ObservabilitySettings,
+    OllamaModelSettings, PostgresSettings, RetrievalSettings, RuntimeSettings, Settings,
+    SparsePreprocessingSettings, SparseSettings, SparseStrategySettings, TogetherModelSettings,
+    TokenizerSettings,
 };
 
 // ---------------------------------------------------------------------------
@@ -19,11 +20,18 @@ use super::{
 #[derive(Debug, Deserialize)]
 struct RawConfig {
     runtime: RawRuntime,
+    input_normalization: RawInputNormalization,
     retrieval: RawRetrieval,
     model: RawModel,
     embedding: RawEmbedding,
     qdrant: RawQdrant,
     observability: RawObservability,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawInputNormalization {
+    max_input_tokens: usize,
+    tokenizer_source: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,6 +229,10 @@ fn load_inner(
     Ok(Settings {
         runtime: RuntimeSettings {
             config_version: raw.runtime.config_version,
+        },
+        input_normalization: InputNormalizationSettings {
+            max_input_tokens: raw.input_normalization.max_input_tokens,
+            tokenizer_source: raw.input_normalization.tokenizer_source,
         },
         retrieval: RetrievalSettings {
             qdrant_url,
@@ -467,6 +479,10 @@ mod tests {
     const RUNTIME_TOML: &str = r#"
 [runtime]
 config_version = "v1"
+
+[input_normalization]
+max_input_tokens = 3000
+tokenizer_source = "Qwen/Qwen3-Embedding-0.6B"
 
 [retrieval.cards]
 top_k = 8
@@ -918,6 +934,17 @@ vector_name = "dense"
             }
             other => panic!("expected Bm25Like strategy, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn input_normalization_settings_are_preserved() {
+        let env = default_env();
+        let rt = write_temp(RUNTIME_TOML);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let s = load_test(&rt, &ing, &env).unwrap();
+        assert_eq!(s.input_normalization.max_input_tokens, 3000);
+        assert_eq!(s.input_normalization.tokenizer_source, "Qwen/Qwen3-Embedding-0.6B");
     }
 
     #[test]
