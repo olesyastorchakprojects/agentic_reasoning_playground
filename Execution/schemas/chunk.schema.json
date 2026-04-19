@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/chunk_schema.json",
+  "title": "Chunk Payload Schema",
+  "description": "Schema for a chunk payload stored as a Qdrant point payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "doc_id",
+    "chunk_id",
+    "url",
+    "document_title",
+    "chunk_index",
+    "page_start",
+    "page_end",
+    "content_hash",
+    "chunking_version",
+    "chunk_created_at",
+    "text"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Payload schema version. Current value is 1."
+    },
+    "doc_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable document identifier shared by all chunks of the same document."
+    },
+    "chunk_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable unique chunk identifier."
+    },
+    "url": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Source location for the document. It may be an external URL, local file URL, or local host address."
+    },
+    "document_title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable document title."
+    },
+    "section_title": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Title of the leaf section containing the chunk, if available."
+    },
+    "section_path": {
+      "type": "array",
+      "description": "Full section path ordered from top-level section to leaf section.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "chunk_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based chunk order within the document."
+    },
+    "page_start": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "First page covered by the chunk."
+    },
+    "page_end": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Last page covered by the chunk. Equal to page_start for single-page chunks."
+    },
+    "tags": {
+      "type": "array",
+      "description": "Free-form tags for filtering or grouping.",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "content_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Hash of the text field exactly as stored, without preprocessing or normalization."
+    },
+    "chunking_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Version of the chunking logic that produced the chunk."
+    },
+    "chunk_created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Chunk creation timestamp in ISO 8601 format."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Chunk text used for embedding and retrieval."
+    },
+    "ingest": {
+      "type": "object",
+      "description": "Ingest-time metadata. May be absent before ingest.",
+      "additionalProperties": false,
+      "properties": {
+        "embedding_model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Embedding model used when the vector was generated."
+        },
+        "embedding_model_dimension": {
+          "type": "integer",
+          "description": "Embedding vector dimension used when the vector was generated."
+        },
+        "ingest_config_version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Version of the ingest configuration used during ingest."
+        },
+        "ingested_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Ingest timestamp in ISO 8601 format."
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "schema_version": 1,
+      "doc_id": "2e9b0ce6-b07e-4b1c-9918-289627c74577",
+      "chunk_id": "b48b106e-58ab-4e14-a0ae-c46b607e9e24",
+      "url": "local://Understanding-Distributed-Systems-2nd-Edition.pdf",
+      "document_title": "Understanding Distributed Systems (2nd Edition)",
+      "section_title": "Introduction",
+      "section_path": [
+        "Introduction",
+        "Introduction"
+      ],
+      "chunk_index": 0,
+      "page_start": 19,
+      "page_end": 19,
+      "tags": [
+        "distributed-systems",
+        "book",
+        "architecture"
+      ],
+      "content_hash": "sha256:...",
+      "chunking_version": "v1",
+      "chunk_created_at": "2026-02-17T09:00:00Z",
+      "text": "Chapter 1 Introduction ...",
+      "ingest": {
+        "embedding_model": "text-embedding-3-large",
+        "embedding_model_dimension": 3072,
+        "ingest_config_version": "v1",
+        "ingested_at": "2026-02-17T09:05:00Z"
+      }
+    }
+  ]
+}

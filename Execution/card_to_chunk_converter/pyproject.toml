@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "card-to-chunk-converter"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "jsonschema>=4.21.0",
+    "psycopg2-binary>=2.9.9",
+]
+
+[project.scripts]
+convert-cards = "convert:main"

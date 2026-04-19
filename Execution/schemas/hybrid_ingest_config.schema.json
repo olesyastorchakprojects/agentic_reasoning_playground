@@ -1,0 +1,320 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "config_contract/hybrid_ingest/hybrid_ingest_config_schema.json",
+  "title": "Hybrid Ingest Config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pipeline",
+    "embedding",
+    "sparse",
+    "artifacts",
+    "qdrant",
+    "idempotency",
+    "logging"
+  ],
+  "properties": {
+    "pipeline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "chunk_schema_version",
+        "ingest_config_version",
+        "corpus_version",
+        "chunking_strategy"
+      ],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "chunk_schema_version": { "type": "integer", "minimum": 1 },
+        "ingest_config_version": { "type": "string", "minLength": 1 },
+        "corpus_version": {
+          "type": "string",
+          "pattern": "^v[1-9][0-9]*$"
+        },
+        "chunking_strategy": {
+          "type": "string",
+          "enum": ["structural", "fixed"]
+        }
+      }
+    },
+    "embedding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "input",
+        "transport",
+        "retry"
+      ],
+      "properties": {
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "dimension"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "dimension": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text_source"],
+          "properties": {
+            "text_source": { "type": "string", "minLength": 1 }
+          }
+        },
+        "transport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timeout_sec", "max_batch_size"],
+          "properties": {
+            "timeout_sec": { "type": "integer", "minimum": 1 },
+            "max_batch_size": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_attempts", "backoff"],
+          "properties": {
+            "max_attempts": { "type": "integer", "minimum": 1 },
+            "backoff": {
+              "type": "string",
+              "enum": ["exponential"]
+            }
+          }
+        }
+      }
+    },
+    "sparse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "input",
+        "tokenizer",
+        "preprocessing"
+      ],
+      "properties": {
+        "strategy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "version"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["bag_of_words", "bm25_like"] },
+            "version": { "type": "string", "enum": ["v1"] }
+          }
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["text_source"],
+          "properties": {
+            "text_source": { "type": "string", "minLength": 1 }
+          }
+        },
+        "tokenizer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["library", "source"],
+          "properties": {
+            "library": { "type": "string", "enum": ["tokenizers"] },
+            "source": { "type": "string", "minLength": 1 },
+            "revision": { "type": "string", "minLength": 1 }
+          }
+        },
+        "preprocessing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "lowercase", "min_token_length"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["basic_word_v1"] },
+            "lowercase": { "type": "boolean" },
+            "min_token_length": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "bag_of_words": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["document", "query"],
+          "properties": {
+            "document": { "type": "string", "enum": ["term_frequency"] },
+            "query": { "type": "string", "enum": ["binary_presence"] }
+          }
+        },
+        "bm25_like": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["document", "query", "k1", "b", "idf_smoothing"],
+          "properties": {
+            "document": { "type": "string", "enum": ["bm25_document_weight"] },
+            "query": { "type": "string", "enum": ["bm25_query_weight"] },
+            "k1": { "type": "number", "exclusiveMinimum": 0 },
+            "b": { "type": "number", "minimum": 0, "maximum": 1 },
+            "idf_smoothing": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_path"],
+      "properties": {
+        "manifest_path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "qdrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["collection", "point_id", "transport", "retry"],
+      "properties": {
+        "collection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "distance",
+            "dense_vector_name",
+            "sparse_vector_name",
+            "create_if_missing"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^(?!.*(?:_bow|_bm25)$)(?!.*_$).+$"
+            },
+            "distance": {
+              "type": "string",
+              "enum": ["Cosine", "Dot", "Euclid", "Manhattan"]
+            },
+            "dense_vector_name": { "type": "string", "minLength": 1 },
+            "sparse_vector_name": { "type": "string", "minLength": 1 },
+            "create_if_missing": { "type": "boolean" }
+          }
+        },
+        "point_id": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy", "namespace_uuid", "format"],
+          "properties": {
+            "strategy": { "type": "string", "enum": ["uuid5(chunk.chunk_id)"] },
+            "namespace_uuid": { "type": "string", "format": "uuid" },
+            "format": { "type": "string", "enum": ["canonical_uuid"] }
+          }
+        },
+        "transport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timeout_sec", "upsert_batch_size"],
+          "properties": {
+            "timeout_sec": { "type": "integer", "minimum": 1 },
+            "upsert_batch_size": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "retry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["max_attempts", "backoff"],
+          "properties": {
+            "max_attempts": { "type": "integer", "minimum": 1 },
+            "backoff": { "type": "string", "enum": ["exponential"] }
+          }
+        }
+      }
+    },
+    "idempotency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strategy",
+        "fingerprint_fields",
+        "on_fingerprint_change",
+        "on_metadata_change"
+      ],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["field_tuple_hash"]
+        },
+        "fingerprint_fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "on_fingerprint_change": {
+          "type": "string",
+          "enum": ["log_and_skip"]
+        },
+        "on_metadata_change": {
+          "type": "string",
+          "enum": ["update_changed_fields"]
+        }
+      }
+    },
+    "logging": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failed_chunk_log_path", "skipped_chunk_log_path"],
+      "properties": {
+        "failed_chunk_log_path": { "type": "string", "minLength": 1 },
+        "skipped_chunk_log_path": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "sparse": {
+            "properties": {
+              "strategy": {
+                "properties": {
+                  "kind": { "const": "bm25_like" }
+                },
+                "required": ["kind"]
+              }
+            },
+            "required": ["strategy"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "sparse": {
+            "required": ["bm25_like"],
+            "not": { "required": ["bag_of_words"] }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "sparse": {
+            "properties": {
+              "strategy": {
+                "properties": {
+                  "kind": { "const": "bag_of_words" }
+                },
+                "required": ["kind"]
+              }
+            },
+            "required": ["strategy"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "sparse": {
+            "required": ["bag_of_words"],
+            "not": { "required": ["bm25_like"] }
+          }
+        }
+      }
+    }
+  ]
+}
