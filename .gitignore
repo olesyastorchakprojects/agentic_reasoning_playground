@@ -6,6 +6,7 @@
 Thumbs.db
 
 target/
+__pycache__/
 .idea/
 .vscode/
 .codex
