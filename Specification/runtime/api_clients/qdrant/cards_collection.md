@@ -73,7 +73,7 @@ pub struct CardSearchRequest {
 }
 
 pub struct CardSearchHit {
-    pub card_id: String,
+    pub case_id: String,
     pub score: f32,
 }
 
@@ -240,11 +240,12 @@ Hybrid sparse-artifact compatibility rules:
 ## 8) Payload Mapping Contract
 
 Each raw hit payload must contain:
-- `card_id` as string.
+- `doc_id` as string.
 
 Mapping rules:
-- `CardSearchHit.card_id` must be built from payload `card_id`;
-- empty `card_id` string is a payload mapping failure;
+- `CardSearchHit.case_id` must be built from payload `doc_id`;
+- `CardSearchHit.case_id` is the canonical incident-card identity derived from chunk payload `doc_id`;
+- empty `doc_id` string is a payload mapping failure;
 - `CardSearchHit.score` must be built from raw Qdrant hit score;
 - extra payload fields must be ignored.
 

@@ -206,6 +206,7 @@ pub struct PostgresIncidentCardStoreConfig {
     pub postgres_url: String,
 }
 
+#[derive(Debug, Clone)]
 pub struct PostgresIncidentCardStore {
     pool: sqlx::PgPool,
 }

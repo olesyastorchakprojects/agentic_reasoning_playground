@@ -18,6 +18,15 @@ This module does not:
 - read raw TOML directly;
 - read raw environment variables directly.
 
+Shared-type source of truth:
+- `IncidentCard`
+- `IncidentPhase`
+- `DiscriminatingCheck`
+- `ExpectedObservation`
+
+These shared types are defined in:
+- `Specification/runtime/runtime.md`
+
 ## 2) Public Interface
 
 The generated Rust module must define:
@@ -70,6 +79,7 @@ Input types:
 Source of truth:
 - canonical card contract: `Specification/contracts/storage/incident_card.md`
 - canonical storage contract: `Specification/contracts/storage/incident_cards_storage.md`
+- shared runtime types: `Specification/runtime/runtime.md`
 - machine-readable schema: `Execution/schemas/incident_card.schema.json`
 - executable SQL schema: `Execution/docker/postgres/init/101_diagnostics_incident_cards.sql`
 
@@ -83,6 +93,10 @@ Type rules:
 - `case_id` must be non-empty after trimming;
 - `case_ids` may be empty;
 - duplicate `case_ids` in input must not produce duplicate output cards.
+
+Import rule for the generated Rust module:
+- `IncidentCard`, `IncidentPhase`, `DiscriminatingCheck`, and `ExpectedObservation` must be imported from `crate::shared_types`;
+- `incident_card_store` must not privately own these types once they are shared across runtime module boundaries.
 
 ## 4) Configuration Usage
 

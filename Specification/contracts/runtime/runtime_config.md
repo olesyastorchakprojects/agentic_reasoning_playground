@@ -28,6 +28,7 @@ Invalid `runtime.toml`:
 `[retrieval.cards]`
 - `top_k`: retrieval cut-off for cards retrieval
 - `score_threshold`: minimum accepted retrieval score for cards retrieval
+- `max_alternatives`: maximum number of non-primary alternative cards returned by candidate-card retrieval
 
 `[retrieval.cards.embedding_retry]`
 - `max_attempts`
@@ -40,6 +41,7 @@ Invalid `runtime.toml`:
 `[retrieval.practice]`
 - `top_k`
 - `score_threshold`
+- `max_alternatives`
 
 `[retrieval.practice.embedding_retry]`
 - `max_attempts`
@@ -52,6 +54,7 @@ Invalid `runtime.toml`:
 `[retrieval.theory]`
 - `top_k`
 - `score_threshold`
+- `max_alternatives`
 
 `[retrieval.theory.embedding_retry]`
 - `max_attempts`
@@ -111,6 +114,11 @@ Invalid `runtime.toml`:
 - minimum accepted retrieval score for the given collection;
 - this is runtime behavior, not ingest compatibility.
 
+`retrieval.<collection>.max_alternatives`
+- maximum number of non-primary alternative cards retained after top-ranked candidate selection;
+- this is runtime behavior;
+- it must be greater than or equal to zero.
+
 `input_normalization.max_input_tokens`
 - maximum accepted token count for normalized user input;
 - this is an operational runtime ceiling, not the tokenizer or model's theoretical maximum context length.
@@ -161,6 +169,7 @@ Invalid `runtime.toml`:
 - runtime retrieval knobs such as `top_k` and `score_threshold`;
 - request-level input normalization knobs such as `max_input_tokens` and `tokenizer_source`;
 - request-level query structuring asset locations and model-call limit such as `controlled_vocabulary_path`, `prompt_asset_path`, and `max_output_tokens`;
+ - runtime retrieval knobs such as `top_k`, `score_threshold`, and `max_alternatives`;
 - retry settings;
 - active model transport selection;
 - model transport runtime settings.

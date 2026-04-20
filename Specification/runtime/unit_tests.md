@@ -172,7 +172,9 @@ Generated unit tests for the `candidate_card_retrieval` runtime module must incl
 - constructor rejection of `top_k = 0`;
 - constructor rejection of `top_k < 1 + max_alternatives`;
 - constructor rejection of negative `score_threshold`;
-- constructor rejection of non-finite `score_threshold`;
+- constructor rejection of `score_threshold = f32::NAN`;
+- constructor rejection of `score_threshold = f32::INFINITY`;
+- constructor rejection of `score_threshold = f32::NEG_INFINITY`;
 - constructor rejection of `max_alternatives > 2`;
 - empty-result success returning `primary = None` and empty `alternatives`;
 - one-hit success returning `primary = Some(...)` and empty `alternatives`;
