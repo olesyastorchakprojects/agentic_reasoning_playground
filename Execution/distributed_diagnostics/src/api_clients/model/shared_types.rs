@@ -1,26 +1,26 @@
 pub use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelMessageRole {
     System,
     User,
     Assistant,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelMessage {
     pub role: ModelMessageRole,
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelResponseMode {
     Text,
     JsonObject,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelGenerationRequest {
     pub messages: Vec<ModelMessage>,
     pub temperature: f32,
@@ -28,7 +28,7 @@ pub struct ModelGenerationRequest {
     pub response_mode: ModelResponseMode,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelFinishReason {
     Stop,
     Length,
@@ -37,7 +37,7 @@ pub enum ModelFinishReason {
     Unknown(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelGenerationResponse {
     pub content: String,
     pub finish_reason: Option<ModelFinishReason>,
@@ -46,7 +46,7 @@ pub struct ModelGenerationResponse {
     pub total_tokens: Option<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TogetherModelClientConfig {
     pub base_url: url::Url,
     pub api_key: String,
@@ -54,7 +54,7 @@ pub struct TogetherModelClientConfig {
     pub timeout_sec: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OllamaModelClientConfig {
     pub base_url: url::Url,
     pub model_name: String,

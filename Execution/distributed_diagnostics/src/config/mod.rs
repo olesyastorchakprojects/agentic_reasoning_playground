@@ -6,9 +6,9 @@ pub use settings::{
     BagOfWordsSettings, Bm25LikeSettings, CollectionRetrievalSettings, CollectionSettings,
     DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
     InputNormalizationSettings, ModelSettings, ModelTransportSettings, ObservabilitySettings,
-    OllamaModelSettings, PostgresSettings, RetrievalSettings, RuntimeSettings, Settings,
-    SparsePreprocessingSettings, SparseSettings, SparseStrategySettings, TogetherModelSettings,
-    TokenizerSettings,
+    OllamaModelSettings, PostgresSettings, QueryStructuringSettings, RetrievalSettings,
+    RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
+    SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
 };
 
 use thiserror::Error;

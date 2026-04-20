@@ -3,12 +3,12 @@ use std::time::Duration;
 use backon::ExponentialBuilder;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RetryBackoffKind {
     Exponential,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetryPolicyConfig {
     pub max_attempts: u32,
     pub backoff: RetryBackoffKind,

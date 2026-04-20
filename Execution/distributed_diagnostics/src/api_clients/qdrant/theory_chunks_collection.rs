@@ -38,20 +38,21 @@ pub enum TheoryChunksCollectionError {
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct TheoryChunkSearchRequest {
     pub user_query: NormalizedUserQuery,
     pub limit: usize,
     pub score_threshold: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TheoryChunkSearchHit {
     pub chunk_id: String,
     pub score: f32,
     pub text: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TheoryChunkSearchResult {
     pub hits: Vec<TheoryChunkSearchHit>,
 }

@@ -20,6 +20,7 @@ pub enum DenseSearchClientError {
     InvalidResponse(&'static str),
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct DenseSearchRequest {
     pub collection_name: QdrantCollectionName,
     pub embedding: Embedding,
@@ -29,7 +30,7 @@ pub struct DenseSearchRequest {
     pub score_threshold: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DenseSearchResponse {
     pub hits: Vec<RawQdrantHit>,
 }

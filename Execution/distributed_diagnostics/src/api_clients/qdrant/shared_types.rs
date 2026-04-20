@@ -8,32 +8,32 @@ use std::collections::BTreeMap;
 
 // ─── Newtype wrappers ────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QdrantCollectionName(pub String);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QdrantVectorName(pub String);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizedUserQuery(pub String);
 
 // ─── Config types ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddingConfig {
     pub base_url: url::Url,
     pub model_name: String,
     pub embedding_dimension: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QdrantDenseCollectionConfig {
     pub qdrant_base_url: url::Url,
     pub collection_name: QdrantCollectionName,
     pub vector_name: Option<QdrantVectorName>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QdrantHybridCollectionConfig {
     pub qdrant_base_url: url::Url,
     pub collection_name: QdrantCollectionName,
@@ -41,7 +41,7 @@ pub struct QdrantHybridCollectionConfig {
     pub sparse_vector_name: QdrantVectorName,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SparseStrategyConfig {
     BagOfWords {
         sparse_vocabulary_path: String,
@@ -68,13 +68,13 @@ struct SparseVocabularyJson {
     pub tokens: Vec<TokenEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct TextProcessingConfig {
     pub lowercase: bool,
     pub min_token_length: usize,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct TokenizerConfig {
     pub library: String,
     pub source: String,
@@ -88,7 +88,7 @@ struct TokenEntry {
 }
 
 /// In-memory representation of the sparse vocabulary artifact.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SparseVocabularyArtifact {
     pub vocabulary_name: String,
     pub collection_name: String,
@@ -124,7 +124,7 @@ impl SparseVocabularyArtifact {
 }
 
 /// In-memory representation of BM25 corpus statistics.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Bm25TermStatsArtifact {
     pub collection_name: String,
     pub vocabulary_name: String,
@@ -192,12 +192,12 @@ impl Bm25TermStatsArtifact {
 
 // ─── Vector types ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Embedding {
     pub values: Vec<f32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SparseVector {
     pub indices: Vec<u32>,
     pub values: Vec<f32>,
@@ -205,25 +205,25 @@ pub struct SparseVector {
 
 // ─── Filter types ─────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QdrantMatchAnyFilter {
     pub field_name: String,
     pub values: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QdrantFilter {
     pub must_match_any: Vec<QdrantMatchAnyFilter>,
 }
 
 // ─── Raw hit types (transport layer) ─────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RawQdrantPayload {
     pub fields: BTreeMap<String, QdrantPayloadValue>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum QdrantPayloadValue {
     String(String),
     StringList(Vec<String>),
@@ -232,7 +232,7 @@ pub enum QdrantPayloadValue {
     Null,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RawQdrantHit {
     pub score: f32,
     pub payload: RawQdrantPayload,

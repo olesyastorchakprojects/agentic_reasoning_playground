@@ -22,6 +22,7 @@ pub enum HybridSearchClientError {
     InvalidResponse(&'static str),
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct HybridSearchRequest {
     pub collection_name: QdrantCollectionName,
     pub embedding: Embedding,
@@ -33,7 +34,7 @@ pub struct HybridSearchRequest {
     pub score_threshold: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HybridSearchResponse {
     pub hits: Vec<RawQdrantHit>,
 }

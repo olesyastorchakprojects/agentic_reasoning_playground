@@ -8,9 +8,9 @@ use super::{
     BagOfWordsSettings, Bm25LikeSettings, CollectionRetrievalSettings, CollectionSettings,
     ConfigError, DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
     InputNormalizationSettings, ModelSettings, ModelTransportSettings, ObservabilitySettings,
-    OllamaModelSettings, PostgresSettings, RetrievalSettings, RuntimeSettings, Settings,
-    SparsePreprocessingSettings, SparseSettings, SparseStrategySettings, TogetherModelSettings,
-    TokenizerSettings,
+    OllamaModelSettings, PostgresSettings, QueryStructuringSettings, RetrievalSettings,
+    RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
+    SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
 };
 
 // ---------------------------------------------------------------------------
@@ -21,6 +21,7 @@ use super::{
 struct RawConfig {
     runtime: RawRuntime,
     input_normalization: RawInputNormalization,
+    query_structuring: RawQueryStructuring,
     retrieval: RawRetrieval,
     model: RawModel,
     embedding: RawEmbedding,
@@ -32,6 +33,13 @@ struct RawConfig {
 struct RawInputNormalization {
     max_input_tokens: usize,
     tokenizer_source: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawQueryStructuring {
+    controlled_vocabulary_path: String,
+    prompt_asset_path: String,
+    max_output_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -50,6 +58,7 @@ struct RawRetrieval {
 struct RawCollectionRetrieval {
     top_k: usize,
     score_threshold: f32,
+    max_alternatives: usize,
     embedding_retry: RawRetryPolicy,
     qdrant_retry: RawRetryPolicy,
 }
@@ -234,6 +243,11 @@ fn load_inner(
             max_input_tokens: raw.input_normalization.max_input_tokens,
             tokenizer_source: raw.input_normalization.tokenizer_source,
         },
+        query_structuring: QueryStructuringSettings {
+            controlled_vocabulary_path: raw.query_structuring.controlled_vocabulary_path,
+            prompt_asset_path: raw.query_structuring.prompt_asset_path,
+            max_output_tokens: raw.query_structuring.max_output_tokens,
+        },
         retrieval: RetrievalSettings {
             qdrant_url,
             cards,
@@ -337,6 +351,7 @@ fn resolve_collection_retrieval(
     Ok(CollectionRetrievalSettings {
         top_k: raw_ret.top_k,
         score_threshold: raw_ret.score_threshold,
+        max_alternatives: raw_ret.max_alternatives,
         embedding_retry: resolve_retry(
             &raw_ret.embedding_retry,
             &format!("retrieval.{name}.embedding_retry"),
@@ -483,6 +498,11 @@ config_version = "v1"
 [input_normalization]
 max_input_tokens = 3000
 tokenizer_source = "Qwen/Qwen3-Embedding-0.6B"
+
+[query_structuring]
+controlled_vocabulary_path = "Specification/runtime/request_pipeline/query_structuring_controlled_vocabulary.manual_test.json"
+prompt_asset_path = "Specification/runtime/request_pipeline/query_structuring_prompt_baseline_v2.manual_test.json"
+max_output_tokens = 2200
 
 [retrieval.cards]
 top_k = 8
@@ -945,6 +965,24 @@ vector_name = "dense"
         let s = load_test(&rt, &ing, &env).unwrap();
         assert_eq!(s.input_normalization.max_input_tokens, 3000);
         assert_eq!(s.input_normalization.tokenizer_source, "Qwen/Qwen3-Embedding-0.6B");
+    }
+
+    #[test]
+    fn query_structuring_settings_are_preserved() {
+        let env = default_env();
+        let rt = write_temp(RUNTIME_TOML);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let s = load_test(&rt, &ing, &env).unwrap();
+        assert_eq!(
+            s.query_structuring.controlled_vocabulary_path,
+            "Specification/runtime/request_pipeline/query_structuring_controlled_vocabulary.manual_test.json"
+        );
+        assert_eq!(
+            s.query_structuring.prompt_asset_path,
+            "Specification/runtime/request_pipeline/query_structuring_prompt_baseline_v2.manual_test.json"
+        );
+        assert_eq!(s.query_structuring.max_output_tokens, 2200);
     }
 
     #[test]

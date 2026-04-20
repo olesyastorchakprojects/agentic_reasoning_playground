@@ -8,6 +8,7 @@
     "runtime",
     "retrieval",
     "input_normalization",
+    "query_structuring",
     "model",
     "observability"
   ],
@@ -58,6 +59,9 @@
     },
     "input_normalization": {
       "$ref": "#/$defs/input_normalization"
+    },
+    "query_structuring": {
+      "$ref": "#/$defs/query_structuring"
     },
     "observability": {
       "type": "object",
@@ -111,6 +115,7 @@
       "required": [
         "top_k",
         "score_threshold",
+        "max_alternatives",
         "embedding_retry",
         "qdrant_retry"
       ],
@@ -121,6 +126,10 @@
         },
         "score_threshold": {
           "type": "number"
+        },
+        "max_alternatives": {
+          "type": "integer",
+          "minimum": 0
         },
         "embedding_retry": { "$ref": "#/$defs/retry" },
         "qdrant_retry": { "$ref": "#/$defs/retry" }
@@ -161,6 +170,29 @@
         "tokenizer_source": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "query_structuring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controlled_vocabulary_path",
+        "prompt_asset_path",
+        "max_output_tokens"
+      ],
+      "properties": {
+        "controlled_vocabulary_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt_asset_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     }

@@ -4,6 +4,7 @@ config_version = "v1"
 [retrieval.cards]
 top_k = 8
 score_threshold = 0.2
+max_alternatives = 2
 
 [retrieval.cards.embedding_retry]
 max_attempts = 3
@@ -16,6 +17,7 @@ backoff = "exponential"
 [retrieval.practice]
 top_k = 12
 score_threshold = 0.2
+max_alternatives = 2
 
 [retrieval.practice.embedding_retry]
 max_attempts = 3
@@ -28,6 +30,7 @@ backoff = "exponential"
 [retrieval.theory]
 top_k = 12
 score_threshold = 0.2
+max_alternatives = 2
 
 [retrieval.theory.embedding_retry]
 max_attempts = 3
@@ -40,6 +43,11 @@ backoff = "exponential"
 [input_normalization]
 max_input_tokens = 3000
 tokenizer_source = "Qwen/Qwen3-Embedding-0.6B"
+
+[query_structuring]
+controlled_vocabulary_path = "Specification/runtime/request_pipeline/query_structuring_controlled_vocabulary.manual_test.json"
+prompt_asset_path = "Specification/runtime/request_pipeline/query_structuring_prompt_baseline_v2.manual_test.json"
+max_output_tokens = 2200
 
 [model]
 transport_kind = "ollama"
