@@ -25,6 +25,7 @@ This document is the crate-level source of truth for:
 - `src/lib.rs`
 - `src/main.rs`
 - `src/errors/mod.rs`
+- `src/shared_types.rs`
 - `src/api_clients/mod.rs`
 - `src/config/mod.rs`
 - crate-level composition and re-export rules
@@ -70,6 +71,7 @@ The current required crate-level module tree is:
     - `postgres`
   - `request_pipeline`
     - `input_normalization`
+    - `query_structuring`
   - `utils`
     - `retry`
     - `tokenizer`
@@ -85,6 +87,12 @@ Structure rules:
 - `utils` owns reusable crate-wide helpers that are intentionally shared across multiple runtime areas;
 - child API-client subtrees keep their own dedicated module contracts;
 - the generated crate structure must remain extension-friendly for future runtime layers.
+
+Current request-pipeline file-layout rule:
+- `request_pipeline::input_normalization` is generated as `src/request_pipeline/input_normalization.rs`;
+- `request_pipeline::query_structuring` is generated as `src/request_pipeline/query_structuring.rs`;
+- the current version must not split `query_structuring` into a nested `mod.rs` subtree;
+- future refactoring into a directory module is allowed only after the crate-level runtime specification is updated.
 
 ## 3) Module Boundary Rules
 
@@ -344,6 +352,7 @@ pub struct Settings {
     pub runtime: RuntimeSettings,
     pub retrieval: RetrievalSettings,
     pub input_normalization: InputNormalizationSettings,
+    pub query_structuring: QueryStructuringSettings,
     pub model: ModelSettings,
     pub embedding_model: EmbeddingModelSettings,
     pub observability: ObservabilitySettings,
@@ -357,6 +366,12 @@ pub struct RuntimeSettings {
 pub struct InputNormalizationSettings {
     pub max_input_tokens: usize,
     pub tokenizer_source: String,
+}
+
+pub struct QueryStructuringSettings {
+    pub controlled_vocabulary_path: String,
+    pub prompt_asset_path: String,
+    pub max_output_tokens: u32,
 }
 
 pub struct EmbeddingModelSettings {
@@ -395,6 +410,8 @@ Types that are private to a single module must be defined in that module specifi
 For the current request-pipeline stage, the required shared types are:
 - `UserRequest`
 - `NormalizedUserRequest`
+- `StructuredUserQuery`
+- `QueryStructuringOutput`
 
 The generated Rust runtime must define shared types equivalent in ownership to:
 
@@ -406,6 +423,56 @@ pub struct UserRequest {
 pub struct NormalizedUserRequest {
     pub query: String,
     pub input_token_count: usize,
+}
+
+pub struct StructuredUserQuery {
+    pub intent: String,
+    pub scenario: String,
+    pub symptoms: Vec<StructuredUserQueryTerm>,
+    pub affected_subsystems: Vec<StructuredUserQueryTerm>,
+    pub failure_modes: Vec<StructuredUserQueryTerm>,
+    pub system_properties: Vec<StructuredUserQueryTerm>,
+    pub entities: Vec<String>,
+    pub constraints: Vec<String>,
+    pub triggers: Vec<String>,
+    pub observability_signals: Vec<String>,
+    pub unresolved_terms: Vec<String>,
+    pub rejected_nearby_terms: Vec<RejectedNearbyTerm>,
+    pub confidence: StructuredUserQueryConfidence,
+}
+
+pub struct QueryStructuringOutput {
+    pub structured_query: StructuredUserQuery,
+    pub token_usage: ModelTokenUsage,
+}
+
+pub struct ModelTokenUsage {
+    pub prompt_tokens: Option<usize>,
+    pub completion_tokens: Option<usize>,
+    pub total_tokens: Option<usize>,
+}
+
+pub struct StructuredUserQueryTerm {
+    pub term: String,
+    pub evidence_span: String,
+    pub support_level: StructuredUserQuerySupportLevel,
+}
+
+pub struct RejectedNearbyTerm {
+    pub term: String,
+    pub reason: String,
+}
+
+pub enum StructuredUserQuerySupportLevel {
+    Explicit,
+    StrongParaphrase,
+    WeakInference,
+}
+
+pub enum StructuredUserQueryConfidence {
+    Low,
+    Medium,
+    High,
 }
 ```
 
@@ -426,6 +493,30 @@ Shared type rules:
    - `query` is the normalized form of `UserRequest.query`;
    - `input_token_count` is the token count computed for `NormalizedUserRequest.query` using the tokenizer defined by the input-normalization contract;
    - `NormalizedUserRequest` must not contain raw input copies, config values, or module-private processing metadata.
+
+3. `StructuredUserQuery`
+   - `StructuredUserQuery` is the shared structured interpretation produced by the `query_structuring` boundary;
+   - it must contain only cross-module data needed by downstream runtime modules;
+   - it must not contain raw prompt text, raw model responses, file paths, or module-private parsing metadata;
+   - vocabulary-backed term selections must be represented through `StructuredUserQueryTerm`;
+   - rejected nearby candidates must be represented through `RejectedNearbyTerm`;
+   - confidence must be represented through `StructuredUserQueryConfidence` rather than raw string values.
+
+4. `QueryStructuringOutput`
+   - `QueryStructuringOutput` is the shared runtime output of the `query_structuring` boundary;
+   - it wraps the semantic result plus execution metadata from the model call;
+   - `structured_query` must contain the parsed domain interpretation;
+   - `token_usage` must contain model token-usage metadata and must not be merged into `StructuredUserQuery`.
+
+5. `ModelTokenUsage`
+   - `ModelTokenUsage` is shared execution metadata for one model call;
+   - `prompt_tokens`, `completion_tokens`, and `total_tokens` must remain `Option<usize>` because providers may omit some or all usage fields;
+   - this type is metadata-only and must not be treated as part of the semantic query structure.
+
+Shared type export rule:
+- all shared types defined in this section, including `StructuredUserQuery`, `QueryStructuringOutput`, and `ModelTokenUsage`, must be defined in `src/shared_types.rs`;
+- `lib.rs` must expose the shared-types module as `pub mod shared_types;`;
+- runtime leaf modules must import these shared types through `crate::shared_types::...` rather than through ad hoc re-exports.
 
 ### Retrieval Settings
 
@@ -468,6 +559,23 @@ Rules:
 - `InputNormalizationSettings` is the single typed settings slice used by request-level input normalization code;
 - input-normalization runtime modules must receive this typed settings slice rather than reading raw TOML values;
 - tokenizer loading behavior itself is defined by `Specification/runtime/utils/tokenizer.md` rather than by the crate-level settings model.
+
+### Query Structuring Settings
+
+The generated Rust settings model must define query-structuring settings equivalent in ownership to:
+
+```rust
+pub struct QueryStructuringSettings {
+    pub controlled_vocabulary_path: String,
+    pub prompt_asset_path: String,
+    pub max_output_tokens: u32,
+}
+```
+
+Rules:
+- `QueryStructuringSettings` is the single typed settings slice used by request-level query structuring code;
+- query-structuring runtime modules must receive this typed settings slice rather than reading raw TOML values;
+- the controlled vocabulary and prompt asset are runtime-owned file inputs selected by config, not by direct module constants.
 
 ### Collection Variants
 
@@ -590,6 +698,9 @@ Required top-level field mappings:
 - `Settings.runtime.config_version` <- `runtime.toml [runtime].config_version`
 - `Settings.input_normalization.max_input_tokens` <- `runtime.toml [input_normalization].max_input_tokens`
 - `Settings.input_normalization.tokenizer_source` <- `runtime.toml [input_normalization].tokenizer_source`
+- `Settings.query_structuring.controlled_vocabulary_path` <- `runtime.toml [query_structuring].controlled_vocabulary_path`
+- `Settings.query_structuring.prompt_asset_path` <- `runtime.toml [query_structuring].prompt_asset_path`
+- `Settings.query_structuring.max_output_tokens` <- `runtime.toml [query_structuring].max_output_tokens`
 - `Settings.embedding_model.url` <- environment variable `OLLAMA_URL`
 - `Settings.embedding_model.name` <- `ingest.toml [embedding.model].name`
 - `Settings.embedding_model.dimension` <- `ingest.toml [embedding.model].dimension`

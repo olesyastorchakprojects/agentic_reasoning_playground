@@ -10,6 +10,7 @@ This document defines the contract for:
 It is the source of truth for:
 - runtime-owned retrieval behavior;
 - request-level input normalization settings;
+- request-level query structuring asset paths;
 - active model transport selection;
 - model transport runtime settings.
 - observability enablement and export timing settings.
@@ -64,6 +65,11 @@ Invalid `runtime.toml`:
 - `max_input_tokens`
 - `tokenizer_source`
 
+`[query_structuring]`
+- `controlled_vocabulary_path`
+- `prompt_asset_path`
+- `max_output_tokens`
+
 `[model]`
 - `transport_kind`: active model transport; allowed values:
   - `ollama`
@@ -113,6 +119,20 @@ Invalid `runtime.toml`:
 - Hugging Face tokenizer repository identifier used for runtime token counting;
 - the tokenizer utility resolves this identifier according to `Specification/runtime/utils/tokenizer.md`.
 
+`query_structuring.controlled_vocabulary_path`
+- path to the prebuilt controlled-vocabulary JSON asset used by the `query_structuring` module;
+- this runtime module reads the file contents from disk during module construction;
+- the asset is runtime input and is not rebuilt from PostgreSQL by this module.
+
+`query_structuring.prompt_asset_path`
+- path to the JSON prompt asset used by the `query_structuring` module;
+- the prompt asset must contain the versioned system prompt and user-template content consumed by prompt assembly.
+
+`query_structuring.max_output_tokens`
+- output token ceiling used by the `query_structuring` model call;
+- this value is runtime-owned and applies uniformly to this module's requests;
+- it must be greater than zero.
+
 `retrieval.<collection>.embedding_retry.backoff`
 `retrieval.<collection>.qdrant_retry.backoff`
 `model.<transport>.retry.backoff`
@@ -140,6 +160,7 @@ Invalid `runtime.toml`:
 `runtime.toml` owns:
 - runtime retrieval knobs such as `top_k` and `score_threshold`;
 - request-level input normalization knobs such as `max_input_tokens` and `tokenizer_source`;
+- request-level query structuring asset locations and model-call limit such as `controlled_vocabulary_path`, `prompt_asset_path`, and `max_output_tokens`;
 - retry settings;
 - active model transport selection;
 - model transport runtime settings.

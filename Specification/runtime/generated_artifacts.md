@@ -34,6 +34,7 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/lib.rs`
 - `src/main.rs`
 - `src/errors/mod.rs`
+- `src/shared_types.rs`
 - `src/config/mod.rs`
 - `src/config/settings.rs`
 - `src/config/load.rs`
@@ -44,6 +45,7 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/api_clients/postgres/mod.rs`
 - `src/request_pipeline/mod.rs`
 - `src/request_pipeline/input_normalization.rs`
+- `src/request_pipeline/query_structuring.rs`
 - `src/utils/mod.rs`
 - `src/utils/retry.rs`
 - `src/utils/tokenizer.rs`
@@ -54,6 +56,7 @@ Artifact rules:
 - `src/main.rs` must exist as the binary entrypoint;
 - `src/main.rs` must implement the crate-level CLI contract from `Specification/runtime/runtime.md` and delegate config loading to library-owned code;
 - `src/errors/mod.rs` must define the parent error hierarchy required by `Specification/runtime/runtime.md`;
+- `src/shared_types.rs` must define the shared cross-module runtime types required by `Specification/runtime/runtime.md`;
 - `src/config/mod.rs` must expose the parent config interface and parent config error type;
 - `src/config/settings.rs` must define the resolved typed settings model required by `Specification/runtime/runtime.md`;
 - `src/config/load.rs` must define config loading and merge logic for runtime TOML, ingest TOML, and environment values;
@@ -74,6 +77,9 @@ Child artifacts for the Qdrant API-client subtree are owned by:
 
 Child artifacts for the request-pipeline leaf module `input_normalization` are owned by:
 - `Specification/runtime/request_pipeline/input_normalization.md`
+
+Child artifacts for the request-pipeline leaf module `query_structuring` are owned by:
+- `Specification/runtime/request_pipeline/query_structuring.md`
 
 Child artifacts for the tokenizer utility module are owned by:
 - `Specification/runtime/utils/tokenizer.md`
@@ -97,6 +103,7 @@ Current delegated child specifications:
 - `Specification/runtime/api_clients/model/generation_order.md`
 - `Specification/runtime/api_clients/qdrant/generation_order.md`
 - `Specification/runtime/request_pipeline/input_normalization.md`
+- `Specification/runtime/request_pipeline/query_structuring.md`
 - `Specification/runtime/utils/tokenizer.md`
 - `Specification/card_to_chunk_converter/incident_card_chunk_conversion.md`
 

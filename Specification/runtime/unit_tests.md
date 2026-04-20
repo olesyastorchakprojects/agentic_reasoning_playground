@@ -29,6 +29,7 @@ The current crate-level runtime unit-test scope covers:
 - `config`
 - `observability`
 - `api_clients`
+- `request_pipeline`
 - `utils`
 - `main`
 
@@ -91,7 +92,8 @@ Generated unit tests for the crate-level `config` boundary must include all of t
 - unsupported collection kinds fail before runtime request processing begins;
 - unsupported sparse strategy kinds fail before runtime request processing begins;
 - resolved collection retrieval settings preserve `top_k`, `score_threshold`, retry settings, and the typed collection variant in one `CollectionRetrievalSettings` value;
-- resolved settings place `corpus_version` on the collection settings boundary rather than as one shared top-level retrieval field.
+- resolved settings place `corpus_version` on the collection settings boundary rather than as one shared top-level retrieval field;
+- resolved settings preserve `query_structuring.controlled_vocabulary_path`, `query_structuring.prompt_asset_path`, and `query_structuring.max_output_tokens`.
 
 ### 4.4) `utils`
 
@@ -133,7 +135,37 @@ Generated unit tests for the crate-level `observability` boundary must include a
 - initialization uses `trace_batch_scheduled_delay_ms` when constructing the tracing pipeline;
 - initialization uses `metrics_export_interval_ms` when constructing the metrics pipeline.
 
-### 4.7) `main`
+### 4.7) `query_structuring`
+
+Generated unit tests for the `query_structuring` runtime module must include all of the following cases:
+
+- constructor fails when either asset path is empty;
+- constructor fails when `max_output_tokens = 0`;
+- constructor fails when the vocabulary asset file cannot be read from disk;
+- constructor fails when the prompt asset file cannot be read from disk;
+- constructor fails when the vocabulary asset JSON is invalid;
+- constructor fails when the prompt asset JSON is invalid;
+- constructor fails when the user template is missing either required placeholder;
+- constructor succeeds when both JSON asset files exist on disk and satisfy the asset contract;
+- `structure(...)` builds exactly two messages in order: one `system`, one `user`;
+- `structure(...)` serializes the loaded vocabulary into compact JSON inside the user message;
+- `structure(...)` sends `JsonObject` response mode;
+- `structure(...)` sends `temperature = 0.0`;
+- `structure(...)` sends the configured `max_output_tokens`;
+- successful model output preserves `prompt_tokens`, `completion_tokens`, and `total_tokens` in `QueryStructuringOutput.token_usage`;
+- model output with malformed JSON fails with `InvalidModelOutput`;
+- model output missing a required top-level field fails with `InvalidModelOutput`;
+- model output with an unknown `support_level` fails with `InvalidModelOutput`;
+- model output with an unknown `confidence` fails with `InvalidModelOutput`;
+- model output with more than one `failure_mode` fails with `InvalidModelOutput`;
+- model output with `finish_reason = stop` and otherwise valid content succeeds;
+- model output with `finish_reason = length` and incomplete JSON fails with `InvalidModelOutput`;
+- model output with any non-`stop` finish reason fails with `InvalidModelOutput`;
+- `InvalidModelOutput` preserves available `prompt_tokens`, `completion_tokens`, and `total_tokens`;
+- `InvalidModelOutput` preserves the parsed `finish_reason` when the provider returned one;
+- successful model output maps into the exact shared `QueryStructuringOutput` shape.
+
+### 4.8) `main`
 
 Generated unit tests for the crate-level `main` CLI boundary must include all of the following cases:
 
