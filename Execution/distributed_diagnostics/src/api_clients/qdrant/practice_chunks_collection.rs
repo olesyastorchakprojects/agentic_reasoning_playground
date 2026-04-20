@@ -38,11 +38,13 @@ pub enum PracticeChunksCollectionError {
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PracticeChunkFilter {
-    pub card_ids: Vec<String>,
+    pub case_ids: Vec<String>,
     pub chunk_tags: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct PracticeChunkSearchRequest {
     pub user_query: NormalizedUserQuery,
     pub filter: PracticeChunkFilter,
@@ -50,16 +52,16 @@ pub struct PracticeChunkSearchRequest {
     pub score_threshold: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PracticeChunkSearchHit {
     pub chunk_id: String,
     pub score: f32,
-    pub card_id: Option<String>,
+    pub case_id: String,
     pub chunk_tags: Vec<String>,
     pub text: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PracticeChunkSearchResult {
     pub hits: Vec<PracticeChunkSearchHit>,
 }
@@ -276,8 +278,8 @@ fn validate_request(req: &PracticeChunkSearchRequest) -> Result<(), PracticeChun
     if req.user_query.0.trim().is_empty() {
         return Err(PracticeChunksCollectionError::InvalidRequest("user_query must not be empty"));
     }
-    if req.filter.card_ids.is_empty() {
-        return Err(PracticeChunksCollectionError::InvalidRequest("filter.card_ids must not be empty"));
+    if req.filter.case_ids.is_empty() {
+        return Err(PracticeChunksCollectionError::InvalidRequest("filter.case_ids must not be empty"));
     }
     if req.filter.chunk_tags.is_empty() {
         return Err(PracticeChunksCollectionError::InvalidRequest(
@@ -299,8 +301,8 @@ fn map_filter(f: &PracticeChunkFilter) -> QdrantFilter {
     QdrantFilter {
         must_match_any: vec![
             QdrantMatchAnyFilter {
-                field_name: "card_id".to_string(),
-                values: f.card_ids.clone(),
+                field_name: "doc_id".to_string(),
+                values: f.case_ids.clone(),
             },
             QdrantMatchAnyFilter {
                 field_name: "chunk_tags".to_string(),
@@ -319,14 +321,21 @@ fn map_hit(
         _ => return Err(PracticeChunksCollectionError::PayloadMapping("missing or invalid chunk_id")),
     };
 
-    let card_id = match fields.get("card_id") {
-        Some(QdrantPayloadValue::String(s)) => Some(s.clone()),
+    let case_id = match fields.get("doc_id") {
+        Some(QdrantPayloadValue::String(s)) if !s.is_empty() => s.clone(),
+        Some(QdrantPayloadValue::String(_)) => {
+            return Err(PracticeChunksCollectionError::PayloadMapping("empty doc_id"))
+        }
         Some(_) => {
             return Err(PracticeChunksCollectionError::PayloadMapping(
-                "invalid card_id type",
+                "invalid doc_id type",
             ))
         }
-        None => None,
+        None => {
+            return Err(PracticeChunksCollectionError::PayloadMapping(
+                "missing or invalid doc_id",
+            ))
+        }
     };
 
     let chunk_tags = match fields.get("chunk_tags") {
@@ -343,7 +352,7 @@ fn map_hit(
         _ => return Err(PracticeChunksCollectionError::PayloadMapping("missing or invalid text")),
     };
 
-    Ok(PracticeChunkSearchHit { chunk_id, score, card_id, chunk_tags, text })
+    Ok(PracticeChunkSearchHit { chunk_id, score, case_id, chunk_tags, text })
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -380,7 +389,7 @@ mod tests {
         PracticeChunkSearchRequest {
             user_query: NormalizedUserQuery("query text".into()),
             filter: PracticeChunkFilter {
-                card_ids: vec!["card1".into()],
+                case_ids: vec!["case1".into()],
                 chunk_tags: vec!["tag:x".into()],
             },
             limit: 5,
@@ -398,7 +407,7 @@ mod tests {
                 "score": 0.8,
                 "payload": {
                     "chunk_id": "chunk1",
-                    "card_id": "card1",
+                    "doc_id": "case1",
                     "chunk_tags": ["tag:x"],
                     "text": "some text"
                 }
@@ -422,7 +431,7 @@ mod tests {
         let req = PracticeChunkSearchRequest {
             user_query: NormalizedUserQuery("".into()),
             filter: PracticeChunkFilter {
-                card_ids: vec!["c".into()],
+                case_ids: vec!["c".into()],
                 chunk_tags: vec!["t".into()],
             },
             limit: 5,
@@ -436,7 +445,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_card_ids_returns_invalid_request() {
+    async fn empty_case_ids_returns_invalid_request() {
         let emb_server = MockHttpServer::new(vec![]).await;
         let qdrant_server = MockHttpServer::new(vec![]).await;
         let client = QdrantPracticeChunksCollectionDense::new(
@@ -447,7 +456,7 @@ mod tests {
         .unwrap();
         let req = PracticeChunkSearchRequest {
             user_query: NormalizedUserQuery("q".into()),
-            filter: PracticeChunkFilter { card_ids: vec![], chunk_tags: vec!["t".into()] },
+            filter: PracticeChunkFilter { case_ids: vec![], chunk_tags: vec!["t".into()] },
             limit: 5,
             score_threshold: 0.2,
         };
@@ -469,7 +478,7 @@ mod tests {
         .unwrap();
         let req = PracticeChunkSearchRequest {
             user_query: NormalizedUserQuery("q".into()),
-            filter: PracticeChunkFilter { card_ids: vec!["c".into()], chunk_tags: vec![] },
+            filter: PracticeChunkFilter { case_ids: vec!["c".into()], chunk_tags: vec![] },
             limit: 5,
             score_threshold: 0.2,
         };
@@ -570,9 +579,9 @@ mod tests {
         let bodies = qdrant_server.take_bodies().await;
         let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
         let must = body["filter"]["must"].as_array().unwrap();
-        let card_clause = must.iter().find(|c| c["key"] == "card_id").unwrap();
+        let card_clause = must.iter().find(|c| c["key"] == "doc_id").unwrap();
         let tag_clause = must.iter().find(|c| c["key"] == "chunk_tags").unwrap();
-        assert_eq!(card_clause["match"]["any"], serde_json::json!(["card1"]));
+        assert_eq!(card_clause["match"]["any"], serde_json::json!(["case1"]));
         assert_eq!(tag_clause["match"]["any"], serde_json::json!(["tag:x"]));
     }
 
@@ -624,19 +633,47 @@ mod tests {
         .unwrap();
         let result = client.search(&valid_request()).await.unwrap();
         assert_eq!(result.hits[0].chunk_id, "chunk1");
-        assert_eq!(result.hits[0].card_id, Some("card1".into()));
+        assert_eq!(result.hits[0].case_id, "case1");
         assert_eq!(result.hits[0].chunk_tags, vec!["tag:x"]);
         assert_eq!(result.hits[0].text, "some text");
     }
 
     #[tokio::test]
-    async fn invalid_optional_card_id_type_fails_with_payload_mapping() {
+    async fn invalid_doc_id_type_fails_with_payload_mapping() {
         let resp = serde_json::json!({
             "result": {"points": [{
                 "score": 0.8,
                 "payload": {
                     "chunk_id": "c1",
-                    "card_id": 123,
+                    "doc_id": 123,
+                    "chunk_tags": ["t"],
+                    "text": "txt"
+                }
+            }]}
+        })
+        .to_string();
+        let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
+        let qdrant_server = MockHttpServer::new(vec![MockResponse::ok(resp)]).await;
+        let client = QdrantPracticeChunksCollectionDense::new(
+            emb_config(&emb_server.base_url()),
+            dense_col(&qdrant_server.base_url()),
+            policy(),
+        )
+        .unwrap();
+        assert!(matches!(
+            client.search(&valid_request()).await.unwrap_err(),
+            PracticeChunksCollectionError::PayloadMapping(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn empty_doc_id_fails_with_payload_mapping() {
+        let resp = serde_json::json!({
+            "result": {"points": [{
+                "score": 0.8,
+                "payload": {
+                    "chunk_id": "c1",
+                    "doc_id": "",
                     "chunk_tags": ["t"],
                     "text": "txt"
                 }
@@ -661,8 +698,8 @@ mod tests {
     async fn one_invalid_hit_fails_whole_mapping() {
         let resp = serde_json::json!({
             "result": {"points": [
-                {"score": 0.9, "payload": {"chunk_id": "c1", "chunk_tags": ["t"], "text": "ok"}},
-                {"score": 0.7, "payload": {"chunk_id": "c2", "card_id": 99, "chunk_tags": ["t"], "text": "bad"}}
+                {"score": 0.9, "payload": {"chunk_id": "c1", "doc_id": "case1", "chunk_tags": ["t"], "text": "ok"}},
+                {"score": 0.7, "payload": {"chunk_id": "c2", "doc_id": 99, "chunk_tags": ["t"], "text": "bad"}}
             ]}
         })
         .to_string();

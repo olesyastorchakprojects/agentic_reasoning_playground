@@ -68,7 +68,7 @@ Collection-specific public types:
 
 ```rust
 pub struct PracticeChunkFilter {
-    pub card_ids: Vec<String>,
+    pub case_ids: Vec<String>,
     pub chunk_tags: Vec<String>,
 }
 
@@ -82,7 +82,7 @@ pub struct PracticeChunkSearchRequest {
 pub struct PracticeChunkSearchHit {
     pub chunk_id: String,
     pub score: f32,
-    pub card_id: Option<String>,
+    pub case_id: String,
     pub chunk_tags: Vec<String>,
     pub text: String,
 }
@@ -94,7 +94,7 @@ pub struct PracticeChunkSearchResult {
 
 Type rules:
 - `user_query` must satisfy the rules of `NormalizedUserQuery`;
-- `filter.card_ids` must not be empty in the current version;
+- `filter.case_ids` must not be empty in the current version;
 - `filter.chunk_tags` must not be empty in the current version;
 - `limit` must be greater than zero;
 - negative `score_threshold` is an invalid request;
@@ -162,7 +162,7 @@ Field rules:
 
 Dense implementation validation rules:
 - empty `request.user_query.0` after trimming must fail with `PracticeChunksCollectionError::InvalidRequest`;
-- empty `request.filter.card_ids` must fail with `PracticeChunksCollectionError::InvalidRequest`;
+- empty `request.filter.case_ids` must fail with `PracticeChunksCollectionError::InvalidRequest`;
 - empty `request.filter.chunk_tags` must fail with `PracticeChunksCollectionError::InvalidRequest`;
 - `request.limit == 0` must fail with `PracticeChunksCollectionError::InvalidRequest`;
 - negative `request.score_threshold` must fail with `PracticeChunksCollectionError::InvalidRequest`;
@@ -184,7 +184,7 @@ Dense implementation validation rules:
 
 Hybrid implementation validation rules:
 - empty `request.user_query.0` after trimming must fail with `PracticeChunksCollectionError::InvalidRequest`;
-- empty `request.filter.card_ids` must fail with `PracticeChunksCollectionError::InvalidRequest`;
+- empty `request.filter.case_ids` must fail with `PracticeChunksCollectionError::InvalidRequest`;
 - empty `request.filter.chunk_tags` must fail with `PracticeChunksCollectionError::InvalidRequest`;
 - `request.limit == 0` must fail with `PracticeChunksCollectionError::InvalidRequest`;
 - negative `request.score_threshold` must fail with `PracticeChunksCollectionError::InvalidRequest`;
@@ -255,11 +255,11 @@ Hybrid sparse-artifact compatibility rules:
 ## 8) Filter Mapping Rules
 
 `PracticeChunkFilter` must be mapped into `QdrantFilter` as follows:
-- `card_ids` maps to one `QdrantMatchAnyFilter` with `field_name = "card_id"`;
+- `case_ids` maps to one `QdrantMatchAnyFilter` with `field_name = "doc_id"`;
 - `chunk_tags` maps to one `QdrantMatchAnyFilter` with `field_name = "chunk_tags"`.
 
 Structural mapping rules:
-- `PracticeChunkFilter.card_ids` must map to `QdrantMatchAnyFilter { field_name: "card_id".to_string(), values: request.filter.card_ids.clone() }`;
+- `PracticeChunkFilter.case_ids` must map to `QdrantMatchAnyFilter { field_name: "doc_id".to_string(), values: request.filter.case_ids.clone() }`;
 - `PracticeChunkFilter.chunk_tags` must map to `QdrantMatchAnyFilter { field_name: "chunk_tags".to_string(), values: request.filter.chunk_tags.clone() }`.
 
 Outbound filter JSON must therefore produce:
@@ -268,7 +268,7 @@ Outbound filter JSON must therefore produce:
 {
   "must": [
     {
-      "key": "card_id",
+      "key": "doc_id",
       "match": {
         "any": ["mongodb_4_2_6", "mysql_8_0_34"]
       }
@@ -287,17 +287,14 @@ Outbound filter JSON must therefore produce:
 
 Each raw hit payload must contain:
 - `chunk_id` as string;
+- `doc_id` as string;
 - `chunk_tags` as array of strings;
 - `text` as string.
-
-Payload may contain:
-- `card_id` as string.
 
 Mapping rules:
 - `PracticeChunkSearchHit.chunk_id` must be built from payload `chunk_id`;
 - `PracticeChunkSearchHit.score` must be built from raw Qdrant hit score;
-- `PracticeChunkSearchHit.card_id` must be `Some(...)` when payload contains a valid `card_id`;
-- `PracticeChunkSearchHit.card_id` must be `None` when payload has no `card_id`;
+- `PracticeChunkSearchHit.case_id` must be built from payload `doc_id`;
 - `PracticeChunkSearchHit.chunk_tags` must be built from payload `chunk_tags`;
 - `PracticeChunkSearchHit.text` must be built from payload `text`;
 - extra payload fields must be ignored.
@@ -305,7 +302,8 @@ Mapping rules:
 Payload validation rules:
 - missing required payload fields is a mapping failure;
 - invalid field types is a mapping failure;
-- invalid optional `card_id` field type is a mapping failure, not `None`;
+- empty `doc_id` is a mapping failure;
+- invalid `doc_id` field type is a mapping failure;
 - unsupported payload shapes from the transport client must already have been rejected before mapping;
 - shared strict-mapping rules must follow `Specification/runtime/api_clients/qdrant/collections_common.md`.
 

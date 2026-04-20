@@ -110,8 +110,8 @@ Generated unit tests for `CardsCollection` implementations must include all of t
 - dense transport error is wrapped into the exact `CardsCollectionError::QdrantDense(...)` variant;
 - hybrid transport error is wrapped into the exact `CardsCollectionError::QdrantHybrid(...)` variant;
 - embedding client error is wrapped into the exact `CardsCollectionError::Embedding(...)` variant;
-- payload with valid `card_id` maps into `CardSearchHit`;
-- payload with empty `card_id` fails with the exact `CardsCollectionError::PayloadMapping` variant;
+- payload with valid `doc_id` maps into `CardSearchHit.case_id`;
+- payload with empty `doc_id` fails with the exact `CardsCollectionError::PayloadMapping` variant;
 - extra payload fields are ignored;
 - one invalid hit fails the whole mapping step;
 - empty transport result returns `CardSearchResult { hits: vec![] }`;
@@ -124,7 +124,7 @@ Generated unit tests for `PracticeChunksCollection` implementations must include
 - dense implementation validates request before embedding generation;
 - hybrid implementation validates request before embedding generation;
 - empty `user_query` fails with the exact `PracticeChunksCollectionError::InvalidRequest` variant;
-- empty `card_ids` fails with the exact `PracticeChunksCollectionError::InvalidRequest` variant;
+- empty `case_ids` fails with the exact `PracticeChunksCollectionError::InvalidRequest` variant;
 - empty `chunk_tags` fails with the exact `PracticeChunksCollectionError::InvalidRequest` variant;
 - `limit == 0` fails with the exact `PracticeChunksCollectionError::InvalidRequest` variant;
 - invalid threshold values fail with the exact `PracticeChunksCollectionError::InvalidRequest` variant;
@@ -135,7 +135,9 @@ Generated unit tests for `PracticeChunksCollection` implementations must include
 - hybrid transport error is wrapped into the exact `PracticeChunksCollectionError::QdrantHybrid(...)` variant;
 - embedding client error is wrapped into the exact `PracticeChunksCollectionError::Embedding(...)` variant;
 - valid payload maps into `PracticeChunkSearchHit`;
-- invalid optional `card_id` type fails with the exact `PracticeChunksCollectionError::PayloadMapping` variant;
+- payload with valid `doc_id` maps into `PracticeChunkSearchHit.case_id`;
+- payload with empty `doc_id` fails with the exact `PracticeChunksCollectionError::PayloadMapping` variant;
+- invalid `doc_id` type fails with the exact `PracticeChunksCollectionError::PayloadMapping` variant;
 - extra payload fields are ignored;
 - one invalid hit fails the whole mapping step;
 - empty transport result returns `PracticeChunkSearchResult { hits: vec![] }`;

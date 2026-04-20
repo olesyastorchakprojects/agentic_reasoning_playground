@@ -91,7 +91,7 @@ Generated unit tests for the crate-level `config` boundary must include all of t
 - unsupported transport kinds fail before runtime request processing begins;
 - unsupported collection kinds fail before runtime request processing begins;
 - unsupported sparse strategy kinds fail before runtime request processing begins;
-- resolved collection retrieval settings preserve `top_k`, `score_threshold`, retry settings, and the typed collection variant in one `CollectionRetrievalSettings` value;
+- resolved collection retrieval settings preserve `top_k`, `score_threshold`, `max_alternatives`, retry settings, and the typed collection variant in one `CollectionRetrievalSettings` value;
 - resolved settings place `corpus_version` on the collection settings boundary rather than as one shared top-level retrieval field;
 - resolved settings preserve `query_structuring.controlled_vocabulary_path`, `query_structuring.prompt_asset_path`, and `query_structuring.max_output_tokens`.
 
@@ -165,7 +165,26 @@ Generated unit tests for the `query_structuring` runtime module must include all
 - `InvalidModelOutput` preserves the parsed `finish_reason` when the provider returned one;
 - successful model output maps into the exact shared `QueryStructuringOutput` shape.
 
-### 4.8) `main`
+### 4.8) `candidate_card_retrieval`
+
+Generated unit tests for the `candidate_card_retrieval` runtime module must include all of the following cases:
+
+- constructor rejection of `top_k = 0`;
+- constructor rejection of `top_k < 1 + max_alternatives`;
+- constructor rejection of negative `score_threshold`;
+- constructor rejection of non-finite `score_threshold`;
+- constructor rejection of `max_alternatives > 2`;
+- empty-result success returning `primary = None` and empty `alternatives`;
+- one-hit success returning `primary = Some(...)` and empty `alternatives`;
+- multi-hit success returning the first hit as `primary` and the next hits as `alternatives` in original order;
+- truncation of `alternatives` to `max_alternatives`;
+- returned selection containing at most three cards total even when retrieval returns more than three hits;
+- pass-through of collection errors through `CandidateCardRetrievalError::Collection`;
+- request construction using the unchanged normalized query text;
+- request construction using `limit = top_k`;
+- request construction using the configured `score_threshold`.
+
+### 4.9) `main`
 
 Generated unit tests for the crate-level `main` CLI boundary must include all of the following cases:
 
@@ -175,6 +194,21 @@ Generated unit tests for the crate-level `main` CLI boundary must include all of
 - startup loads `.env` through library-owned config-loading code rather than requiring a dedicated CLI path argument for the env contract;
 - startup fails before later runtime initialization when a required environment variable is absent after config loading;
 - the CLI delegates config loading to library-owned code rather than parsing TOML content inside `main.rs`.
+
+### 4.10) `incident_evidence_retrieval`
+
+Generated unit tests for the `incident_evidence_retrieval` runtime module must include all of the following cases:
+
+- empty-input success returning empty `primary_chunks` and empty `alternative_chunks` without calling the collection;
+- primary-only input issues exactly one collection call using one `case_id`, the hardcoded primary tag set, `limit = top_k`, and `score_threshold = settings.score_threshold`;
+- alternatives-only input issues exactly one collection call using alternative `case_id`s in original order, the hardcoded alternative tag set, `limit = top_k`, and `score_threshold = settings.score_threshold`;
+- combined input with both primary and alternatives issues exactly two collection calls;
+- successful mapping from `PracticeChunkSearchHit` into `IncidentEvidenceChunk`;
+- preservation of primary-search hit order in `primary_chunks`;
+- preservation of alternative-search hit order in `alternative_chunks`;
+- pass-through of collection errors through `IncidentEvidenceRetrievalError::Collection`;
+- whole-module failure when one branch succeeds and the other branch returns a collection error;
+- no deduplication of returned chunks.
 
 ## 5) Completion Rule
 

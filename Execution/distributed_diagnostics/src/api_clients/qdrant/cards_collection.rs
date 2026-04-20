@@ -39,19 +39,20 @@ pub enum CardsCollectionError {
 
 // ─── Public types ─────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct CardSearchRequest {
     pub user_query: NormalizedUserQuery,
     pub limit: usize,
     pub score_threshold: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CardSearchHit {
-    pub card_id: String,
+    pub case_id: String,
     pub score: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CardSearchResult {
     pub hits: Vec<CardSearchHit>,
 }
@@ -272,14 +273,14 @@ fn map_hit_to_card_hit(
     score: f32,
     fields: &std::collections::BTreeMap<String, QdrantPayloadValue>,
 ) -> Result<CardSearchHit, CardsCollectionError> {
-    let card_id = match fields.get("card_id") {
+    let case_id = match fields.get("doc_id") {
         Some(QdrantPayloadValue::String(s)) if !s.is_empty() => s.clone(),
         Some(QdrantPayloadValue::String(_)) => {
-            return Err(CardsCollectionError::PayloadMapping("card_id is empty"))
+            return Err(CardsCollectionError::PayloadMapping("doc_id is empty"))
         }
-        _ => return Err(CardsCollectionError::PayloadMapping("missing or invalid card_id")),
+        _ => return Err(CardsCollectionError::PayloadMapping("missing or invalid doc_id")),
     };
-    Ok(CardSearchHit { card_id, score })
+    Ok(CardSearchHit { case_id, score })
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -338,6 +339,7 @@ mod tests {
         CollectionRetrievalSettings {
             top_k: 5,
             score_threshold: 0.2,
+            max_alternatives: 3,
             embedding_retry: policy(),
             qdrant_retry: policy(),
             collection: CollectionSettings::Dense(DenseCollectionSettings {
@@ -352,6 +354,7 @@ mod tests {
         CollectionRetrievalSettings {
             top_k: 5,
             score_threshold: 0.2,
+            max_alternatives: 3,
             embedding_retry: policy(),
             qdrant_retry: policy(),
             collection: CollectionSettings::Hybrid(HybridCollectionSettings {
@@ -405,9 +408,9 @@ mod tests {
         serde_json::json!({"embeddings": [[0.1, 0.2]]}).to_string()
     }
 
-    fn qdrant_resp(card_id: &str) -> String {
+    fn qdrant_resp(case_id: &str) -> String {
         serde_json::json!({
-            "result": {"points": [{"score": 0.8, "payload": {"card_id": card_id}}]}
+            "result": {"points": [{"score": 0.8, "payload": {"doc_id": case_id}}]}
         })
         .to_string()
     }
@@ -625,7 +628,7 @@ mod tests {
     #[tokio::test]
     async fn valid_payload_maps_to_card_hit() {
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
-        let qdrant_server = MockHttpServer::new(vec![MockResponse::ok(qdrant_resp("card_abc"))]).await;
+        let qdrant_server = MockHttpServer::new(vec![MockResponse::ok(qdrant_resp("case_abc"))]).await;
         let client = QdrantCardsCollectionDense::new(
             emb_config(&emb_server.base_url()),
             dense_collection_config(&qdrant_server.base_url()),
@@ -634,11 +637,11 @@ mod tests {
         .unwrap();
         let result = client.search(&valid_request()).await.unwrap();
         assert_eq!(result.hits.len(), 1);
-        assert_eq!(result.hits[0].card_id, "card_abc");
+        assert_eq!(result.hits[0].case_id, "case_abc");
     }
 
     #[tokio::test]
-    async fn empty_card_id_returns_payload_mapping_error() {
+    async fn empty_doc_id_returns_payload_mapping_error() {
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
         let qdrant_server = MockHttpServer::new(vec![MockResponse::ok(qdrant_resp(""))]).await;
         let client = QdrantCardsCollectionDense::new(
@@ -656,7 +659,7 @@ mod tests {
     #[tokio::test]
     async fn extra_payload_fields_ignored() {
         let resp = serde_json::json!({
-            "result": {"points": [{"score": 0.7, "payload": {"card_id": "c1", "extra": "ignored"}}]}
+            "result": {"points": [{"score": 0.7, "payload": {"doc_id": "case1", "extra": "ignored"}}]}
         })
         .to_string();
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
@@ -668,15 +671,15 @@ mod tests {
         )
         .unwrap();
         let result = client.search(&valid_request()).await.unwrap();
-        assert_eq!(result.hits[0].card_id, "c1");
+        assert_eq!(result.hits[0].case_id, "case1");
     }
 
     #[tokio::test]
     async fn one_invalid_hit_fails_whole_mapping() {
         let resp = serde_json::json!({
             "result": {"points": [
-                {"score": 0.9, "payload": {"card_id": "ok"}},
-                {"score": 0.7, "payload": {"card_id": ""}}
+                {"score": 0.9, "payload": {"doc_id": "ok"}},
+                {"score": 0.7, "payload": {"doc_id": ""}}
             ]}
         })
         .to_string();

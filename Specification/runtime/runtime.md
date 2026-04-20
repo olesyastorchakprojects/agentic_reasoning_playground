@@ -72,6 +72,9 @@ The current required crate-level module tree is:
   - `request_pipeline`
     - `input_normalization`
     - `query_structuring`
+    - `candidate_card_retrieval`
+    - `card_hydration`
+    - `incident_evidence_retrieval`
   - `utils`
     - `retry`
     - `tokenizer`
@@ -91,6 +94,9 @@ Structure rules:
 Current request-pipeline file-layout rule:
 - `request_pipeline::input_normalization` is generated as `src/request_pipeline/input_normalization.rs`;
 - `request_pipeline::query_structuring` is generated as `src/request_pipeline/query_structuring.rs`;
+- `request_pipeline::candidate_card_retrieval` is generated as `src/request_pipeline/candidate_card_retrieval.rs`;
+- `request_pipeline::card_hydration` is generated as `src/request_pipeline/card_hydration.rs`;
+- `request_pipeline::incident_evidence_retrieval` is generated as `src/request_pipeline/incident_evidence_retrieval.rs`;
 - the current version must not split `query_structuring` into a nested `mod.rs` subtree;
 - future refactoring into a directory module is allowed only after the crate-level runtime specification is updated.
 
@@ -409,15 +415,78 @@ Types that are private to a single module must be defined in that module specifi
 
 For the current request-pipeline stage, the required shared types are:
 - `UserRequest`
+- `IncidentCard`
+- `IncidentPhase`
+- `DiscriminatingCheck`
+- `ExpectedObservation`
 - `NormalizedUserRequest`
 - `StructuredUserQuery`
 - `QueryStructuringOutput`
+- `CandidateCard`
+- `CandidateCardRetrievalOutput`
+- `CardHydrationOutput`
+- `IncidentEvidenceChunk`
+- `IncidentEvidenceRetrievalOutput`
 
 The generated Rust runtime must define shared types equivalent in ownership to:
 
 ```rust
 pub struct UserRequest {
     pub query: String,
+}
+
+pub struct IncidentPhase {
+    pub phase_name: String,
+    pub context: String,
+    pub symptoms: Vec<String>,
+    pub user_visible_impact: Vec<String>,
+    pub observations: Vec<String>,
+    pub actions_taken: Vec<String>,
+    pub changes_after_actions: Vec<String>,
+}
+
+pub struct DiscriminatingCheck {
+    pub question: String,
+    pub why: String,
+}
+
+pub struct ExpectedObservation {
+    pub observation: String,
+    pub effect: String,
+}
+
+pub struct IncidentCard {
+    pub case_id: String,
+    pub title: String,
+    pub source_type: String,
+    pub source_name: String,
+    pub source_path: String,
+    pub vendor_or_project: Option<String>,
+    pub system_type: Option<String>,
+    pub version_tested: Option<String>,
+    pub report_date: Option<String>,
+    pub short_summary: String,
+    pub canonical_symptoms: Vec<String>,
+    pub affected_components: Vec<String>,
+    pub failure_mode_candidates: Vec<String>,
+    pub observed_phases: Vec<String>,
+    pub incident_phases: Vec<IncidentPhase>,
+    pub turning_points: Vec<String>,
+    pub candidate_explanations: Vec<String>,
+    pub diagnostic_patterns: Vec<String>,
+    pub discriminating_checks: Vec<DiscriminatingCheck>,
+    pub expected_observations: Vec<ExpectedObservation>,
+    pub investigation_steps: Vec<String>,
+    pub root_cause_summary: Option<String>,
+    pub reasoning_summary: Option<String>,
+    pub mitigations_or_workarounds: Vec<String>,
+    pub prevention_or_design_followups: Vec<String>,
+    pub claimed_guarantees: Vec<String>,
+    pub violated_properties: Vec<String>,
+    pub resolution_status: Option<String>,
+    pub fix_versions: Vec<String>,
+    pub confidence_notes: Vec<String>,
+    pub source_refs: Vec<String>,
 }
 
 pub struct NormalizedUserRequest {
@@ -444,6 +513,36 @@ pub struct StructuredUserQuery {
 pub struct QueryStructuringOutput {
     pub structured_query: StructuredUserQuery,
     pub token_usage: ModelTokenUsage,
+}
+
+pub struct CandidateCard {
+    pub case_id: String,
+    pub score: f32,
+}
+
+pub struct CandidateCardRetrievalOutput {
+    pub primary: Option<CandidateCard>,
+    pub alternatives: Vec<CandidateCard>,
+}
+
+pub struct CardHydrationOutput {
+    pub primary: Option<IncidentCard>,
+    pub alternatives: Vec<IncidentCard>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncidentEvidenceChunk {
+    pub chunk_id: String,
+    pub case_id: String,
+    pub score: f32,
+    pub chunk_tags: Vec<String>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncidentEvidenceRetrievalOutput {
+    pub primary_chunks: Vec<IncidentEvidenceChunk>,
+    pub alternative_chunks: Vec<IncidentEvidenceChunk>,
 }
 
 pub struct ModelTokenUsage {
@@ -485,7 +584,25 @@ Shared type rules:
    - `query` is the raw user-provided request text before normalization;
    - `UserRequest` must not contain normalized fields, token counts, config values, derived values, or module-private processing metadata.
 
-2. `NormalizedUserRequest`
+2. `IncidentCard`
+   - `IncidentCard` is the canonical full-card runtime representation shared across PostgreSQL storage, hydration, and downstream request-pipeline modules;
+   - `IncidentCard` must remain structurally aligned with the canonical card contract in `Specification/contracts/storage/incident_card.md`;
+   - `IncidentCard.case_id` is the stable unique identity of the card;
+   - `IncidentCard` must not be owned privately by one API-client module once it is used across module boundaries.
+
+3. `IncidentPhase`
+   - `IncidentPhase` is a shared nested component type used by `IncidentCard`;
+   - it must be defined in `src/shared_types.rs` together with `IncidentCard`.
+
+4. `DiscriminatingCheck`
+   - `DiscriminatingCheck` is a shared nested component type used by `IncidentCard`;
+   - it must be defined in `src/shared_types.rs` together with `IncidentCard`.
+
+5. `ExpectedObservation`
+   - `ExpectedObservation` is a shared nested component type used by `IncidentCard`;
+   - it must be defined in `src/shared_types.rs` together with `IncidentCard`.
+
+6. `NormalizedUserRequest`
    - `NormalizedUserRequest` is the normalized request produced by the input-normalization boundary;
    - `NormalizedUserRequest` must contain exactly two fields:
      - `query: String`
@@ -494,7 +611,7 @@ Shared type rules:
    - `input_token_count` is the token count computed for `NormalizedUserRequest.query` using the tokenizer defined by the input-normalization contract;
    - `NormalizedUserRequest` must not contain raw input copies, config values, or module-private processing metadata.
 
-3. `StructuredUserQuery`
+7. `StructuredUserQuery`
    - `StructuredUserQuery` is the shared structured interpretation produced by the `query_structuring` boundary;
    - it must contain only cross-module data needed by downstream runtime modules;
    - it must not contain raw prompt text, raw model responses, file paths, or module-private parsing metadata;
@@ -502,19 +619,80 @@ Shared type rules:
    - rejected nearby candidates must be represented through `RejectedNearbyTerm`;
    - confidence must be represented through `StructuredUserQueryConfidence` rather than raw string values.
 
-4. `QueryStructuringOutput`
+8. `QueryStructuringOutput`
    - `QueryStructuringOutput` is the shared runtime output of the `query_structuring` boundary;
    - it wraps the semantic result plus execution metadata from the model call;
    - `structured_query` must contain the parsed domain interpretation;
    - `token_usage` must contain model token-usage metadata and must not be merged into `StructuredUserQuery`.
 
-5. `ModelTokenUsage`
+9. `ModelTokenUsage`
    - `ModelTokenUsage` is shared execution metadata for one model call;
    - `prompt_tokens`, `completion_tokens`, and `total_tokens` must remain `Option<usize>` because providers may omit some or all usage fields;
    - this type is metadata-only and must not be treated as part of the semantic query structure.
 
+10. `CandidateCard`
+   - `CandidateCard` is the shared runtime representation of one candidate incident card selected by the `candidate_card_retrieval` boundary;
+   - `CandidateCard` must contain exactly two fields:
+     - `case_id: String`
+     - `score: f32`
+   - `case_id` is the canonical incident-card identifier;
+   - `score` is the retrieval score associated with that card;
+   - `score` must preserve the original retrieval `f32` value without rounding, bucketing, normalization, or rescaling;
+   - `CandidateCard` must not contain collection-layer request types, Qdrant payloads, hydration data, or module-private ranking metadata.
+
+11. `CandidateCardRetrievalOutput`
+   - `CandidateCardRetrievalOutput` is the shared runtime output of the `candidate_card_retrieval` boundary;
+   - it must contain exactly two fields:
+     - `primary: Option<CandidateCard>`
+     - `alternatives: Vec<CandidateCard>`
+   - `primary` is the highest-ranked candidate when at least one candidate exists;
+   - `primary` must be `None` when retrieval returns zero candidates;
+   - `alternatives` contains the remaining selected candidates after excluding `primary`, in retrieval order.
+
+12. `CardHydrationOutput`
+   - `CardHydrationOutput` is the shared runtime output of the `card_hydration` boundary;
+   - it must contain exactly two fields:
+     - `primary: Option<IncidentCard>`
+     - `alternatives: Vec<IncidentCard>`
+   - `primary` contains the hydrated full-card form of the primary candidate when one exists;
+   - `primary` must be `None` when there is no primary candidate to hydrate;
+   - `alternatives` contains the hydrated full-card forms of the alternative candidates in preserved retrieval order.
+
+13. `IncidentEvidenceChunk`
+   - `IncidentEvidenceChunk` is the shared runtime representation of one retrieved practice chunk selected by the `incident_evidence_retrieval` boundary;
+   - it must contain exactly five fields:
+     - `chunk_id: String`
+     - `case_id: String`
+     - `score: f32`
+     - `chunk_tags: Vec<String>`
+     - `text: String`
+   - `case_id` is the domain identity of the source incident card linked to the chunk;
+   - `score` must preserve the original retrieval `f32` value without rounding, normalization, or bucketing;
+   - `chunk_tags` must preserve the raw collection-returned tag list;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+
+14. `IncidentEvidenceRetrievalOutput`
+   - `IncidentEvidenceRetrievalOutput` is the shared runtime output of the `incident_evidence_retrieval` boundary;
+   - it must contain exactly two fields:
+     - `primary_chunks: Vec<IncidentEvidenceChunk>`
+     - `alternative_chunks: Vec<IncidentEvidenceChunk>`
+   - `primary_chunks` contains only chunks returned by the primary evidence-retrieval call;
+   - `alternative_chunks` contains only chunks returned by the alternative evidence-retrieval call;
+   - `IncidentEvidenceRetrievalOutput` must preserve the separation between primary and alternative retrieval paths exactly;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+
 Shared type export rule:
 - all shared types defined in this section, including `StructuredUserQuery`, `QueryStructuringOutput`, and `ModelTokenUsage`, must be defined in `src/shared_types.rs`;
+- all shared types defined in this section, including `CandidateCard` and `CandidateCardRetrievalOutput`, must be defined in `src/shared_types.rs`;
+- all shared types defined in this section, including `IncidentCard`, `IncidentPhase`, `DiscriminatingCheck`, and `ExpectedObservation`, must be defined in `src/shared_types.rs`;
+- all shared types defined in this section, including `CardHydrationOutput`, must be defined in `src/shared_types.rs`;
+- all shared types defined in this section, including `IncidentEvidenceChunk` and `IncidentEvidenceRetrievalOutput`, must be defined in `src/shared_types.rs`;
 - `lib.rs` must expose the shared-types module as `pub mod shared_types;`;
 - runtime leaf modules must import these shared types through `crate::shared_types::...` rather than through ad hoc re-exports.
 
@@ -533,6 +711,7 @@ pub struct RetrievalSettings {
 pub struct CollectionRetrievalSettings {
     pub top_k: usize,
     pub score_threshold: f32,
+    pub max_alternatives: usize,
     pub embedding_retry: RetryPolicyConfig,
     pub qdrant_retry: RetryPolicyConfig,
     pub collection: CollectionSettings,
@@ -542,7 +721,7 @@ pub struct CollectionRetrievalSettings {
 Rules:
 - `RetrievalSettings` is the single typed retrieval settings section used by retrieval-facing runtime code;
 - each collection section must contain runtime-owned retrieval knobs plus one typed resolved collection description;
-- retrieval code must be able to access collection name selection, top-k, threshold, and retry settings from one `CollectionRetrievalSettings` value without separately reading raw ingest config.
+- retrieval code must be able to access collection name selection, top-k, threshold, alternative-card limit, and retry settings from one `CollectionRetrievalSettings` value without separately reading raw ingest config.
 
 ### Input Normalization Settings
 
@@ -716,6 +895,7 @@ Required top-level field mappings:
 Required retrieval field mappings for each of `cards`, `practice`, and `theory`:
 - `top_k` <- `runtime.toml [retrieval.<collection>].top_k`
 - `score_threshold` <- `runtime.toml [retrieval.<collection>].score_threshold`
+- `max_alternatives` <- `runtime.toml [retrieval.<collection>].max_alternatives`
 - `embedding_retry` <- `runtime.toml [retrieval.<collection>.embedding_retry]`
 - `qdrant_retry` <- `runtime.toml [retrieval.<collection>.qdrant_retry]`
 - `collection` <- resolved from `ingest.toml [qdrant.collections.<collection>]`

@@ -1,6 +1,5 @@
 use chrono::NaiveDate;
 use jsonschema::Validator;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
@@ -8,6 +7,7 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use crate::config::PostgresSettings;
+use crate::shared_types::IncidentCard;
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
@@ -29,66 +29,6 @@ pub enum IncidentCardStoreError {
     DuplicateCaseId(String),
     #[error("invalid stored row: {0}")]
     InvalidStoredRow(&'static str),
-}
-
-// ── Domain types ──────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct IncidentPhase {
-    pub phase_name: String,
-    pub context: String,
-    pub symptoms: Vec<String>,
-    pub user_visible_impact: Vec<String>,
-    pub observations: Vec<String>,
-    pub actions_taken: Vec<String>,
-    pub changes_after_actions: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DiscriminatingCheck {
-    pub question: String,
-    pub why: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ExpectedObservation {
-    pub observation: String,
-    pub effect: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct IncidentCard {
-    pub case_id: String,
-    pub title: String,
-    pub source_type: String,
-    pub source_name: String,
-    pub source_path: String,
-    pub vendor_or_project: Option<String>,
-    pub system_type: Option<String>,
-    pub version_tested: Option<String>,
-    pub report_date: Option<String>,
-    pub short_summary: String,
-    pub canonical_symptoms: Vec<String>,
-    pub affected_components: Vec<String>,
-    pub failure_mode_candidates: Vec<String>,
-    pub observed_phases: Vec<String>,
-    pub incident_phases: Vec<IncidentPhase>,
-    pub turning_points: Vec<String>,
-    pub candidate_explanations: Vec<String>,
-    pub diagnostic_patterns: Vec<String>,
-    pub discriminating_checks: Vec<DiscriminatingCheck>,
-    pub expected_observations: Vec<ExpectedObservation>,
-    pub investigation_steps: Vec<String>,
-    pub root_cause_summary: Option<String>,
-    pub reasoning_summary: Option<String>,
-    pub mitigations_or_workarounds: Vec<String>,
-    pub prevention_or_design_followups: Vec<String>,
-    pub claimed_guarantees: Vec<String>,
-    pub violated_properties: Vec<String>,
-    pub resolution_status: Option<String>,
-    pub fix_versions: Vec<String>,
-    pub confidence_notes: Vec<String>,
-    pub source_refs: Vec<String>,
 }
 
 // ── Schema validator (lazy static) ───────────────────────────────────────────
@@ -466,6 +406,7 @@ fn is_unique_violation(e: &dyn sqlx::error::DatabaseError) -> bool {
 mod tests {
     use super::*;
     use crate::config::PostgresSettings;
+    use crate::shared_types::IncidentPhase;
     use serde_json::json;
 
     fn valid_card() -> IncidentCard {
