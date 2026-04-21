@@ -11,6 +11,8 @@ It is the source of truth for:
 - runtime-owned retrieval behavior;
 - request-level input normalization settings;
 - request-level query structuring asset paths;
+- request-level prompt context prompt asset path and chunk-packing policy;
+- request-level LLM structured-generation model-call limit;
 - active model transport selection;
 - model transport runtime settings.
 - observability enablement and export timing settings.
@@ -72,6 +74,40 @@ Invalid `runtime.toml`:
 - `controlled_vocabulary_path`
 - `prompt_asset_path`
 - `max_output_tokens`
+
+`[prompt_context]`
+- `prompt_asset_path`
+
+`[prompt_context.chunk_packing.evidence_for_match]`
+- `source`
+- `limit`
+- `fallback_to_any_chunk`
+- `tag_priority`
+
+`[prompt_context.chunk_packing.first_check_hint]`
+- `source`
+- `limit`
+- `fallback_to_any_chunk`
+- `tag_priority`
+
+`[prompt_context.chunk_packing.supporting_explanation]`
+- `source`
+- `limit`
+- `fallback_to_any_chunk`
+- `tag_priority`
+
+`[prompt_context.chunk_packing.alternative_context]`
+- `source`
+- `limit`
+- `per_case_limit` when `limit > 0`
+- `fallback_to_any_chunk`
+- `tag_priority`
+
+`[prompt_context.chunk_packing.mechanism_explanation]`
+- `source`
+- `limit`
+- `fallback_to_any_chunk`
+- `tag_priority`
 
 `[model]`
 - `transport_kind`: active model transport; allowed values:
@@ -141,6 +177,39 @@ Invalid `runtime.toml`:
 - this value is runtime-owned and applies uniformly to this module's requests;
 - it must be greater than zero.
 
+`prompt_context.prompt_asset_path`
+- path to the JSON prompt asset used by the `prompt_context_assembly` module;
+- the prompt asset schema must live next to the configured asset as defined by `Specification/runtime/request_pipeline/prompt_context_assembly.md`.
+
+`prompt_context.chunk_packing.<role>.source`
+- source pool used for the prompt evidence role;
+- allowed values are:
+  - `primary_incident`
+  - `alternative_incident`
+  - `theory`
+
+`prompt_context.chunk_packing.<role>.limit`
+- maximum number of chunks selected for the role;
+- `evidence_for_match.limit` must be greater than or equal to `1`;
+- `first_check_hint.limit` must be greater than or equal to `1`;
+- `supporting_explanation.limit` is `1` in the default shipped runtime config;
+- `supporting_explanation.limit` may be `0` only when explicitly disabled;
+- `alternative_context.limit` may be `0`;
+- `mechanism_explanation.limit` may be `0`.
+
+`prompt_context.chunk_packing.<role>.tag_priority`
+- ordered list of full canonical incident chunk tags used by role selection;
+- values must use full strings such as `chunk_role:symptom`;
+- short aliases such as `symptom` are invalid.
+
+`prompt_context.chunk_packing.<role>.fallback_to_any_chunk`
+- enables fallback selection from the role's source pool after all configured tag matches.
+
+`prompt_context.chunk_packing.alternative_context.per_case_limit`
+- maximum number of alternative chunks selected per hydrated alternative card;
+- must be greater than zero when `alternative_context.limit > 0`;
+- may be absent or any non-negative integer when `alternative_context.limit = 0` because alternative context selection is disabled.
+
 `retrieval.<collection>.embedding_retry.backoff`
 `retrieval.<collection>.qdrant_retry.backoff`
 `model.<transport>.retry.backoff`
@@ -169,7 +238,9 @@ Invalid `runtime.toml`:
 - runtime retrieval knobs such as `top_k` and `score_threshold`;
 - request-level input normalization knobs such as `max_input_tokens` and `tokenizer_source`;
 - request-level query structuring asset locations and model-call limit such as `controlled_vocabulary_path`, `prompt_asset_path`, and `max_output_tokens`;
- - runtime retrieval knobs such as `top_k`, `score_threshold`, and `max_alternatives`;
+- request-level prompt-context asset location and chunk-packing policy;
+- request-level LLM structured-generation model-call limit;
+- runtime retrieval knobs such as `top_k`, `score_threshold`, and `max_alternatives`;
 - retry settings;
 - active model transport selection;
 - model transport runtime settings.

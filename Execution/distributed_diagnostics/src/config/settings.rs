@@ -1,3 +1,4 @@
+use crate::shared_types::IncidentChunkTag;
 use crate::utils::retry::RetryPolicyConfig;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -5,11 +6,43 @@ pub struct Settings {
     pub runtime: RuntimeSettings,
     pub input_normalization: InputNormalizationSettings,
     pub query_structuring: QueryStructuringSettings,
+    pub prompt_context: PromptContextSettings,
     pub retrieval: RetrievalSettings,
     pub model: ModelSettings,
     pub embedding_model: EmbeddingModelSettings,
     pub observability: ObservabilitySettings,
     pub postgres: PostgresSettings,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromptContextSettings {
+    pub prompt_asset_path: String,
+    pub chunk_packing: ChunkPackingSettings,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkPackingSettings {
+    pub evidence_for_match: ChunkRolePackingSettings,
+    pub first_check_hint: ChunkRolePackingSettings,
+    pub supporting_explanation: ChunkRolePackingSettings,
+    pub alternative_context: ChunkRolePackingSettings,
+    pub mechanism_explanation: ChunkRolePackingSettings,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChunkRolePackingSettings {
+    pub source: ChunkPackingSource,
+    pub limit: usize,
+    pub per_case_limit: Option<usize>,
+    pub fallback_to_any_chunk: bool,
+    pub tag_priority: Vec<IncidentChunkTag>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkPackingSource {
+    PrimaryIncident,
+    AlternativeIncident,
+    Theory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

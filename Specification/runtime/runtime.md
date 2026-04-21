@@ -76,6 +76,7 @@ The current required crate-level module tree is:
     - `card_hydration`
     - `incident_evidence_retrieval`
     - `theory_evidence_retrieval`
+    - `prompt_context_assembly`
   - `utils`
     - `retry`
     - `tokenizer`
@@ -99,6 +100,7 @@ Current request-pipeline file-layout rule:
 - `request_pipeline::card_hydration` is generated as `src/request_pipeline/card_hydration.rs`;
 - `request_pipeline::incident_evidence_retrieval` is generated as `src/request_pipeline/incident_evidence_retrieval.rs`;
 - `request_pipeline::theory_evidence_retrieval` is generated as `src/request_pipeline/theory_evidence_retrieval.rs`;
+- `request_pipeline::prompt_context_assembly` is generated as `src/request_pipeline/prompt_context_assembly.rs`;
 - the current version must not split `query_structuring` into a nested `mod.rs` subtree;
 - future refactoring into a directory module is allowed only after the crate-level runtime specification is updated.
 
@@ -361,6 +363,7 @@ pub struct Settings {
     pub retrieval: RetrievalSettings,
     pub input_normalization: InputNormalizationSettings,
     pub query_structuring: QueryStructuringSettings,
+    pub prompt_context: PromptContextSettings,
     pub model: ModelSettings,
     pub embedding_model: EmbeddingModelSettings,
     pub observability: ObservabilitySettings,
@@ -431,6 +434,11 @@ For the current request-pipeline stage, the required shared types are:
 - `IncidentEvidenceRetrievalOutput`
 - `TheoryEvidenceChunk`
 - `TheoryEvidenceRetrievalOutput`
+- `IncidentChunkTag`
+- `PromptEvidenceRole`
+- `PromptIncidentEvidenceChunk`
+- `PromptTheoryEvidenceChunk`
+- `PromptContextAssemblyOutput`
 
 The generated Rust runtime must define shared types equivalent in ownership to:
 
@@ -559,6 +567,80 @@ pub struct TheoryEvidenceChunk {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TheoryEvidenceRetrievalOutput {
     pub chunks: Vec<TheoryEvidenceChunk>,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum_macros::EnumString,
+    strum_macros::Display,
+    strum_macros::AsRefStr,
+)]
+pub enum IncidentChunkTag {
+    #[strum(serialize = "chunk_role:symptom")]
+    Symptom,
+    #[strum(serialize = "chunk_role:impact")]
+    Impact,
+    #[strum(serialize = "chunk_role:timeline")]
+    Timeline,
+    #[strum(serialize = "chunk_role:symptom_change")]
+    SymptomChange,
+    #[strum(serialize = "chunk_role:investigation")]
+    Investigation,
+    #[strum(serialize = "chunk_role:diagnostic_step")]
+    DiagnosticStep,
+    #[strum(serialize = "chunk_role:hypothesis_update")]
+    HypothesisUpdate,
+    #[strum(serialize = "chunk_role:recovery")]
+    Recovery,
+    #[strum(serialize = "chunk_role:failure_mode")]
+    FailureMode,
+    #[strum(serialize = "chunk_role:root_cause")]
+    RootCause,
+    #[strum(serialize = "chunk_role:contributing_factor")]
+    ContributingFactor,
+    #[strum(serialize = "chunk_role:uncertainty")]
+    Uncertainty,
+    #[strum(serialize = "chunk_role:lesson")]
+    Lesson,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PromptEvidenceRole {
+    EvidenceForMatch,
+    FirstCheckHint,
+    SupportingExplanation,
+    AlternativeContext,
+    MechanismExplanation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromptIncidentEvidenceChunk {
+    pub role: PromptEvidenceRole,
+    pub chunk_id: String,
+    pub case_id: String,
+    pub score: f32,
+    pub chunk_tags: Vec<IncidentChunkTag>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromptTheoryEvidenceChunk {
+    pub role: PromptEvidenceRole,
+    pub chunk_id: String,
+    pub score: f32,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromptContextAssemblyOutput {
+    pub prompt: String,
+    pub incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>,
+    pub theory_chunks: Vec<PromptTheoryEvidenceChunk>,
 }
 
 pub struct ModelTokenUsage {
@@ -727,6 +809,72 @@ Shared type rules:
      - `Clone`
      - `PartialEq`
 
+17. `IncidentChunkTag`
+   - `IncidentChunkTag` is the shared typed representation of the finite canonical incident chunk tag vocabulary;
+   - it must be defined in `src/shared_types.rs`, not in `src/config/mod.rs`;
+   - it must use `strum_macros::EnumString`, `strum_macros::Display`, and `strum_macros::AsRefStr`;
+   - each variant must serialize and parse only its full canonical tag string such as `chunk_role:symptom`;
+   - short aliases such as `symptom` must not parse successfully;
+   - unknown raw tag strings must not parse successfully;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Copy`
+     - `PartialEq`
+     - `Eq`
+     - `Hash`
+
+18. `PromptEvidenceRole`
+   - `PromptEvidenceRole` is the shared prompt-facing role assigned to a selected evidence chunk by the `prompt_context_assembly` boundary;
+   - `PromptEvidenceRole` must not derive `serde::Serialize` in the current version;
+   - prompt JSON serialization of this enum is owned by `prompt_context_assembly` through module-private DTO mapping;
+   - it must contain exactly these variants:
+     - `EvidenceForMatch`
+     - `FirstCheckHint`
+     - `SupportingExplanation`
+     - `AlternativeContext`
+     - `MechanismExplanation`
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Copy`
+     - `PartialEq`
+     - `Eq`
+     - `Hash`
+
+19. `PromptIncidentEvidenceChunk`
+   - `PromptIncidentEvidenceChunk` is the shared prompt-facing representation of one selected incident evidence chunk;
+   - it must preserve selected chunk ids, case ids, scores, tags, and text from `IncidentEvidenceChunk`;
+   - `role` must contain the role assigned by `prompt_context_assembly`;
+   - `chunk_tags` must contain typed `IncidentChunkTag` values parsed from recognized source `IncidentEvidenceChunk.chunk_tags`;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+
+20. `PromptTheoryEvidenceChunk`
+   - `PromptTheoryEvidenceChunk` is the shared prompt-facing representation of one selected theory chunk;
+   - it must preserve selected chunk ids, scores, and text from `TheoryEvidenceChunk`;
+   - `role` must be `PromptEvidenceRole::MechanismExplanation` in the current version;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+
+21. `PromptContextAssemblyOutput`
+   - `PromptContextAssemblyOutput` is the shared runtime output of the `prompt_context_assembly` boundary;
+   - it must contain exactly three fields:
+     - `prompt: String`
+     - `incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>`
+     - `theory_chunks: Vec<PromptTheoryEvidenceChunk>`
+   - `prompt` is the filled prompt string intended as input to the next model-generation module;
+   - `incident_evidence_chunks` contains the selected incident chunks separately from the prompt for history and traceability;
+   - `theory_chunks` contains the selected theory chunks separately from the prompt for history and traceability;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+
 Shared type export rule:
 - all shared types defined in this section, including `StructuredUserQuery`, `QueryStructuringOutput`, and `ModelTokenUsage`, must be defined in `src/shared_types.rs`;
 - all shared types defined in this section, including `CandidateCard` and `CandidateCardRetrievalOutput`, must be defined in `src/shared_types.rs`;
@@ -734,6 +882,7 @@ Shared type export rule:
 - all shared types defined in this section, including `CardHydrationOutput`, must be defined in `src/shared_types.rs`;
 - all shared types defined in this section, including `IncidentEvidenceChunk` and `IncidentEvidenceRetrievalOutput`, must be defined in `src/shared_types.rs`;
 - all shared types defined in this section, including `TheoryEvidenceChunk` and `TheoryEvidenceRetrievalOutput`, must be defined in `src/shared_types.rs`;
+- all shared types defined in this section, including `IncidentChunkTag`, `PromptEvidenceRole`, `PromptIncidentEvidenceChunk`, `PromptTheoryEvidenceChunk`, and `PromptContextAssemblyOutput`, must be defined in `src/shared_types.rs`;
 - `lib.rs` must expose the shared-types module as `pub mod shared_types;`;
 - runtime leaf modules must import these shared types through `crate::shared_types::...` rather than through ad hoc re-exports.
 
@@ -796,6 +945,70 @@ Rules:
 - `QueryStructuringSettings` is the single typed settings slice used by request-level query structuring code;
 - query-structuring runtime modules must receive this typed settings slice rather than reading raw TOML values;
 - the controlled vocabulary and prompt asset are runtime-owned file inputs selected by config, not by direct module constants.
+
+### Prompt Context Settings
+
+The generated Rust settings model must define prompt-context settings equivalent
+in ownership to:
+
+```rust
+pub struct PromptContextSettings {
+    pub prompt_asset_path: String,
+    pub chunk_packing: ChunkPackingSettings,
+}
+
+pub struct ChunkPackingSettings {
+    pub evidence_for_match: ChunkRolePackingSettings,
+    pub first_check_hint: ChunkRolePackingSettings,
+    pub supporting_explanation: ChunkRolePackingSettings,
+    pub alternative_context: ChunkRolePackingSettings,
+    pub mechanism_explanation: ChunkRolePackingSettings,
+}
+
+pub struct ChunkRolePackingSettings {
+    pub source: ChunkPackingSource,
+    pub limit: usize,
+    pub per_case_limit: Option<usize>,
+    pub fallback_to_any_chunk: bool,
+    pub tag_priority: Vec<IncidentChunkTag>,
+}
+
+pub enum ChunkPackingSource {
+    PrimaryIncident,
+    AlternativeIncident,
+    Theory,
+}
+```
+
+Rules:
+- `PromptContextSettings` is the single typed settings slice used by `prompt_context_assembly`;
+- prompt-context runtime modules must receive this typed settings slice rather than reading raw TOML values;
+- `prompt_asset_path` is the runtime-owned JSON prompt asset path selected by config;
+- prompt-context chunk limits and tag priorities are owned by runtime config;
+- prompt-context chunk selection mechanics are owned by `prompt_context_assembly`;
+- `ChunkRolePackingSettings.tag_priority` must use the shared `IncidentChunkTag` type from `src/shared_types.rs`;
+- raw config must use full canonical tag strings such as `chunk_role:symptom`;
+- short tag aliases such as `symptom` are invalid;
+- raw `ChunkPackingSource` config strings must be:
+  - `primary_incident`
+  - `alternative_incident`
+  - `theory`
+- unsupported raw `ChunkPackingSource` config strings must cause config loading to fail before runtime request processing begins;
+- config loading must parse configured tags into `IncidentChunkTag`;
+- unknown configured tags must cause config loading to fail before runtime request processing begins;
+- duplicate tags inside one role `tag_priority` list must cause config loading to fail before runtime request processing begins;
+- `Cargo.toml` must include `strum` with derive support enabled and must include `strum_macros` explicitly.
+- `evidence_for_match.limit` must be greater than or equal to `1`;
+- `first_check_hint.limit` must be greater than or equal to `1`;
+- `supporting_explanation.limit` defaults to `1` in the runtime config contract;
+- `supporting_explanation.limit` may be `0` only when explicitly disabled in config;
+- `alternative_context.limit` may be `0`;
+- `mechanism_explanation.limit` may be `0`;
+- `per_case_limit` is valid only for `alternative_context` in the current version;
+- `alternative_context.per_case_limit` must be greater than zero when `alternative_context.limit > 0`;
+- `alternative_context.per_case_limit` may be absent or any non-negative value when `alternative_context.limit = 0`;
+- `supporting_explanation.source` must be `PrimaryIncident` in the current version;
+- `mechanism_explanation.tag_priority` must be empty in the current version because theory chunks do not expose tags.
 
 ### Collection Variants
 
@@ -921,6 +1134,8 @@ Required top-level field mappings:
 - `Settings.query_structuring.controlled_vocabulary_path` <- `runtime.toml [query_structuring].controlled_vocabulary_path`
 - `Settings.query_structuring.prompt_asset_path` <- `runtime.toml [query_structuring].prompt_asset_path`
 - `Settings.query_structuring.max_output_tokens` <- `runtime.toml [query_structuring].max_output_tokens`
+- `Settings.prompt_context.prompt_asset_path` <- `runtime.toml [prompt_context].prompt_asset_path`
+- `Settings.prompt_context.chunk_packing` <- `runtime.toml [prompt_context.chunk_packing]`
 - `Settings.embedding_model.url` <- environment variable `OLLAMA_URL`
 - `Settings.embedding_model.name` <- `ingest.toml [embedding.model].name`
 - `Settings.embedding_model.dimension` <- `ingest.toml [embedding.model].dimension`
@@ -940,6 +1155,29 @@ Required retrieval field mappings for each of `cards`, `practice`, and `theory`:
 - `embedding_retry` <- `runtime.toml [retrieval.<collection>.embedding_retry]`
 - `qdrant_retry` <- `runtime.toml [retrieval.<collection>.qdrant_retry]`
 - `collection` <- resolved from `ingest.toml [qdrant.collections.<collection>]`
+
+Required prompt-context field mappings:
+- `PromptContextSettings.chunk_packing.evidence_for_match.source` <- `runtime.toml [prompt_context.chunk_packing.evidence_for_match].source`
+- `PromptContextSettings.chunk_packing.evidence_for_match.limit` <- `runtime.toml [prompt_context.chunk_packing.evidence_for_match].limit`
+- `PromptContextSettings.chunk_packing.evidence_for_match.fallback_to_any_chunk` <- `runtime.toml [prompt_context.chunk_packing.evidence_for_match].fallback_to_any_chunk`
+- `PromptContextSettings.chunk_packing.evidence_for_match.tag_priority` <- `runtime.toml [prompt_context.chunk_packing.evidence_for_match].tag_priority`
+- `PromptContextSettings.chunk_packing.first_check_hint.source` <- `runtime.toml [prompt_context.chunk_packing.first_check_hint].source`
+- `PromptContextSettings.chunk_packing.first_check_hint.limit` <- `runtime.toml [prompt_context.chunk_packing.first_check_hint].limit`
+- `PromptContextSettings.chunk_packing.first_check_hint.fallback_to_any_chunk` <- `runtime.toml [prompt_context.chunk_packing.first_check_hint].fallback_to_any_chunk`
+- `PromptContextSettings.chunk_packing.first_check_hint.tag_priority` <- `runtime.toml [prompt_context.chunk_packing.first_check_hint].tag_priority`
+- `PromptContextSettings.chunk_packing.supporting_explanation.source` <- `runtime.toml [prompt_context.chunk_packing.supporting_explanation].source`
+- `PromptContextSettings.chunk_packing.supporting_explanation.limit` <- `runtime.toml [prompt_context.chunk_packing.supporting_explanation].limit`
+- `PromptContextSettings.chunk_packing.supporting_explanation.fallback_to_any_chunk` <- `runtime.toml [prompt_context.chunk_packing.supporting_explanation].fallback_to_any_chunk`
+- `PromptContextSettings.chunk_packing.supporting_explanation.tag_priority` <- `runtime.toml [prompt_context.chunk_packing.supporting_explanation].tag_priority`
+- `PromptContextSettings.chunk_packing.alternative_context.source` <- `runtime.toml [prompt_context.chunk_packing.alternative_context].source`
+- `PromptContextSettings.chunk_packing.alternative_context.limit` <- `runtime.toml [prompt_context.chunk_packing.alternative_context].limit`
+- `PromptContextSettings.chunk_packing.alternative_context.per_case_limit` <- `runtime.toml [prompt_context.chunk_packing.alternative_context].per_case_limit`
+- `PromptContextSettings.chunk_packing.alternative_context.fallback_to_any_chunk` <- `runtime.toml [prompt_context.chunk_packing.alternative_context].fallback_to_any_chunk`
+- `PromptContextSettings.chunk_packing.alternative_context.tag_priority` <- `runtime.toml [prompt_context.chunk_packing.alternative_context].tag_priority`
+- `PromptContextSettings.chunk_packing.mechanism_explanation.source` <- `runtime.toml [prompt_context.chunk_packing.mechanism_explanation].source`
+- `PromptContextSettings.chunk_packing.mechanism_explanation.limit` <- `runtime.toml [prompt_context.chunk_packing.mechanism_explanation].limit`
+- `PromptContextSettings.chunk_packing.mechanism_explanation.fallback_to_any_chunk` <- `runtime.toml [prompt_context.chunk_packing.mechanism_explanation].fallback_to_any_chunk`
+- `PromptContextSettings.chunk_packing.mechanism_explanation.tag_priority` <- `runtime.toml [prompt_context.chunk_packing.mechanism_explanation].tag_priority`
 
 Required dense collection field mappings:
 - `name` <- `ingest.toml [qdrant.collections.<collection>.dense].name`

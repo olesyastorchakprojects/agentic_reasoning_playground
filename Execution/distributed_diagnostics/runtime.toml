@@ -49,6 +49,57 @@ controlled_vocabulary_path = "Specification/runtime/request_pipeline/query_struc
 prompt_asset_path = "Specification/runtime/request_pipeline/query_structuring_prompt_baseline_v2.manual_test.json"
 max_output_tokens = 2200
 
+[prompt_context]
+prompt_asset_path = "Specification/runtime/request_pipeline/prompt_context_assembly/diagnostic_response_prompt_baseline.manual_test.json"
+
+[prompt_context.chunk_packing.evidence_for_match]
+source = "primary_incident"
+limit = 1
+fallback_to_any_chunk = true
+tag_priority = [
+  "chunk_role:symptom",
+  "chunk_role:failure_mode",
+  "chunk_role:contributing_factor",
+]
+
+[prompt_context.chunk_packing.first_check_hint]
+source = "primary_incident"
+limit = 1
+fallback_to_any_chunk = true
+tag_priority = [
+  "chunk_role:diagnostic_step",
+  "chunk_role:investigation",
+  "chunk_role:lesson",
+]
+
+[prompt_context.chunk_packing.supporting_explanation]
+source = "primary_incident"
+limit = 1
+fallback_to_any_chunk = false
+tag_priority = [
+  "chunk_role:failure_mode",
+  "chunk_role:contributing_factor",
+  "chunk_role:uncertainty",
+  "chunk_role:hypothesis_update",
+]
+
+[prompt_context.chunk_packing.alternative_context]
+source = "alternative_incident"
+limit = 2
+per_case_limit = 1
+fallback_to_any_chunk = false
+tag_priority = [
+  "chunk_role:symptom",
+  "chunk_role:failure_mode",
+  "chunk_role:uncertainty",
+]
+
+[prompt_context.chunk_packing.mechanism_explanation]
+source = "theory"
+limit = 2
+fallback_to_any_chunk = false
+tag_priority = []
+
 [model]
 transport_kind = "ollama"
 

@@ -170,3 +170,77 @@ pub struct TheoryEvidenceChunk {
 pub struct TheoryEvidenceRetrievalOutput {
     pub chunks: Vec<TheoryEvidenceChunk>,
 }
+
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum_macros::EnumString,
+    strum_macros::Display,
+    strum_macros::AsRefStr,
+)]
+pub enum IncidentChunkTag {
+    #[strum(serialize = "chunk_role:symptom")]
+    Symptom,
+    #[strum(serialize = "chunk_role:impact")]
+    Impact,
+    #[strum(serialize = "chunk_role:timeline")]
+    Timeline,
+    #[strum(serialize = "chunk_role:symptom_change")]
+    SymptomChange,
+    #[strum(serialize = "chunk_role:investigation")]
+    Investigation,
+    #[strum(serialize = "chunk_role:diagnostic_step")]
+    DiagnosticStep,
+    #[strum(serialize = "chunk_role:hypothesis_update")]
+    HypothesisUpdate,
+    #[strum(serialize = "chunk_role:recovery")]
+    Recovery,
+    #[strum(serialize = "chunk_role:failure_mode")]
+    FailureMode,
+    #[strum(serialize = "chunk_role:root_cause")]
+    RootCause,
+    #[strum(serialize = "chunk_role:contributing_factor")]
+    ContributingFactor,
+    #[strum(serialize = "chunk_role:uncertainty")]
+    Uncertainty,
+    #[strum(serialize = "chunk_role:lesson")]
+    Lesson,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PromptEvidenceRole {
+    EvidenceForMatch,
+    FirstCheckHint,
+    SupportingExplanation,
+    AlternativeContext,
+    MechanismExplanation,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromptIncidentEvidenceChunk {
+    pub role: PromptEvidenceRole,
+    pub chunk_id: String,
+    pub case_id: String,
+    pub score: f32,
+    pub chunk_tags: Vec<IncidentChunkTag>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromptTheoryEvidenceChunk {
+    pub role: PromptEvidenceRole,
+    pub chunk_id: String,
+    pub score: f32,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromptContextAssemblyOutput {
+    pub prompt: String,
+    pub incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>,
+    pub theory_chunks: Vec<PromptTheoryEvidenceChunk>,
+}
