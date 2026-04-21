@@ -75,6 +75,7 @@ The current required crate-level module tree is:
     - `candidate_card_retrieval`
     - `card_hydration`
     - `incident_evidence_retrieval`
+    - `theory_evidence_retrieval`
   - `utils`
     - `retry`
     - `tokenizer`
@@ -97,6 +98,7 @@ Current request-pipeline file-layout rule:
 - `request_pipeline::candidate_card_retrieval` is generated as `src/request_pipeline/candidate_card_retrieval.rs`;
 - `request_pipeline::card_hydration` is generated as `src/request_pipeline/card_hydration.rs`;
 - `request_pipeline::incident_evidence_retrieval` is generated as `src/request_pipeline/incident_evidence_retrieval.rs`;
+- `request_pipeline::theory_evidence_retrieval` is generated as `src/request_pipeline/theory_evidence_retrieval.rs`;
 - the current version must not split `query_structuring` into a nested `mod.rs` subtree;
 - future refactoring into a directory module is allowed only after the crate-level runtime specification is updated.
 
@@ -427,6 +429,8 @@ For the current request-pipeline stage, the required shared types are:
 - `CardHydrationOutput`
 - `IncidentEvidenceChunk`
 - `IncidentEvidenceRetrievalOutput`
+- `TheoryEvidenceChunk`
+- `TheoryEvidenceRetrievalOutput`
 
 The generated Rust runtime must define shared types equivalent in ownership to:
 
@@ -543,6 +547,18 @@ pub struct IncidentEvidenceChunk {
 pub struct IncidentEvidenceRetrievalOutput {
     pub primary_chunks: Vec<IncidentEvidenceChunk>,
     pub alternative_chunks: Vec<IncidentEvidenceChunk>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TheoryEvidenceChunk {
+    pub chunk_id: String,
+    pub score: f32,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TheoryEvidenceRetrievalOutput {
+    pub chunks: Vec<TheoryEvidenceChunk>,
 }
 
 pub struct ModelTokenUsage {
@@ -687,12 +703,37 @@ Shared type rules:
      - `Clone`
      - `PartialEq`
 
+15. `TheoryEvidenceChunk`
+   - `TheoryEvidenceChunk` is the shared runtime representation of one retrieved theory chunk selected by the `theory_evidence_retrieval` boundary;
+   - it must contain exactly three fields:
+     - `chunk_id: String`
+     - `score: f32`
+     - `text: String`
+   - `score` must preserve the original retrieval `f32` value without rounding, normalization, bucketing, or rescaling;
+   - `text` must preserve the raw collection-returned theory chunk text;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+
+16. `TheoryEvidenceRetrievalOutput`
+   - `TheoryEvidenceRetrievalOutput` is the shared runtime output of the `theory_evidence_retrieval` boundary;
+   - it must contain exactly one field:
+     - `chunks: Vec<TheoryEvidenceChunk>`
+   - `chunks` contains only chunks returned by the theory evidence retrieval call;
+   - `chunks` must preserve collection-returned order exactly;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+
 Shared type export rule:
 - all shared types defined in this section, including `StructuredUserQuery`, `QueryStructuringOutput`, and `ModelTokenUsage`, must be defined in `src/shared_types.rs`;
 - all shared types defined in this section, including `CandidateCard` and `CandidateCardRetrievalOutput`, must be defined in `src/shared_types.rs`;
 - all shared types defined in this section, including `IncidentCard`, `IncidentPhase`, `DiscriminatingCheck`, and `ExpectedObservation`, must be defined in `src/shared_types.rs`;
 - all shared types defined in this section, including `CardHydrationOutput`, must be defined in `src/shared_types.rs`;
 - all shared types defined in this section, including `IncidentEvidenceChunk` and `IncidentEvidenceRetrievalOutput`, must be defined in `src/shared_types.rs`;
+- all shared types defined in this section, including `TheoryEvidenceChunk` and `TheoryEvidenceRetrievalOutput`, must be defined in `src/shared_types.rs`;
 - `lib.rs` must expose the shared-types module as `pub mod shared_types;`;
 - runtime leaf modules must import these shared types through `crate::shared_types::...` rather than through ad hoc re-exports.
 
