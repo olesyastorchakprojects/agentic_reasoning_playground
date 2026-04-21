@@ -250,3 +250,25 @@ pub struct LlmStructuredGenerationOutput {
     pub response_json: serde_json::Value,
     pub token_usage: ModelTokenUsage,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResponseValidationAndNormalizationOutput {
+    pub response: DiagnosticResponse,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagnosticResponse {
+    pub problem_understanding: String,
+    pub similar_practical_context: String,
+    pub active_hypotheses: Vec<String>,
+    pub first_check: String,
+    pub result_interpretation: DiagnosticResultInterpretation,
+    pub competing_interpretation: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagnosticResultInterpretation {
+    pub supports_primary_if: String,
+    pub supports_competing_if: String,
+    pub inconclusive_if: Option<String>,
+}

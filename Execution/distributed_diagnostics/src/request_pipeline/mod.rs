@@ -5,4 +5,5 @@ pub mod input_normalization;
 pub mod llm_structured_generation;
 pub mod prompt_context_assembly;
 pub mod query_structuring;
+pub mod response_validation_and_normalization;
 pub mod theory_evidence_retrieval;
