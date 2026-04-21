@@ -6,6 +6,7 @@ pub struct Settings {
     pub runtime: RuntimeSettings,
     pub input_normalization: InputNormalizationSettings,
     pub query_structuring: QueryStructuringSettings,
+    pub llm_structured_generation: LlmStructuredGenerationSettings,
     pub prompt_context: PromptContextSettings,
     pub retrieval: RetrievalSettings,
     pub model: ModelSettings,
@@ -166,6 +167,11 @@ pub struct Bm25LikeSettings {
     pub k1: f32,
     pub b: f32,
     pub idf_smoothing: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmStructuredGenerationSettings {
+    pub max_output_tokens: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

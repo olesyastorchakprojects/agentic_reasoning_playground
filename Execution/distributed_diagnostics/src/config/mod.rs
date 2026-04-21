@@ -6,10 +6,11 @@ pub use settings::{
     BagOfWordsSettings, Bm25LikeSettings, ChunkPackingSettings, ChunkPackingSource,
     ChunkRolePackingSettings, CollectionRetrievalSettings, CollectionSettings,
     DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
-    InputNormalizationSettings, ModelSettings, ModelTransportSettings, ObservabilitySettings,
-    OllamaModelSettings, PostgresSettings, PromptContextSettings, QueryStructuringSettings,
-    RetrievalSettings, RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
-    SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
+    InputNormalizationSettings, LlmStructuredGenerationSettings, ModelSettings,
+    ModelTransportSettings, ObservabilitySettings, OllamaModelSettings, PostgresSettings,
+    PromptContextSettings, QueryStructuringSettings, RetrievalSettings, RuntimeSettings, Settings,
+    SparsePreprocessingSettings, SparseSettings, SparseStrategySettings, TogetherModelSettings,
+    TokenizerSettings,
 };
 
 use thiserror::Error;
