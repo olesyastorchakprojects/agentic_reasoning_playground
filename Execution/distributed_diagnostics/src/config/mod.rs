@@ -3,11 +3,12 @@ mod settings;
 
 pub use load::load;
 pub use settings::{
-    BagOfWordsSettings, Bm25LikeSettings, CollectionRetrievalSettings, CollectionSettings,
+    BagOfWordsSettings, Bm25LikeSettings, ChunkPackingSettings, ChunkPackingSource,
+    ChunkRolePackingSettings, CollectionRetrievalSettings, CollectionSettings,
     DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
     InputNormalizationSettings, ModelSettings, ModelTransportSettings, ObservabilitySettings,
-    OllamaModelSettings, PostgresSettings, QueryStructuringSettings, RetrievalSettings,
-    RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
+    OllamaModelSettings, PostgresSettings, PromptContextSettings, QueryStructuringSettings,
+    RetrievalSettings, RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
     SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
 };
 

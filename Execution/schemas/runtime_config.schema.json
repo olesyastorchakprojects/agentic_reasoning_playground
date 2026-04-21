@@ -9,6 +9,7 @@
     "retrieval",
     "input_normalization",
     "query_structuring",
+    "prompt_context",
     "model",
     "observability"
   ],
@@ -62,6 +63,9 @@
     },
     "query_structuring": {
       "$ref": "#/$defs/query_structuring"
+    },
+    "prompt_context": {
+      "$ref": "#/$defs/prompt_context"
     },
     "observability": {
       "type": "object",
@@ -194,6 +198,182 @@
           "type": "integer",
           "minimum": 1
         }
+      }
+    },
+    "prompt_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prompt_asset_path",
+        "chunk_packing"
+      ],
+      "properties": {
+        "prompt_asset_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chunk_packing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "evidence_for_match",
+            "first_check_hint",
+            "supporting_explanation",
+            "alternative_context",
+            "mechanism_explanation"
+          ],
+          "properties": {
+            "evidence_for_match": { "$ref": "#/$defs/incident_chunk_role_required" },
+            "first_check_hint": { "$ref": "#/$defs/incident_chunk_role_required" },
+            "supporting_explanation": { "$ref": "#/$defs/incident_chunk_role_optional" },
+            "alternative_context": { "$ref": "#/$defs/alternative_chunk_role" },
+            "mechanism_explanation": { "$ref": "#/$defs/theory_chunk_role" }
+          }
+        }
+      }
+    },
+    "incident_chunk_role_required": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "limit",
+        "fallback_to_any_chunk",
+        "tag_priority"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "const": "primary_incident"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fallback_to_any_chunk": {
+          "type": "boolean"
+        },
+        "tag_priority": { "$ref": "#/$defs/incident_chunk_tag_priority" }
+      }
+    },
+    "incident_chunk_role_optional": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "limit",
+        "fallback_to_any_chunk",
+        "tag_priority"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "const": "primary_incident"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1
+        },
+        "fallback_to_any_chunk": {
+          "type": "boolean"
+        },
+        "tag_priority": { "$ref": "#/$defs/incident_chunk_tag_priority" }
+      }
+    },
+    "alternative_chunk_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "limit",
+        "fallback_to_any_chunk",
+        "tag_priority"
+      ],
+      "if": {
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": ["limit"]
+      },
+      "then": {
+        "required": ["per_case_limit"],
+        "properties": {
+          "per_case_limit": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "properties": {
+        "source": {
+          "type": "string",
+          "const": "alternative_incident"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "per_case_limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fallback_to_any_chunk": {
+          "type": "boolean"
+        },
+        "tag_priority": { "$ref": "#/$defs/incident_chunk_tag_priority" }
+      }
+    },
+    "theory_chunk_role": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "limit",
+        "fallback_to_any_chunk",
+        "tag_priority"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "const": "theory"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fallback_to_any_chunk": {
+          "type": "boolean"
+        },
+        "tag_priority": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "incident_chunk_tag_priority": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "chunk_role:symptom",
+          "chunk_role:impact",
+          "chunk_role:timeline",
+          "chunk_role:symptom_change",
+          "chunk_role:investigation",
+          "chunk_role:diagnostic_step",
+          "chunk_role:hypothesis_update",
+          "chunk_role:recovery",
+          "chunk_role:failure_mode",
+          "chunk_role:root_cause",
+          "chunk_role:contributing_factor",
+          "chunk_role:uncertainty",
+          "chunk_role:lesson"
+        ]
       }
     }
   }

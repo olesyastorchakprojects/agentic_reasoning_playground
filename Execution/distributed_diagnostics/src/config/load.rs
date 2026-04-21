@@ -1,15 +1,18 @@
 use std::path::Path;
+use std::str::FromStr;
 
 use serde::Deserialize;
 
+use crate::shared_types::IncidentChunkTag;
 use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
 
 use super::{
-    BagOfWordsSettings, Bm25LikeSettings, CollectionRetrievalSettings, CollectionSettings,
-    ConfigError, DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
+    BagOfWordsSettings, Bm25LikeSettings, ChunkPackingSettings, ChunkPackingSource,
+    ChunkRolePackingSettings, CollectionRetrievalSettings, CollectionSettings, ConfigError,
+    DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
     InputNormalizationSettings, ModelSettings, ModelTransportSettings, ObservabilitySettings,
-    OllamaModelSettings, PostgresSettings, QueryStructuringSettings, RetrievalSettings,
-    RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
+    OllamaModelSettings, PostgresSettings, PromptContextSettings, QueryStructuringSettings,
+    RetrievalSettings, RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
     SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
 };
 
@@ -22,6 +25,7 @@ struct RawConfig {
     runtime: RawRuntime,
     input_normalization: RawInputNormalization,
     query_structuring: RawQueryStructuring,
+    prompt_context: RawPromptContext,
     retrieval: RawRetrieval,
     model: RawModel,
     embedding: RawEmbedding,
@@ -187,6 +191,31 @@ struct RawObservability {
     metrics_export_interval_ms: u64,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawPromptContext {
+    prompt_asset_path: String,
+    chunk_packing: RawChunkPacking,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawChunkPacking {
+    evidence_for_match: RawChunkRolePacking,
+    first_check_hint: RawChunkRolePacking,
+    supporting_explanation: RawChunkRolePacking,
+    alternative_context: RawChunkRolePacking,
+    mechanism_explanation: RawChunkRolePacking,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawChunkRolePacking {
+    source: String,
+    limit: usize,
+    #[serde(default)]
+    per_case_limit: Option<usize>,
+    fallback_to_any_chunk: bool,
+    tag_priority: Vec<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -211,11 +240,8 @@ fn load_inner(
 
     // Resolve discriminators before reading env vars so missing/invalid
     // discriminator values fail early with a typed error.
-    let cards = resolve_collection_retrieval(
-        &raw.retrieval.cards,
-        &raw.qdrant.collections.cards,
-        "cards",
-    )?;
+    let cards =
+        resolve_collection_retrieval(&raw.retrieval.cards, &raw.qdrant.collections.cards, "cards")?;
     let practice = resolve_collection_retrieval(
         &raw.retrieval.practice,
         &raw.qdrant.collections.practice,
@@ -226,6 +252,8 @@ fn load_inner(
         &raw.qdrant.collections.theory,
         "theory",
     )?;
+
+    let prompt_context = resolve_prompt_context(&raw.prompt_context)?;
 
     let ollama_url = require_env_fn(env_fn, "OLLAMA_URL")?;
     let qdrant_url = require_env_fn(env_fn, "QDRANT_URL")?;
@@ -248,6 +276,7 @@ fn load_inner(
             prompt_asset_path: raw.query_structuring.prompt_asset_path,
             max_output_tokens: raw.query_structuring.max_output_tokens,
         },
+        prompt_context,
         retrieval: RetrievalSettings {
             qdrant_url,
             cards,
@@ -310,9 +339,12 @@ fn resolve_model_transport(
 ) -> Result<ModelTransportSettings, ConfigError> {
     match raw.transport_kind.as_str() {
         "ollama" => {
-            let cfg = raw.ollama.as_ref().ok_or_else(|| ConfigError::Load(
-                "model.transport_kind = \"ollama\" but [model.ollama] section is missing".into(),
-            ))?;
+            let cfg = raw.ollama.as_ref().ok_or_else(|| {
+                ConfigError::Load(
+                    "model.transport_kind = \"ollama\" but [model.ollama] section is missing"
+                        .into(),
+                )
+            })?;
             Ok(ModelTransportSettings::Ollama(OllamaModelSettings {
                 url: ollama_url.to_string(),
                 model_name: cfg.model_name.clone(),
@@ -321,10 +353,12 @@ fn resolve_model_transport(
             }))
         }
         "together" => {
-            let cfg = raw.together.as_ref().ok_or_else(|| ConfigError::Load(
-                "model.transport_kind = \"together\" but [model.together] section is missing"
-                    .into(),
-            ))?;
+            let cfg = raw.together.as_ref().ok_or_else(|| {
+                ConfigError::Load(
+                    "model.transport_kind = \"together\" but [model.together] section is missing"
+                        .into(),
+                )
+            })?;
             let url = require_env_fn(env_fn, "OPENAI_COMPATIBLE_URL")?;
             let api_key = require_env_fn(env_fn, "TOGETHER_API_KEY")?;
             Ok(ModelTransportSettings::Together(TogetherModelSettings {
@@ -367,9 +401,11 @@ fn resolve_collection_retrieval(
 fn resolve_collection(raw: &RawCollection, name: &str) -> Result<CollectionSettings, ConfigError> {
     match raw.kind.as_str() {
         "dense" => {
-            let cfg = raw.dense.as_ref().ok_or_else(|| ConfigError::Load(format!(
-                "qdrant.collections.{name}.kind = \"dense\" but [dense] section is missing"
-            )))?;
+            let cfg = raw.dense.as_ref().ok_or_else(|| {
+                ConfigError::Load(format!(
+                    "qdrant.collections.{name}.kind = \"dense\" but [dense] section is missing"
+                ))
+            })?;
             Ok(CollectionSettings::Dense(DenseCollectionSettings {
                 name: cfg.name.clone(),
                 vector_name: cfg.vector_name.clone(),
@@ -377,9 +413,11 @@ fn resolve_collection(raw: &RawCollection, name: &str) -> Result<CollectionSetti
             }))
         }
         "hybrid" => {
-            let cfg = raw.hybrid.as_ref().ok_or_else(|| ConfigError::Load(format!(
-                "qdrant.collections.{name}.kind = \"hybrid\" but [hybrid] section is missing"
-            )))?;
+            let cfg = raw.hybrid.as_ref().ok_or_else(|| {
+                ConfigError::Load(format!(
+                    "qdrant.collections.{name}.kind = \"hybrid\" but [hybrid] section is missing"
+                ))
+            })?;
             let sparse = resolve_sparse(&cfg.sparse, name)?;
             Ok(CollectionSettings::Hybrid(HybridCollectionSettings {
                 dense_vector_name: cfg.dense_vector_name.clone(),
@@ -393,6 +431,75 @@ fn resolve_collection(raw: &RawCollection, name: &str) -> Result<CollectionSetti
             reason: format!("unknown collection kind '{other}'"),
         }),
     }
+}
+
+fn resolve_prompt_context(raw: &RawPromptContext) -> Result<PromptContextSettings, ConfigError> {
+    Ok(PromptContextSettings {
+        prompt_asset_path: raw.prompt_asset_path.clone(),
+        chunk_packing: ChunkPackingSettings {
+            evidence_for_match: resolve_chunk_role(
+                &raw.chunk_packing.evidence_for_match,
+                "evidence_for_match",
+            )?,
+            first_check_hint: resolve_chunk_role(
+                &raw.chunk_packing.first_check_hint,
+                "first_check_hint",
+            )?,
+            supporting_explanation: resolve_chunk_role(
+                &raw.chunk_packing.supporting_explanation,
+                "supporting_explanation",
+            )?,
+            alternative_context: resolve_chunk_role(
+                &raw.chunk_packing.alternative_context,
+                "alternative_context",
+            )?,
+            mechanism_explanation: resolve_chunk_role(
+                &raw.chunk_packing.mechanism_explanation,
+                "mechanism_explanation",
+            )?,
+        },
+    })
+}
+
+fn resolve_chunk_role(
+    raw: &RawChunkRolePacking,
+    role_name: &str,
+) -> Result<ChunkRolePackingSettings, ConfigError> {
+    let source = match raw.source.as_str() {
+        "primary_incident" => ChunkPackingSource::PrimaryIncident,
+        "alternative_incident" => ChunkPackingSource::AlternativeIncident,
+        "theory" => ChunkPackingSource::Theory,
+        other => {
+            return Err(ConfigError::InvalidValue {
+                field: format!("prompt_context.chunk_packing.{role_name}.source"),
+                reason: format!("unknown source '{other}'"),
+            })
+        }
+    };
+
+    let mut seen_tags = std::collections::HashSet::new();
+    let mut tag_priority = Vec::with_capacity(raw.tag_priority.len());
+    for raw_tag in &raw.tag_priority {
+        let tag = IncidentChunkTag::from_str(raw_tag).map_err(|_| ConfigError::InvalidValue {
+            field: format!("prompt_context.chunk_packing.{role_name}.tag_priority"),
+            reason: format!("unknown tag '{raw_tag}'"),
+        })?;
+        if !seen_tags.insert(tag) {
+            return Err(ConfigError::InvalidValue {
+                field: format!("prompt_context.chunk_packing.{role_name}.tag_priority"),
+                reason: format!("duplicate tag '{raw_tag}'"),
+            });
+        }
+        tag_priority.push(tag);
+    }
+
+    Ok(ChunkRolePackingSettings {
+        source,
+        limit: raw.limit,
+        per_case_limit: raw.per_case_limit,
+        fallback_to_any_chunk: raw.fallback_to_any_chunk,
+        tag_priority,
+    })
 }
 
 fn resolve_sparse(raw: &RawSparse, col_name: &str) -> Result<SparseSettings, ConfigError> {
@@ -429,9 +536,7 @@ fn resolve_sparse(raw: &RawSparse, col_name: &str) -> Result<SparseSettings, Con
         }
         other => {
             return Err(ConfigError::InvalidValue {
-                field: format!(
-                    "qdrant.collections.{col_name}.hybrid.sparse.strategy.kind"
-                ),
+                field: format!("qdrant.collections.{col_name}.hybrid.sparse.strategy.kind"),
                 reason: format!("unknown sparse strategy kind '{other}'"),
             })
         }
@@ -504,9 +609,44 @@ controlled_vocabulary_path = "Specification/runtime/request_pipeline/query_struc
 prompt_asset_path = "Specification/runtime/request_pipeline/query_structuring_prompt_baseline_v2.manual_test.json"
 max_output_tokens = 2200
 
+[prompt_context]
+prompt_asset_path = "Specification/runtime/request_pipeline/prompt_context_assembly/diagnostic_response_prompt_baseline.manual_test.json"
+
+[prompt_context.chunk_packing.evidence_for_match]
+source = "primary_incident"
+limit = 1
+fallback_to_any_chunk = true
+tag_priority = ["chunk_role:symptom", "chunk_role:failure_mode"]
+
+[prompt_context.chunk_packing.first_check_hint]
+source = "primary_incident"
+limit = 1
+fallback_to_any_chunk = true
+tag_priority = ["chunk_role:diagnostic_step"]
+
+[prompt_context.chunk_packing.supporting_explanation]
+source = "primary_incident"
+limit = 1
+fallback_to_any_chunk = false
+tag_priority = ["chunk_role:contributing_factor"]
+
+[prompt_context.chunk_packing.alternative_context]
+source = "alternative_incident"
+limit = 2
+per_case_limit = 1
+fallback_to_any_chunk = false
+tag_priority = ["chunk_role:failure_mode"]
+
+[prompt_context.chunk_packing.mechanism_explanation]
+source = "theory"
+limit = 2
+fallback_to_any_chunk = false
+tag_priority = []
+
 [retrieval.cards]
 top_k = 8
 score_threshold = 0.2
+max_alternatives = 2
 
 [retrieval.cards.embedding_retry]
 max_attempts = 3
@@ -519,6 +659,7 @@ backoff = "exponential"
 [retrieval.practice]
 top_k = 12
 score_threshold = 0.2
+max_alternatives = 2
 
 [retrieval.practice.embedding_retry]
 max_attempts = 3
@@ -531,6 +672,7 @@ backoff = "exponential"
 [retrieval.theory]
 top_k = 12
 score_threshold = 0.2
+max_alternatives = 2
 
 [retrieval.theory.embedding_retry]
 max_attempts = 3
@@ -910,10 +1052,7 @@ vector_name = "dense"
     #[test]
     fn bag_of_words_sparse_strategy_resolves_to_bag_of_words_variant() {
         let env = default_env();
-        let bow_ing = INGEST_TOML_HYBRID.replace(
-            "kind = \"bm25_like\"",
-            "kind = \"bag_of_words\"",
-        );
+        let bow_ing = INGEST_TOML_HYBRID.replace("kind = \"bm25_like\"", "kind = \"bag_of_words\"");
         let rt = write_temp(RUNTIME_TOML);
         let ing = write_temp(&bow_ing);
 
@@ -964,7 +1103,10 @@ vector_name = "dense"
 
         let s = load_test(&rt, &ing, &env).unwrap();
         assert_eq!(s.input_normalization.max_input_tokens, 3000);
-        assert_eq!(s.input_normalization.tokenizer_source, "Qwen/Qwen3-Embedding-0.6B");
+        assert_eq!(
+            s.input_normalization.tokenizer_source,
+            "Qwen/Qwen3-Embedding-0.6B"
+        );
     }
 
     #[test]
@@ -988,10 +1130,8 @@ vector_name = "dense"
     #[test]
     fn unknown_sparse_strategy_kind_fails_with_invalid_value() {
         let env = default_env();
-        let bad_ing = INGEST_TOML_HYBRID.replace(
-            "kind = \"bm25_like\"",
-            "kind = \"unknown_sparse\"",
-        );
+        let bad_ing =
+            INGEST_TOML_HYBRID.replace("kind = \"bm25_like\"", "kind = \"unknown_sparse\"");
         let rt = write_temp(RUNTIME_TOML);
         let ing = write_temp(&bad_ing);
 
@@ -1027,5 +1167,148 @@ vector_name = "dense"
             CollectionSettings::Hybrid(h) => assert_eq!(h.corpus_version, "v1"),
             CollectionSettings::Dense(d) => assert_eq!(d.corpus_version, "v1"),
         }
+    }
+
+    #[test]
+    fn prompt_context_asset_path_is_preserved() {
+        let env = default_env();
+        let rt = write_temp(RUNTIME_TOML);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let s = load_test(&rt, &ing, &env).unwrap();
+        assert_eq!(
+            s.prompt_context.prompt_asset_path,
+            "Specification/runtime/request_pipeline/prompt_context_assembly/diagnostic_response_prompt_baseline.manual_test.json"
+        );
+    }
+
+    #[test]
+    fn prompt_context_chunk_role_fields_are_preserved() {
+        use crate::config::ChunkPackingSource;
+        use crate::shared_types::IncidentChunkTag;
+        let env = default_env();
+        let rt = write_temp(RUNTIME_TOML);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let s = load_test(&rt, &ing, &env).unwrap();
+        let cp = &s.prompt_context.chunk_packing;
+
+        assert_eq!(
+            cp.evidence_for_match.source,
+            ChunkPackingSource::PrimaryIncident
+        );
+        assert_eq!(cp.evidence_for_match.limit, 1);
+        assert!(cp.evidence_for_match.fallback_to_any_chunk);
+        assert_eq!(
+            cp.evidence_for_match.tag_priority,
+            vec![IncidentChunkTag::Symptom, IncidentChunkTag::FailureMode]
+        );
+
+        assert_eq!(
+            cp.alternative_context.source,
+            ChunkPackingSource::AlternativeIncident
+        );
+        assert_eq!(cp.alternative_context.limit, 2);
+        assert_eq!(cp.alternative_context.per_case_limit, Some(1));
+
+        assert_eq!(cp.mechanism_explanation.source, ChunkPackingSource::Theory);
+        assert_eq!(cp.mechanism_explanation.limit, 2);
+        assert!(cp.mechanism_explanation.tag_priority.is_empty());
+    }
+
+    #[test]
+    fn prompt_context_supporting_explanation_default_limit_is_one() {
+        let env = default_env();
+        let rt = write_temp(RUNTIME_TOML);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let s = load_test(&rt, &ing, &env).unwrap();
+        assert_eq!(
+            s.prompt_context.chunk_packing.supporting_explanation.limit,
+            1
+        );
+    }
+
+    #[test]
+    fn prompt_context_accepts_full_canonical_chunk_tags() {
+        let env = default_env();
+        let rt = write_temp(RUNTIME_TOML);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let s = load_test(&rt, &ing, &env).unwrap();
+        let tags = &s
+            .prompt_context
+            .chunk_packing
+            .evidence_for_match
+            .tag_priority;
+        assert!(tags.contains(&crate::shared_types::IncidentChunkTag::Symptom));
+    }
+
+    #[test]
+    fn prompt_context_rejects_short_tag_alias() {
+        let env = default_env();
+        let bad_rt = RUNTIME_TOML.replace(
+            r#"tag_priority = ["chunk_role:symptom", "chunk_role:failure_mode"]"#,
+            r#"tag_priority = ["symptom"]"#,
+        );
+        let rt = write_temp(&bad_rt);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let err = load_test(&rt, &ing, &env).expect_err("should fail on short tag alias");
+        assert!(
+            matches!(err, ConfigError::InvalidValue { .. }),
+            "expected InvalidValue for short tag alias, got: {err}"
+        );
+    }
+
+    #[test]
+    fn prompt_context_rejects_unknown_chunk_tag() {
+        let env = default_env();
+        let bad_rt = RUNTIME_TOML.replace(
+            r#"tag_priority = ["chunk_role:symptom", "chunk_role:failure_mode"]"#,
+            r#"tag_priority = ["chunk_role:unknown_tag_xyz"]"#,
+        );
+        let rt = write_temp(&bad_rt);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let err = load_test(&rt, &ing, &env).expect_err("should fail on unknown tag");
+        assert!(
+            matches!(err, ConfigError::InvalidValue { .. }),
+            "expected InvalidValue for unknown tag, got: {err}"
+        );
+    }
+
+    #[test]
+    fn prompt_context_rejects_duplicate_tags_in_priority_list() {
+        let env = default_env();
+        let bad_rt = RUNTIME_TOML.replace(
+            r#"tag_priority = ["chunk_role:symptom", "chunk_role:failure_mode"]"#,
+            r#"tag_priority = ["chunk_role:symptom", "chunk_role:symptom"]"#,
+        );
+        let rt = write_temp(&bad_rt);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let err = load_test(&rt, &ing, &env).expect_err("should fail on duplicate tags");
+        assert!(
+            matches!(err, ConfigError::InvalidValue { .. }),
+            "expected InvalidValue for duplicate tags, got: {err}"
+        );
+    }
+
+    #[test]
+    fn prompt_context_rejects_invalid_source_value() {
+        let env = default_env();
+        let bad_rt = RUNTIME_TOML.replace(
+            r#"source = "primary_incident""#,
+            r#"source = "unknown_source_kind""#,
+        );
+        let rt = write_temp(&bad_rt);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let err = load_test(&rt, &ing, &env).expect_err("should fail on invalid source");
+        assert!(
+            matches!(err, ConfigError::InvalidValue { .. }),
+            "expected InvalidValue for invalid source, got: {err}"
+        );
     }
 }

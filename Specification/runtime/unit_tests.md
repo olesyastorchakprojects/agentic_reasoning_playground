@@ -93,7 +93,15 @@ Generated unit tests for the crate-level `config` boundary must include all of t
 - unsupported sparse strategy kinds fail before runtime request processing begins;
 - resolved collection retrieval settings preserve `top_k`, `score_threshold`, `max_alternatives`, retry settings, and the typed collection variant in one `CollectionRetrievalSettings` value;
 - resolved settings place `corpus_version` on the collection settings boundary rather than as one shared top-level retrieval field;
-- resolved settings preserve `query_structuring.controlled_vocabulary_path`, `query_structuring.prompt_asset_path`, and `query_structuring.max_output_tokens`.
+- resolved settings preserve `query_structuring.controlled_vocabulary_path`, `query_structuring.prompt_asset_path`, and `query_structuring.max_output_tokens`;
+- resolved settings preserve `prompt_context.prompt_asset_path`;
+- resolved prompt-context settings preserve chunk role sources, limits, per-case limits, fallback flags, and typed tag priorities;
+- resolved default runtime config enables `supporting_explanation.limit = 1`;
+- prompt-context config accepts full canonical chunk tags such as `chunk_role:symptom`;
+- prompt-context config rejects short chunk tag aliases such as `symptom`;
+- prompt-context config rejects unknown chunk tags;
+- prompt-context config rejects duplicate tags inside one role priority list;
+- prompt-context config rejects invalid source values;
 
 ### 4.4) `utils`
 
@@ -235,6 +243,95 @@ Generated unit tests for the `theory_evidence_retrieval` runtime module must inc
 - no deduplication of returned chunks;
 - pass-through of collection errors through `TheoryEvidenceRetrievalError::Collection`;
 - `retrieve(...)` does not require candidate-card, card-hydration, or incident-evidence inputs.
+
+### 4.12) `prompt_context_assembly`
+
+Generated unit tests for the `prompt_context_assembly` runtime module must include all of the following cases:
+
+- constructor rejects empty `prompt_asset_path`;
+- constructor rejects unreadable prompt asset file;
+- constructor rejects unreadable derived prompt asset schema file;
+- constructor rejects invalid prompt asset JSON;
+- constructor rejects invalid prompt asset schema JSON;
+- constructor rejects prompt asset JSON that does not satisfy the derived prompt asset schema;
+- constructor rejects prompt asset missing `{{json_context}}`;
+- constructor rejects prompt asset with more than one `{{json_context}}`;
+- constructor rejects prompt asset with empty `policy_constraints`;
+- constructor succeeds with a valid prompt asset loaded from `PromptContextSettings.prompt_asset_path`;
+- constructor derives the prompt asset schema path from the prompt asset directory by replacing the prompt asset file name suffix with `.schema.json`;
+- constructor rejection when `evidence_for_match.limit = 0`;
+- constructor rejection when `first_check_hint.limit = 0`;
+- constructor allows `supporting_explanation.limit = 0`;
+- constructor succeeds when `supporting_explanation.limit = 1`;
+- constructor allows `alternative_context.limit = 0`;
+- constructor allows `mechanism_explanation.limit = 0`;
+- constructor rejection when `evidence_for_match.source` is not `PrimaryIncident`;
+- constructor rejection when `first_check_hint.source` is not `PrimaryIncident`;
+- constructor rejection when `supporting_explanation.source` is not `PrimaryIncident`;
+- constructor rejection when `alternative_context.source` is not `AlternativeIncident`;
+- constructor rejection when `mechanism_explanation.source` is not `Theory`;
+- constructor rejection when `alternative_context.limit > 0` and `per_case_limit = None`;
+- constructor rejection when `alternative_context.limit > 0` and `per_case_limit = Some(0)`;
+- constructor accepts `alternative_context.per_case_limit = None` when `alternative_context.limit = 0`;
+- constructor accepts any `alternative_context.per_case_limit = Some(n)` value when `alternative_context.limit = 0`;
+- constructor rejection when `mechanism_explanation.tag_priority` is non-empty;
+- missing hydrated primary card fails with `PromptContextAssemblyError::MissingPrimaryCard`;
+- output includes the hydrated primary card as `matched_incident_card`;
+- output excludes full alternative cards;
+- output copies `NormalizedUserRequest.query` into `user_problem`;
+- output builds `normalized_incident_query.recognized_canonical_symptoms` from `QueryStructuringOutput.structured_query.symptoms[*].term`;
+- output builds `normalized_incident_query.affected_components` from `QueryStructuringOutput.structured_query.affected_subsystems[*].term`;
+- output builds `normalized_incident_query.failure_mode_candidates` from `QueryStructuringOutput.structured_query.failure_modes[*].term`;
+- output builds `normalized_incident_query.signals_present` from symptoms, triggers, and observability signals with stable de-duplication;
+- output emits `normalized_incident_query.unmapped_user_symptoms`, `observed_phase`, and `missing_signals` as empty arrays in the current version;
+- output does not include `evidence_span`, `support_level`, `rejected_nearby_terms`, or `token_usage` in the prompt context;
+- output does not fail when a `normalized_incident_query` source array is empty;
+- output includes the fixed task value `diagnostic_response`;
+- output includes policy constraints loaded from the prompt asset;
+- output returns a non-empty filled prompt string;
+- rendered prompt contains the strict JSON output schema;
+- rendered prompt contains a `JSON context follows:` marker;
+- rendered prompt contains a valid serialized JSON context after the `JSON context follows:` marker;
+- rendered prompt embeds the selected incident chunks with roles and canonical typed `IncidentChunkTag` values serialized as full tag strings;
+- rendered prompt embeds selected supporting explanation chunks with role `supporting_explanation`;
+- rendered prompt serializes all prompt evidence roles through the exact snake-case mapping: `evidence_for_match`, `first_check_hint`, `supporting_explanation`, `alternative_context`, and `mechanism_explanation`;
+- prompt rendering uses module-private DTOs or helper mapping for `PromptEvidenceRole` serialization rather than deriving `serde::Serialize` on `PromptEvidenceRole`;
+- rendered prompt embeds `competing_precedent_context` derived from selected `alternative_context` chunks and hydrated alternative cards;
+- `competing_precedent_context` entries include `case_id`, `title`, `source_name`, and one-line `competing_signal`;
+- multiple selected `alternative_context` chunks with the same `case_id` produce multiple `competing_precedent_context` entries in selected chunk order;
+- `competing_precedent_context.competing_signal` is built from selected alternative chunk text without model summarization;
+- rendered prompt embeds selected theory chunks with roles;
+- rendered prompt preserves uncertainty instructions when alternative context chunks are selected;
+- output returns selected incident chunks separately from the prompt for history;
+- output returns selected theory chunks separately from the prompt for history;
+- chunks returned separately from the prompt exactly match the chunks embedded in the rendered prompt context;
+- `evidence_for_match` selection uses configured tag priority before retrieval score;
+- `first_check_hint` selection uses configured tag priority before retrieval score;
+- `supporting_explanation` selection uses configured tag priority before retrieval score;
+- when two chunks match the same configured tag priority, higher score wins;
+- when tag priority and score tie, original retrieval order wins;
+- chunks with multiple tags use the best matching configured tag for the current role;
+- unknown collection-returned tags are ignored for role matching;
+- fallback chunks are considered only when `fallback_to_any_chunk = true`;
+- required role selection fails with `MissingRequiredEvidence` when no eligible chunk exists and fallback is disabled;
+- selected chunks are not duplicated across required incident roles when a distinct eligible chunk is available;
+- duplicate chunk reuse is allowed only as required-role fallback when no distinct chunk can fill the role;
+- optional `supporting_explanation` does not reuse a duplicate chunk when no distinct eligible chunk exists;
+- `alternative_context.limit = 0` selects no alternative chunks;
+- alternative context selection uses deterministic round-robin across case groups;
+- alternative context round-robin follows `CardHydrationOutput.alternatives[*].case_id` order when alternatives are present;
+- alternative context selection respects `per_case_limit`;
+- alternative context is optional when no alternative chunks exist;
+- selected primary incident chunks whose `case_id` differs from the hydrated primary card fail with `PromptContextAssemblyError::InconsistentEvidence`;
+- selected alternative incident chunks whose `case_id` has no hydrated alternative card fail with `PromptContextAssemblyError::InconsistentEvidence`;
+- theory chunk selection respects `mechanism_explanation.limit`;
+- `mechanism_explanation.limit = 0` selects no theory chunks;
+- empty theory evidence is not an error;
+- selected incident chunks preserve raw `chunk_id`, `case_id`, `score`, and `text`;
+- selected incident chunks return recognized `chunk_tags` as typed `IncidentChunkTag` values and omit unknown raw source tags;
+- selected theory chunks preserve raw `chunk_id`, `score`, and `text`;
+- selected incident chunks are emitted in role order: `EvidenceForMatch`, `FirstCheckHint`, `SupportingExplanation`, then `AlternativeContext`;
+- no unselected chunks are included in output.
 
 ## 5) Completion Rule
 
