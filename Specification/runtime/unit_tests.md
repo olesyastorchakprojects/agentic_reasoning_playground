@@ -212,6 +212,30 @@ Generated unit tests for the `incident_evidence_retrieval` runtime module must i
 - whole-module failure when one branch succeeds and the other branch returns a collection error;
 - no deduplication of returned chunks.
 
+### 4.11) `theory_evidence_retrieval`
+
+Generated unit tests for the `theory_evidence_retrieval` runtime module must include all of the following cases:
+
+- constructor rejection of `top_k = 0`;
+- constructor rejection of negative `score_threshold`;
+- constructor rejection of `score_threshold = f32::NAN`;
+- constructor rejection of `score_threshold = f32::INFINITY`;
+- constructor rejection of `score_threshold = f32::NEG_INFINITY`;
+- constructor success when `top_k > 0`;
+- `retrieve(...)` issues exactly one collection call for a valid request;
+- request construction uses the unchanged normalized query text;
+- request construction uses `limit = settings.top_k`;
+- request construction uses `score_threshold = settings.score_threshold`;
+- successful empty-result retrieval returns `TheoryEvidenceRetrievalOutput { chunks: vec![] }`;
+- successful mapping from `TheoryChunkSearchHit` into `TheoryEvidenceChunk`;
+- preservation of collection hit order in `TheoryEvidenceRetrievalOutput.chunks`;
+- preservation of raw collection-returned `score` values without rounding, normalization, bucketing, or rescaling;
+- preservation of raw collection-returned `text` values;
+- no post-collection truncation beyond the collection request limit;
+- no deduplication of returned chunks;
+- pass-through of collection errors through `TheoryEvidenceRetrievalError::Collection`;
+- `retrieve(...)` does not require candidate-card, card-hydration, or incident-evidence inputs.
+
 ## 5) Completion Rule
 
 Generation for crate-level runtime unit tests is complete only when all of the following are true:

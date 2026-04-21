@@ -158,3 +158,15 @@ pub struct IncidentEvidenceRetrievalOutput {
     pub primary_chunks: Vec<IncidentEvidenceChunk>,
     pub alternative_chunks: Vec<IncidentEvidenceChunk>,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TheoryEvidenceChunk {
+    pub chunk_id: String,
+    pub score: f32,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TheoryEvidenceRetrievalOutput {
+    pub chunks: Vec<TheoryEvidenceChunk>,
+}

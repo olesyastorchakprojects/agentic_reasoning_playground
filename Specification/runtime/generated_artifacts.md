@@ -46,6 +46,10 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/request_pipeline/mod.rs`
 - `src/request_pipeline/input_normalization.rs`
 - `src/request_pipeline/query_structuring.rs`
+- `src/request_pipeline/candidate_card_retrieval.rs`
+- `src/request_pipeline/card_hydration.rs`
+- `src/request_pipeline/incident_evidence_retrieval.rs`
+- `src/request_pipeline/theory_evidence_retrieval.rs`
 - `src/utils/mod.rs`
 - `src/utils/retry.rs`
 - `src/utils/tokenizer.rs`
@@ -81,6 +85,18 @@ Child artifacts for the request-pipeline leaf module `input_normalization` are o
 Child artifacts for the request-pipeline leaf module `query_structuring` are owned by:
 - `Specification/runtime/request_pipeline/query_structuring.md`
 
+Child artifacts for the request-pipeline leaf module `candidate_card_retrieval` are owned by:
+- `Specification/runtime/request_pipeline/candidate_card_retrieval.md`
+
+Child artifacts for the request-pipeline leaf module `card_hydration` are owned by:
+- `Specification/runtime/request_pipeline/card_hydration.md`
+
+Child artifacts for the request-pipeline leaf module `incident_evidence_retrieval` are owned by:
+- `Specification/runtime/request_pipeline/incident_evidence_retrieval.md`
+
+Child artifacts for the request-pipeline leaf module `theory_evidence_retrieval` are owned by:
+- `Specification/runtime/request_pipeline/theory_evidence_retrieval.md`
+
 Child artifacts for the tokenizer utility module are owned by:
 - `Specification/runtime/utils/tokenizer.md`
 
@@ -104,6 +120,10 @@ Current delegated child specifications:
 - `Specification/runtime/api_clients/qdrant/generation_order.md`
 - `Specification/runtime/request_pipeline/input_normalization.md`
 - `Specification/runtime/request_pipeline/query_structuring.md`
+- `Specification/runtime/request_pipeline/candidate_card_retrieval.md`
+- `Specification/runtime/request_pipeline/card_hydration.md`
+- `Specification/runtime/request_pipeline/incident_evidence_retrieval.md`
+- `Specification/runtime/request_pipeline/theory_evidence_retrieval.md`
 - `Specification/runtime/utils/tokenizer.md`
 - `Specification/card_to_chunk_converter/incident_card_chunk_conversion.md`
 
