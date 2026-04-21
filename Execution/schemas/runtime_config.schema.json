@@ -9,6 +9,7 @@
     "retrieval",
     "input_normalization",
     "query_structuring",
+    "llm_structured_generation",
     "prompt_context",
     "model",
     "observability"
@@ -63,6 +64,19 @@
     },
     "query_structuring": {
       "$ref": "#/$defs/query_structuring"
+    },
+    "llm_structured_generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_output_tokens"
+      ],
+      "properties": {
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
     },
     "prompt_context": {
       "$ref": "#/$defs/prompt_context"

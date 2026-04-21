@@ -10,10 +10,11 @@ use super::{
     BagOfWordsSettings, Bm25LikeSettings, ChunkPackingSettings, ChunkPackingSource,
     ChunkRolePackingSettings, CollectionRetrievalSettings, CollectionSettings, ConfigError,
     DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
-    InputNormalizationSettings, ModelSettings, ModelTransportSettings, ObservabilitySettings,
-    OllamaModelSettings, PostgresSettings, PromptContextSettings, QueryStructuringSettings,
-    RetrievalSettings, RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
-    SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
+    InputNormalizationSettings, LlmStructuredGenerationSettings, ModelSettings,
+    ModelTransportSettings, ObservabilitySettings, OllamaModelSettings, PostgresSettings,
+    PromptContextSettings, QueryStructuringSettings, RetrievalSettings, RuntimeSettings, Settings,
+    SparsePreprocessingSettings, SparseSettings, SparseStrategySettings, TogetherModelSettings,
+    TokenizerSettings,
 };
 
 // ---------------------------------------------------------------------------
@@ -25,12 +26,18 @@ struct RawConfig {
     runtime: RawRuntime,
     input_normalization: RawInputNormalization,
     query_structuring: RawQueryStructuring,
+    llm_structured_generation: RawLlmStructuredGeneration,
     prompt_context: RawPromptContext,
     retrieval: RawRetrieval,
     model: RawModel,
     embedding: RawEmbedding,
     qdrant: RawQdrant,
     observability: RawObservability,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawLlmStructuredGeneration {
+    max_output_tokens: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -275,6 +282,9 @@ fn load_inner(
             controlled_vocabulary_path: raw.query_structuring.controlled_vocabulary_path,
             prompt_asset_path: raw.query_structuring.prompt_asset_path,
             max_output_tokens: raw.query_structuring.max_output_tokens,
+        },
+        llm_structured_generation: LlmStructuredGenerationSettings {
+            max_output_tokens: raw.llm_structured_generation.max_output_tokens,
         },
         prompt_context,
         retrieval: RetrievalSettings {
@@ -608,6 +618,9 @@ tokenizer_source = "Qwen/Qwen3-Embedding-0.6B"
 controlled_vocabulary_path = "Specification/runtime/request_pipeline/query_structuring_controlled_vocabulary.manual_test.json"
 prompt_asset_path = "Specification/runtime/request_pipeline/query_structuring_prompt_baseline_v2.manual_test.json"
 max_output_tokens = 2200
+
+[llm_structured_generation]
+max_output_tokens = 1200
 
 [prompt_context]
 prompt_asset_path = "Specification/runtime/request_pipeline/prompt_context_assembly/diagnostic_response_prompt_baseline.manual_test.json"
@@ -1309,6 +1322,33 @@ vector_name = "dense"
         assert!(
             matches!(err, ConfigError::InvalidValue { .. }),
             "expected InvalidValue for invalid source, got: {err}"
+        );
+    }
+
+    #[test]
+    fn llm_structured_generation_max_output_tokens_is_preserved() {
+        let env = default_env();
+        let rt = write_temp(RUNTIME_TOML);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let s = load_test(&rt, &ing, &env).unwrap();
+        assert_eq!(s.llm_structured_generation.max_output_tokens, 1200);
+    }
+
+    #[test]
+    fn missing_llm_structured_generation_section_fails_with_load_error() {
+        let env = default_env();
+        let bad_rt = RUNTIME_TOML.replace(
+            "\n[llm_structured_generation]\nmax_output_tokens = 1200\n",
+            "",
+        );
+        let rt = write_temp(&bad_rt);
+        let ing = write_temp(INGEST_TOML_HYBRID);
+
+        let err = load_test(&rt, &ing, &env).expect_err("should fail");
+        assert!(
+            matches!(err, ConfigError::Load(_)),
+            "expected Load error, got: {err}"
         );
     }
 }

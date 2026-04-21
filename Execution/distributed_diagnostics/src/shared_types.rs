@@ -244,3 +244,9 @@ pub struct PromptContextAssemblyOutput {
     pub incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>,
     pub theory_chunks: Vec<PromptTheoryEvidenceChunk>,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LlmStructuredGenerationOutput {
+    pub response_json: serde_json::Value,
+    pub token_usage: ModelTokenUsage,
+}
