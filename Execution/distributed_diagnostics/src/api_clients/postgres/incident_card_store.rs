@@ -11,14 +11,14 @@ use crate::shared_types::IncidentCard;
 
 // ── Error ─────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Error)]
 pub enum IncidentCardStoreError {
     #[error("invalid config: {0}")]
-    InvalidConfig(&'static str),
+    InvalidConfig(String),
     #[error("card validation failed: {0}")]
-    Validation(&'static str),
+    Validation(String),
     #[error("serialization failed: {0}")]
-    Serialization(&'static str),
+    Serialization(String),
     #[error("postgres connection failed: {0}")]
     Connection(String),
     #[error("insert failed: {0}")]
@@ -28,7 +28,7 @@ pub enum IncidentCardStoreError {
     #[error("duplicate case_id: {0}")]
     DuplicateCaseId(String),
     #[error("invalid stored row: {0}")]
-    InvalidStoredRow(&'static str),
+    InvalidStoredRow(String),
 }
 
 // ── Schema validator (lazy static) ───────────────────────────────────────────
@@ -36,9 +36,10 @@ pub enum IncidentCardStoreError {
 fn compiled_schema() -> &'static Validator {
     static SCHEMA: std::sync::OnceLock<Validator> = std::sync::OnceLock::new();
     SCHEMA.get_or_init(|| {
-        let raw: Value =
-            serde_json::from_str(include_str!("../../../../schemas/incident_card.schema.json"))
-                .expect("embedded schema must be valid JSON");
+        let raw: Value = serde_json::from_str(include_str!(
+            "../../../../schemas/incident_card.schema.json"
+        ))
+        .expect("embedded schema must be valid JSON");
         jsonschema::options()
             .build(&raw)
             .expect("embedded schema must compile")
@@ -87,22 +88,26 @@ struct StorageWritePayload {
 
 impl IncidentCardStorageRowMapper {
     fn map(card: &IncidentCard) -> Result<StorageWritePayload, IncidentCardStoreError> {
-        let card_json =
-            serde_json::to_value(card).map_err(|_| IncidentCardStoreError::Serialization("failed to serialize card to JSON"))?;
+        let card_json = serde_json::to_value(card).map_err(|_| {
+            IncidentCardStoreError::Serialization("failed to serialize card to JSON".to_string())
+        })?;
 
         let report_date = card
             .report_date
             .as_deref()
             .map(|d| {
-                NaiveDate::parse_from_str(d, "%Y-%m-%d")
-                    .map_err(|_| IncidentCardStoreError::Serialization("invalid report_date format"))
+                NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| {
+                    IncidentCardStoreError::Serialization("invalid report_date format".to_string())
+                })
             })
             .transpose()?;
 
         macro_rules! ser {
             ($field:expr) => {
                 serde_json::to_value(&$field).map_err(|_| {
-                    IncidentCardStoreError::Serialization("failed to serialize array field")
+                    IncidentCardStoreError::Serialization(
+                        "failed to serialize array field".to_string(),
+                    )
                 })?
             };
         }
@@ -150,38 +155,41 @@ struct IncidentCardStorageReadMapper;
 
 impl IncidentCardStorageReadMapper {
     fn map(row: &StorageReadRow) -> Result<IncidentCard, IncidentCardStoreError> {
-        let card: IncidentCard = serde_json::from_value(row.card_json.clone())
-            .map_err(|_| IncidentCardStoreError::InvalidStoredRow("card_json cannot be deserialized to IncidentCard"))?;
+        let card: IncidentCard = serde_json::from_value(row.card_json.clone()).map_err(|_| {
+            IncidentCardStoreError::InvalidStoredRow(
+                "card_json cannot be deserialized to IncidentCard".to_string(),
+            )
+        })?;
 
         // Validate mirrored required fields agree with storage columns.
         if card.case_id != row.case_id {
             return Err(IncidentCardStoreError::InvalidStoredRow(
-                "card_json.case_id does not match storage column case_id",
+                "card_json.case_id does not match storage column case_id".to_string(),
             ));
         }
         if card.title != row.title {
             return Err(IncidentCardStoreError::InvalidStoredRow(
-                "card_json.title does not match storage column title",
+                "card_json.title does not match storage column title".to_string(),
             ));
         }
         if card.source_type != row.source_type {
             return Err(IncidentCardStoreError::InvalidStoredRow(
-                "card_json.source_type does not match storage column source_type",
+                "card_json.source_type does not match storage column source_type".to_string(),
             ));
         }
         if card.source_name != row.source_name {
             return Err(IncidentCardStoreError::InvalidStoredRow(
-                "card_json.source_name does not match storage column source_name",
+                "card_json.source_name does not match storage column source_name".to_string(),
             ));
         }
         if card.source_path != row.source_path {
             return Err(IncidentCardStoreError::InvalidStoredRow(
-                "card_json.source_path does not match storage column source_path",
+                "card_json.source_path does not match storage column source_path".to_string(),
             ));
         }
         if card.short_summary != row.short_summary {
             return Err(IncidentCardStoreError::InvalidStoredRow(
-                "card_json.short_summary does not match storage column short_summary",
+                "card_json.short_summary does not match storage column short_summary".to_string(),
             ));
         }
 
@@ -212,9 +220,13 @@ pub struct PostgresIncidentCardStore {
 }
 
 impl PostgresIncidentCardStore {
-    pub async fn new(config: PostgresIncidentCardStoreConfig) -> Result<Self, IncidentCardStoreError> {
+    pub async fn new(
+        config: PostgresIncidentCardStoreConfig,
+    ) -> Result<Self, IncidentCardStoreError> {
         if config.postgres_url.trim().is_empty() {
-            return Err(IncidentCardStoreError::InvalidConfig("postgres_url must not be empty"));
+            return Err(IncidentCardStoreError::InvalidConfig(
+                "postgres_url must not be empty".to_string(),
+            ));
         }
 
         let pool = PgPoolOptions::new()
@@ -346,7 +358,11 @@ impl PostgresIncidentCardStore {
 
         let unique_ids: Vec<String> = {
             let mut seen = HashSet::new();
-            case_ids.iter().filter(|id| seen.insert(id.as_str())).cloned().collect()
+            case_ids
+                .iter()
+                .filter(|id| seen.insert(id.as_str()))
+                .cloned()
+                .collect()
         };
 
         let rows = sqlx::query(
@@ -371,27 +387,44 @@ impl PostgresIncidentCardStore {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn extract_read_row(r: &sqlx::postgres::PgRow) -> Result<StorageReadRow, IncidentCardStoreError> {
-    let card_json_wrapper: sqlx::types::Json<Value> = r
-        .try_get("card_json")
-        .map_err(|_| IncidentCardStoreError::InvalidStoredRow("card_json column missing or wrong type"))?;
+    let card_json_wrapper: sqlx::types::Json<Value> = r.try_get("card_json").map_err(|_| {
+        IncidentCardStoreError::InvalidStoredRow(
+            "card_json column missing or wrong type".to_string(),
+        )
+    })?;
 
     Ok(StorageReadRow {
-        case_id: r.try_get("case_id").map_err(|_| IncidentCardStoreError::InvalidStoredRow("case_id column"))?,
-        title: r.try_get("title").map_err(|_| IncidentCardStoreError::InvalidStoredRow("title column"))?,
-        source_type: r.try_get("source_type").map_err(|_| IncidentCardStoreError::InvalidStoredRow("source_type column"))?,
-        source_name: r.try_get("source_name").map_err(|_| IncidentCardStoreError::InvalidStoredRow("source_name column"))?,
-        source_path: r.try_get("source_path").map_err(|_| IncidentCardStoreError::InvalidStoredRow("source_path column"))?,
-        short_summary: r.try_get("short_summary").map_err(|_| IncidentCardStoreError::InvalidStoredRow("short_summary column"))?,
+        case_id: r
+            .try_get("case_id")
+            .map_err(|_| IncidentCardStoreError::InvalidStoredRow("case_id column".to_string()))?,
+        title: r
+            .try_get("title")
+            .map_err(|_| IncidentCardStoreError::InvalidStoredRow("title column".to_string()))?,
+        source_type: r.try_get("source_type").map_err(|_| {
+            IncidentCardStoreError::InvalidStoredRow("source_type column".to_string())
+        })?,
+        source_name: r.try_get("source_name").map_err(|_| {
+            IncidentCardStoreError::InvalidStoredRow("source_name column".to_string())
+        })?,
+        source_path: r.try_get("source_path").map_err(|_| {
+            IncidentCardStoreError::InvalidStoredRow("source_path column".to_string())
+        })?,
+        short_summary: r.try_get("short_summary").map_err(|_| {
+            IncidentCardStoreError::InvalidStoredRow("short_summary column".to_string())
+        })?,
         card_json: card_json_wrapper.0,
     })
 }
 
 fn validate_card(card: &IncidentCard) -> Result<(), IncidentCardStoreError> {
-    let value = serde_json::to_value(card)
-        .map_err(|_| IncidentCardStoreError::Serialization("failed to serialize card for validation"))?;
+    let value = serde_json::to_value(card).map_err(|_| {
+        IncidentCardStoreError::Serialization("failed to serialize card for validation".to_string())
+    })?;
 
     if !compiled_schema().is_valid(&value) {
-        return Err(IncidentCardStoreError::Validation("card does not satisfy incident_card.schema.json"));
+        return Err(IncidentCardStoreError::Validation(
+            "card does not satisfy incident_card.schema.json".to_string(),
+        ));
     }
 
     Ok(())
@@ -468,7 +501,8 @@ mod tests {
         let url = "  ";
         assert!(url.trim().is_empty(), "guard condition: empty url");
         // Constructing the error directly verifies the right variant is used.
-        let err = IncidentCardStoreError::InvalidConfig("postgres_url must not be empty");
+        let err =
+            IncidentCardStoreError::InvalidConfig("postgres_url must not be empty".to_string());
         assert!(matches!(err, IncidentCardStoreError::InvalidConfig(_)));
     }
 

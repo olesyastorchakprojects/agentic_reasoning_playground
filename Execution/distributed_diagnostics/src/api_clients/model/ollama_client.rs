@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use backon::Retryable;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::retry::build_backoff;
 use crate::config::OllamaModelSettings;
+use crate::utils::retry::build_backoff;
 
 use super::model_client::{validate_request, ModelClient, ModelClientError};
 use super::shared_types::{
@@ -31,13 +31,18 @@ impl OllamaModelClient {
             .build()
             .map_err(|e| ModelClientError::Transport(e.to_string()))?;
 
-        Ok(Self { http_client, config, retry_policy })
+        Ok(Self {
+            http_client,
+            config,
+            retry_policy,
+        })
     }
 
     pub fn from_settings(settings: &OllamaModelSettings) -> Result<Self, ModelClientError> {
         let config = OllamaModelClientConfig {
-            base_url: url::Url::parse(&settings.url)
-                .map_err(|_| ModelClientError::InvalidRequest("base_url must be a valid URL"))?,
+            base_url: url::Url::parse(&settings.url).map_err(|_| {
+                ModelClientError::InvalidRequest("base_url must be a valid URL".to_string())
+            })?,
             model_name: settings.model_name.clone(),
             timeout_sec: settings.timeout_sec,
         };
@@ -52,25 +57,39 @@ fn validate_client_config(
 ) -> Result<(), ModelClientError> {
     let scheme = config.base_url.scheme();
     if scheme != "http" && scheme != "https" {
-        return Err(ModelClientError::InvalidRequest("base_url must use http or https"));
+        return Err(ModelClientError::InvalidRequest(
+            "base_url must use http or https".to_string(),
+        ));
     }
     if config.base_url.host().is_none() {
-        return Err(ModelClientError::InvalidRequest("base_url must contain a host"));
+        return Err(ModelClientError::InvalidRequest(
+            "base_url must contain a host".to_string(),
+        ));
     }
     if config.base_url.query().is_some() {
-        return Err(ModelClientError::InvalidRequest("base_url must not contain query parameters"));
+        return Err(ModelClientError::InvalidRequest(
+            "base_url must not contain query parameters".to_string(),
+        ));
     }
     if config.base_url.fragment().is_some() {
-        return Err(ModelClientError::InvalidRequest("base_url must not contain a fragment"));
+        return Err(ModelClientError::InvalidRequest(
+            "base_url must not contain a fragment".to_string(),
+        ));
     }
     if config.model_name.trim().is_empty() {
-        return Err(ModelClientError::InvalidRequest("model_name must not be empty"));
+        return Err(ModelClientError::InvalidRequest(
+            "model_name must not be empty".to_string(),
+        ));
     }
     if config.timeout_sec == 0 {
-        return Err(ModelClientError::InvalidRequest("timeout_sec must be > 0"));
+        return Err(ModelClientError::InvalidRequest(
+            "timeout_sec must be > 0".to_string(),
+        ));
     }
     if policy.max_attempts == 0 {
-        return Err(ModelClientError::InvalidRequest("retry_policy.max_attempts must be > 0"));
+        return Err(ModelClientError::InvalidRequest(
+            "retry_policy.max_attempts must be > 0".to_string(),
+        ));
     }
     Ok(())
 }
@@ -193,8 +212,9 @@ impl ModelClient for OllamaModelClient {
             .await?
         };
 
-        let wire_resp: WireResponse = serde_json::from_slice(&raw_response)
-            .map_err(|_| ModelClientError::InvalidResponse("failed to parse response JSON"))?;
+        let wire_resp: WireResponse = serde_json::from_slice(&raw_response).map_err(|_| {
+            ModelClientError::InvalidResponse("failed to parse response JSON".to_string())
+        })?;
 
         map_response(wire_resp)
     }
@@ -217,17 +237,21 @@ fn map_finish_reason(s: &str) -> ModelFinishReason {
 }
 
 fn map_response(wire: WireResponse) -> Result<ModelGenerationResponse, ModelClientError> {
-    let msg = wire
-        .message
-        .ok_or(ModelClientError::InvalidResponse("missing message field"))?;
+    let msg = wire.message.ok_or(ModelClientError::InvalidResponse(
+        "missing message field".to_string(),
+    ))?;
 
     let content = msg
         .content
         .as_deref()
-        .ok_or(ModelClientError::InvalidResponse("missing message.content"))?;
+        .ok_or(ModelClientError::InvalidResponse(
+            "missing message.content".to_string(),
+        ))?;
 
     if content.trim().is_empty() {
-        return Err(ModelClientError::InvalidResponse("assistant content is empty"));
+        return Err(ModelClientError::InvalidResponse(
+            "assistant content is empty".to_string(),
+        ));
     }
 
     let finish_reason = wire.done_reason.as_deref().map(map_finish_reason);
@@ -250,7 +274,10 @@ fn map_response(wire: WireResponse) -> Result<ModelGenerationResponse, ModelClie
 }
 
 fn is_retryable(err: &ModelClientError) -> bool {
-    matches!(err, ModelClientError::Transport(_) | ModelClientError::UnexpectedStatus(500..=599))
+    matches!(
+        err,
+        ModelClientError::Transport(_) | ModelClientError::UnexpectedStatus(500..=599)
+    )
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -271,7 +298,10 @@ mod tests {
     }
 
     fn policy() -> RetryPolicyConfig {
-        RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
+        RetryPolicyConfig {
+            max_attempts: 1,
+            backoff: RetryBackoffKind::Exponential,
+        }
     }
 
     fn settings(url: &str) -> OllamaModelSettings {
@@ -314,7 +344,10 @@ mod tests {
     #[test]
     fn constructor_rejects_zero_max_attempts() {
         let cfg = config("http://localhost:11434/");
-        let p = RetryPolicyConfig { max_attempts: 0, backoff: RetryBackoffKind::Exponential };
+        let p = RetryPolicyConfig {
+            max_attempts: 0,
+            backoff: RetryBackoffKind::Exponential,
+        };
         assert!(OllamaModelClient::new(cfg, p).is_err());
     }
 
@@ -325,7 +358,8 @@ mod tests {
 
     #[test]
     fn from_settings_maps_valid_ollama_settings() {
-        let client = OllamaModelClient::from_settings(&settings("http://localhost:11434/")).unwrap();
+        let client =
+            OllamaModelClient::from_settings(&settings("http://localhost:11434/")).unwrap();
         assert_eq!(client.config.model_name, "llama-test");
         assert_eq!(client.config.timeout_sec, 5);
         assert_eq!(client.config.base_url.as_str(), "http://localhost:11434/");
@@ -359,7 +393,10 @@ mod tests {
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
         req.messages[0].content = "".into();
-        assert!(matches!(client.generate(&req).await.unwrap_err(), ModelClientError::InvalidRequest(_)));
+        assert!(matches!(
+            client.generate(&req).await.unwrap_err(),
+            ModelClientError::InvalidRequest(_)
+        ));
     }
 
     #[tokio::test]
@@ -368,7 +405,10 @@ mod tests {
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
         req.temperature = f32::INFINITY;
-        assert!(matches!(client.generate(&req).await.unwrap_err(), ModelClientError::InvalidRequest(_)));
+        assert!(matches!(
+            client.generate(&req).await.unwrap_err(),
+            ModelClientError::InvalidRequest(_)
+        ));
     }
 
     #[tokio::test]
@@ -377,7 +417,10 @@ mod tests {
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
         req.max_output_tokens = Some(0);
-        assert!(matches!(client.generate(&req).await.unwrap_err(), ModelClientError::InvalidRequest(_)));
+        assert!(matches!(
+            client.generate(&req).await.unwrap_err(),
+            ModelClientError::InvalidRequest(_)
+        ));
     }
 
     // ── Request body shape ────────────────────────────────────────────────────
@@ -399,7 +442,8 @@ mod tests {
 
     #[tokio::test]
     async fn always_sends_stream_false() {
-        let resp_body = serde_json::json!({"message": {"content": "hi"}, "done_reason": "stop"}).to_string();
+        let resp_body =
+            serde_json::json!({"message": {"content": "hi"}, "done_reason": "stop"}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         client.generate(&simple_request()).await.unwrap();
@@ -410,7 +454,8 @@ mod tests {
 
     #[tokio::test]
     async fn temperature_encoded_under_options() {
-        let resp_body = serde_json::json!({"message": {"content": "hi"}, "done_reason": "stop"}).to_string();
+        let resp_body =
+            serde_json::json!({"message": {"content": "hi"}, "done_reason": "stop"}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
@@ -423,7 +468,8 @@ mod tests {
 
     #[tokio::test]
     async fn max_output_tokens_encoded_as_num_predict() {
-        let resp_body = serde_json::json!({"message": {"content": "hi"}, "done_reason": "stop"}).to_string();
+        let resp_body =
+            serde_json::json!({"message": {"content": "hi"}, "done_reason": "stop"}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
@@ -436,7 +482,8 @@ mod tests {
 
     #[tokio::test]
     async fn text_mode_omits_format() {
-        let resp_body = serde_json::json!({"message": {"content": "hi"}, "done_reason": "stop"}).to_string();
+        let resp_body =
+            serde_json::json!({"message": {"content": "hi"}, "done_reason": "stop"}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         client.generate(&simple_request()).await.unwrap();
@@ -447,7 +494,8 @@ mod tests {
 
     #[tokio::test]
     async fn json_mode_sends_format_json() {
-        let resp_body = serde_json::json!({"message": {"content": "{}"}, "done_reason": "stop"}).to_string();
+        let resp_body =
+            serde_json::json!({"message": {"content": "{}"}, "done_reason": "stop"}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         let mut req = simple_request();
@@ -460,13 +508,20 @@ mod tests {
 
     #[tokio::test]
     async fn preserves_message_order() {
-        let resp_body = serde_json::json!({"message": {"content": "ok"}, "done_reason": "stop"}).to_string();
+        let resp_body =
+            serde_json::json!({"message": {"content": "ok"}, "done_reason": "stop"}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         let req = ModelGenerationRequest {
             messages: vec![
-                super::super::shared_types::ModelMessage { role: ModelMessageRole::System, content: "sys".into() },
-                super::super::shared_types::ModelMessage { role: ModelMessageRole::User, content: "usr".into() },
+                super::super::shared_types::ModelMessage {
+                    role: ModelMessageRole::System,
+                    content: "sys".into(),
+                },
+                super::super::shared_types::ModelMessage {
+                    role: ModelMessageRole::User,
+                    content: "usr".into(),
+                },
             ],
             temperature: 0.0,
             max_output_tokens: None,
@@ -518,11 +573,15 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_finish_reason_maps_to_unknown_variant() {
-        let resp_body = serde_json::json!({"message": {"content": "hi"}, "done_reason": "weird"}).to_string();
+        let resp_body =
+            serde_json::json!({"message": {"content": "hi"}, "done_reason": "weird"}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         let result = client.generate(&simple_request()).await.unwrap();
-        assert!(matches!(result.finish_reason, Some(ModelFinishReason::Unknown(_))));
+        assert!(matches!(
+            result.finish_reason,
+            Some(ModelFinishReason::Unknown(_))
+        ));
     }
 
     #[tokio::test]
@@ -574,7 +633,8 @@ mod tests {
 
     #[tokio::test]
     async fn empty_content_returns_invalid_response() {
-        let resp_body = serde_json::json!({"message": {"content": " "}, "done_reason": "stop"}).to_string();
+        let resp_body =
+            serde_json::json!({"message": {"content": " "}, "done_reason": "stop"}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
         let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
         assert!(matches!(

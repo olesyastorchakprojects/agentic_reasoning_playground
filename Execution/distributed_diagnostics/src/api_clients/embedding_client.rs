@@ -7,16 +7,16 @@ use super::qdrant::shared_types::{
     Embedding, EmbeddingConfig, NormalizedUserQuery, RetryPolicyConfig,
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum EmbeddingClientError {
     #[error("invalid request: {0}")]
-    InvalidRequest(&'static str),
+    InvalidRequest(String),
     #[error("transport failure: {0}")]
     Transport(String),
     #[error("unexpected HTTP status: {0}")]
     UnexpectedStatus(u16),
     #[error("invalid response: {0}")]
-    InvalidResponse(&'static str),
+    InvalidResponse(String),
 }
 
 pub struct EmbeddingClient {
@@ -36,7 +36,11 @@ impl EmbeddingClient {
             .build()
             .map_err(|e| EmbeddingClientError::Transport(e.to_string()))?;
 
-        Ok(Self { http_client, config, retry_policy })
+        Ok(Self {
+            http_client,
+            config,
+            retry_policy,
+        })
     }
 
     pub async fn embed(
@@ -89,8 +93,9 @@ impl EmbeddingClient {
             .await?
         };
 
-        let wire_resp: WireResponse = serde_json::from_slice(&raw)
-            .map_err(|_| EmbeddingClientError::InvalidResponse("failed to parse embedding response"))?;
+        let wire_resp: WireResponse = serde_json::from_slice(&raw).map_err(|_| {
+            EmbeddingClientError::InvalidResponse("failed to parse embedding response".to_string())
+        })?;
 
         validate_and_extract(wire_resp, expected_dim)
     }
@@ -102,22 +107,34 @@ fn validate_config(
 ) -> Result<(), EmbeddingClientError> {
     let scheme = config.base_url.scheme();
     if scheme != "http" && scheme != "https" {
-        return Err(EmbeddingClientError::InvalidRequest("base_url must use http or https"));
+        return Err(EmbeddingClientError::InvalidRequest(
+            "base_url must use http or https".to_string(),
+        ));
     }
     if config.base_url.host().is_none() {
-        return Err(EmbeddingClientError::InvalidRequest("base_url must contain a host"));
+        return Err(EmbeddingClientError::InvalidRequest(
+            "base_url must contain a host".to_string(),
+        ));
     }
     if config.base_url.query().is_some() {
-        return Err(EmbeddingClientError::InvalidRequest("base_url must not contain query parameters"));
+        return Err(EmbeddingClientError::InvalidRequest(
+            "base_url must not contain query parameters".to_string(),
+        ));
     }
     if config.base_url.fragment().is_some() {
-        return Err(EmbeddingClientError::InvalidRequest("base_url must not contain a fragment"));
+        return Err(EmbeddingClientError::InvalidRequest(
+            "base_url must not contain a fragment".to_string(),
+        ));
     }
     if config.embedding_dimension == 0 {
-        return Err(EmbeddingClientError::InvalidRequest("embedding_dimension must be > 0"));
+        return Err(EmbeddingClientError::InvalidRequest(
+            "embedding_dimension must be > 0".to_string(),
+        ));
     }
     if policy.max_attempts == 0 {
-        return Err(EmbeddingClientError::InvalidRequest("retry_policy.max_attempts must be > 0"));
+        return Err(EmbeddingClientError::InvalidRequest(
+            "retry_policy.max_attempts must be > 0".to_string(),
+        ));
     }
     Ok(())
 }
@@ -127,23 +144,29 @@ fn validate_and_extract(
     expected_dim: usize,
 ) -> Result<Embedding, EmbeddingClientError> {
     if resp.embeddings.len() == 0 {
-        return Err(EmbeddingClientError::InvalidResponse("embeddings array is empty"));
+        return Err(EmbeddingClientError::InvalidResponse(
+            "embeddings array is empty".to_string(),
+        ));
     }
     if resp.embeddings.len() > 1 {
-        return Err(EmbeddingClientError::InvalidResponse("expected exactly one embedding"));
+        return Err(EmbeddingClientError::InvalidResponse(
+            "expected exactly one embedding".to_string(),
+        ));
     }
 
     let values = resp.embeddings.into_iter().next().unwrap();
 
     if values.len() != expected_dim {
         return Err(EmbeddingClientError::InvalidResponse(
-            "embedding dimension does not match configured dimension",
+            "embedding dimension does not match configured dimension".to_string(),
         ));
     }
 
     for v in &values {
         if !v.is_finite() {
-            return Err(EmbeddingClientError::InvalidResponse("embedding contains invalid float values"));
+            return Err(EmbeddingClientError::InvalidResponse(
+                "embedding contains invalid float values".to_string(),
+            ));
         }
     }
 
@@ -187,7 +210,10 @@ mod tests {
     }
 
     fn policy() -> RetryPolicyConfig {
-        RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
+        RetryPolicyConfig {
+            max_attempts: 1,
+            backoff: RetryBackoffKind::Exponential,
+        }
     }
 
     fn query(s: &str) -> NormalizedUserQuery {
@@ -203,7 +229,10 @@ mod tests {
 
     #[test]
     fn constructor_rejects_zero_max_attempts() {
-        let p = RetryPolicyConfig { max_attempts: 0, backoff: RetryBackoffKind::Exponential };
+        let p = RetryPolicyConfig {
+            max_attempts: 0,
+            backoff: RetryBackoffKind::Exponential,
+        };
         assert!(EmbeddingClient::new(config("http://localhost/"), p).is_err());
     }
 

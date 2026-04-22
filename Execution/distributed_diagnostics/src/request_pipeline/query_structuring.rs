@@ -33,10 +33,10 @@ struct QueryStructuringPromptAsset {
 
 // ── Error type ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum QueryStructuringError {
     #[error("invalid config: {0}")]
-    InvalidConfig(&'static str),
+    InvalidConfig(String),
 
     #[error("failed to read asset at {path}: {message}")]
     AssetRead { path: String, message: String },
@@ -45,17 +45,17 @@ pub enum QueryStructuringError {
     AssetParse { path: String, message: String },
 
     #[error("invalid prompt asset: {0}")]
-    InvalidPromptAsset(&'static str),
+    InvalidPromptAsset(String),
 
     #[error("invalid controlled vocabulary: {0}")]
-    InvalidControlledVocabulary(&'static str),
+    InvalidControlledVocabulary(String),
 
     #[error("model client error: {0}")]
     Model(#[from] ModelClientError),
 
     #[error("invalid model output: {reason}")]
     InvalidModelOutput {
-        reason: &'static str,
+        reason: String,
         token_usage: ModelTokenUsage,
         finish_reason: Option<ModelFinishReason>,
     },
@@ -85,17 +85,17 @@ impl QueryStructuring {
     ) -> Result<Self, QueryStructuringError> {
         if settings.controlled_vocabulary_path.trim().is_empty() {
             return Err(QueryStructuringError::InvalidConfig(
-                "controlled_vocabulary_path must not be empty",
+                "controlled_vocabulary_path must not be empty".to_string(),
             ));
         }
         if settings.prompt_asset_path.trim().is_empty() {
             return Err(QueryStructuringError::InvalidConfig(
-                "prompt_asset_path must not be empty",
+                "prompt_asset_path must not be empty".to_string(),
             ));
         }
         if settings.max_output_tokens == 0 {
             return Err(QueryStructuringError::InvalidConfig(
-                "max_output_tokens must be greater than zero",
+                "max_output_tokens must be greater than zero".to_string(),
             ));
         }
 
@@ -113,15 +113,14 @@ impl QueryStructuring {
             })?;
         validate_controlled_vocabulary(&controlled_vocabulary)?;
 
-        let prompt_json =
-            std::fs::read_to_string(&settings.prompt_asset_path).map_err(|e| {
-                QueryStructuringError::AssetRead {
-                    path: settings.prompt_asset_path.clone(),
-                    message: e.to_string(),
-                }
-            })?;
-        let prompt_asset: QueryStructuringPromptAsset =
-            serde_json::from_str(&prompt_json).map_err(|e| QueryStructuringError::AssetParse {
+        let prompt_json = std::fs::read_to_string(&settings.prompt_asset_path).map_err(|e| {
+            QueryStructuringError::AssetRead {
+                path: settings.prompt_asset_path.clone(),
+                message: e.to_string(),
+            }
+        })?;
+        let prompt_asset: QueryStructuringPromptAsset = serde_json::from_str(&prompt_json)
+            .map_err(|e| QueryStructuringError::AssetParse {
                 path: settings.prompt_asset_path.clone(),
                 message: e.to_string(),
             })?;
@@ -142,8 +141,11 @@ impl QueryStructuring {
         let vocab_json = serde_json::to_string(&self.controlled_vocabulary)
             .expect("QueryStructuringControlledVocabulary serialization must not fail");
 
-        let user_message =
-            substitute_template(&self.prompt_asset.user_template, &request.query, &vocab_json);
+        let user_message = substitute_template(
+            &self.prompt_asset.user_template,
+            &request.query,
+            &vocab_json,
+        );
 
         let model_request = ModelGenerationRequest {
             messages: vec![
@@ -171,10 +173,7 @@ impl QueryStructuring {
         let finish_reason = response.finish_reason;
         let content = response.content;
 
-        let is_acceptable_finish = matches!(
-            &finish_reason,
-            Some(ModelFinishReason::Stop) | None
-        );
+        let is_acceptable_finish = matches!(&finish_reason, Some(ModelFinishReason::Stop) | None);
         if !is_acceptable_finish {
             let reason = if matches!(finish_reason, Some(ModelFinishReason::Length)) {
                 "model output truncated: finish_reason was length"
@@ -182,7 +181,7 @@ impl QueryStructuring {
                 "model returned unusable finish reason"
             };
             return Err(QueryStructuringError::InvalidModelOutput {
-                reason,
+                reason: reason.to_string(),
                 token_usage,
                 finish_reason,
             });
@@ -191,15 +190,17 @@ impl QueryStructuring {
         let parse_token_usage = token_usage.clone();
         let parse_finish_reason = finish_reason.clone();
         let structured_query: StructuredUserQuery =
-            serde_json::from_str(&content).map_err(|_| QueryStructuringError::InvalidModelOutput {
-                reason: "failed to parse model output as StructuredUserQuery",
-                token_usage: parse_token_usage,
-                finish_reason: parse_finish_reason,
+            serde_json::from_str(&content).map_err(|_| {
+                QueryStructuringError::InvalidModelOutput {
+                    reason: "failed to parse model output as StructuredUserQuery".to_string(),
+                    token_usage: parse_token_usage,
+                    finish_reason: parse_finish_reason,
+                }
             })?;
 
         if structured_query.failure_modes.len() > 1 {
             return Err(QueryStructuringError::InvalidModelOutput {
-                reason: "failure_modes must contain at most one item",
+                reason: "failure_modes must contain at most one item".to_string(),
                 token_usage,
                 finish_reason,
             });
@@ -219,59 +220,55 @@ fn validate_controlled_vocabulary(
 ) -> Result<(), QueryStructuringError> {
     if vocab.canonical_symptoms.is_empty() {
         return Err(QueryStructuringError::InvalidControlledVocabulary(
-            "canonical_symptoms must not be empty",
+            "canonical_symptoms must not be empty".to_string(),
         ));
     }
     if vocab.affected_components.is_empty() {
         return Err(QueryStructuringError::InvalidControlledVocabulary(
-            "affected_components must not be empty",
+            "affected_components must not be empty".to_string(),
         ));
     }
     if vocab.failure_mode_candidates.is_empty() {
         return Err(QueryStructuringError::InvalidControlledVocabulary(
-            "failure_mode_candidates must not be empty",
+            "failure_mode_candidates must not be empty".to_string(),
         ));
     }
     if vocab.violated_properties.is_empty() {
         return Err(QueryStructuringError::InvalidControlledVocabulary(
-            "violated_properties must not be empty",
+            "violated_properties must not be empty".to_string(),
         ));
     }
     Ok(())
 }
 
-fn validate_prompt_asset(
-    asset: &QueryStructuringPromptAsset,
-) -> Result<(), QueryStructuringError> {
+fn validate_prompt_asset(asset: &QueryStructuringPromptAsset) -> Result<(), QueryStructuringError> {
     if asset.version.trim().is_empty() {
         return Err(QueryStructuringError::InvalidPromptAsset(
-            "prompt asset version must not be empty",
+            "prompt asset version must not be empty".to_string(),
         ));
     }
     if asset.system_prompt.trim().is_empty() {
         return Err(QueryStructuringError::InvalidPromptAsset(
-            "prompt asset system_prompt must not be empty",
+            "prompt asset system_prompt must not be empty".to_string(),
         ));
     }
     if asset.user_template.trim().is_empty() {
         return Err(QueryStructuringError::InvalidPromptAsset(
-            "prompt asset user_template must not be empty",
+            "prompt asset user_template must not be empty".to_string(),
         ));
     }
     validate_user_template_placeholders(&asset.user_template)
 }
 
-fn validate_user_template_placeholders(
-    template: &str,
-) -> Result<(), QueryStructuringError> {
+fn validate_user_template_placeholders(template: &str) -> Result<(), QueryStructuringError> {
     if template.matches(QUERY_PLACEHOLDER).count() != 1 {
         return Err(QueryStructuringError::InvalidPromptAsset(
-            "user_template must contain {{normalized_query}} exactly once",
+            "user_template must contain {{normalized_query}} exactly once".to_string(),
         ));
     }
     if template.matches(VOCAB_PLACEHOLDER).count() != 1 {
         return Err(QueryStructuringError::InvalidPromptAsset(
-            "user_template must contain {{controlled_vocabulary_json}} exactly once",
+            "user_template must contain {{controlled_vocabulary_json}} exactly once".to_string(),
         ));
     }
     let stripped = template
@@ -279,7 +276,7 @@ fn validate_user_template_placeholders(
         .replace(VOCAB_PLACEHOLDER, "");
     if stripped.contains("{{") {
         return Err(QueryStructuringError::InvalidPromptAsset(
-            "user_template contains unrecognized placeholder construct",
+            "user_template contains unrecognized placeholder construct".to_string(),
         ));
     }
     Ok(())
@@ -336,12 +333,18 @@ mod tests {
             response: ModelGenerationResponse,
         ) -> (Arc<Self>, Arc<Mutex<Option<ModelGenerationRequest>>>) {
             let captured = Arc::new(Mutex::new(None));
-            let client = Arc::new(Self { response, captured: Arc::clone(&captured) });
+            let client = Arc::new(Self {
+                response,
+                captured: Arc::clone(&captured),
+            });
             (client, captured)
         }
 
         fn new(response: ModelGenerationResponse) -> Arc<Self> {
-            Arc::new(Self { response, captured: Arc::new(Mutex::new(None)) })
+            Arc::new(Self {
+                response,
+                captured: Arc::new(Mutex::new(None)),
+            })
         }
     }
 
@@ -417,11 +420,17 @@ mod tests {
     }
 
     fn write_vocab(dir: &TempArtifactDir) -> String {
-        dir.write_json("vocab.json", VOCAB_JSON).to_str().unwrap().to_string()
+        dir.write_json("vocab.json", VOCAB_JSON)
+            .to_str()
+            .unwrap()
+            .to_string()
     }
 
     fn write_prompt(dir: &TempArtifactDir) -> String {
-        dir.write_json("prompt.json", PROMPT_JSON).to_str().unwrap().to_string()
+        dir.write_json("prompt.json", PROMPT_JSON)
+            .to_str()
+            .unwrap()
+            .to_string()
     }
 
     fn make_settings(vocab_path: &str, prompt_path: &str) -> QueryStructuringSettings {
@@ -440,7 +449,10 @@ mod tests {
     }
 
     fn make_request(query: &str) -> NormalizedUserRequest {
-        NormalizedUserRequest { query: query.to_string(), input_token_count: 3 }
+        NormalizedUserRequest {
+            query: query.to_string(),
+            input_token_count: 3,
+        }
     }
 
     // ── Constructor tests ─────────────────────────────────────────────────────
@@ -448,22 +460,16 @@ mod tests {
     #[test]
     fn new_fails_when_vocabulary_path_is_empty() {
         let dir = TempArtifactDir::new();
-        let err = QueryStructuring::new(
-            make_settings("", &write_prompt(&dir)),
-            noop_client(),
-        )
-        .unwrap_err();
+        let err = QueryStructuring::new(make_settings("", &write_prompt(&dir)), noop_client())
+            .unwrap_err();
         assert!(matches!(err, QueryStructuringError::InvalidConfig(_)));
     }
 
     #[test]
     fn new_fails_when_prompt_path_is_empty() {
         let dir = TempArtifactDir::new();
-        let err = QueryStructuring::new(
-            make_settings(&write_vocab(&dir), ""),
-            noop_client(),
-        )
-        .unwrap_err();
+        let err = QueryStructuring::new(make_settings(&write_vocab(&dir), ""), noop_client())
+            .unwrap_err();
         assert!(matches!(err, QueryStructuringError::InvalidConfig(_)));
     }
 
@@ -507,7 +513,11 @@ mod tests {
     #[test]
     fn new_fails_when_vocabulary_json_invalid() {
         let dir = TempArtifactDir::new();
-        let bad_vocab = dir.write_json("bad_vocab.json", "not json").to_str().unwrap().to_string();
+        let bad_vocab = dir
+            .write_json("bad_vocab.json", "not json")
+            .to_str()
+            .unwrap()
+            .to_string();
         let err = QueryStructuring::new(
             make_settings(&bad_vocab, &write_prompt(&dir)),
             noop_client(),
@@ -519,8 +529,11 @@ mod tests {
     #[test]
     fn new_fails_when_prompt_json_invalid() {
         let dir = TempArtifactDir::new();
-        let bad_prompt =
-            dir.write_json("bad_prompt.json", "not json").to_str().unwrap().to_string();
+        let bad_prompt = dir
+            .write_json("bad_prompt.json", "not json")
+            .to_str()
+            .unwrap()
+            .to_string();
         let err = QueryStructuring::new(
             make_settings(&write_vocab(&dir), &bad_prompt),
             noop_client(),
@@ -540,8 +553,8 @@ mod tests {
             .to_str()
             .unwrap()
             .to_string();
-        let err =
-            QueryStructuring::new(make_settings(&write_vocab(&dir), &p), noop_client()).unwrap_err();
+        let err = QueryStructuring::new(make_settings(&write_vocab(&dir), &p), noop_client())
+            .unwrap_err();
         assert!(matches!(err, QueryStructuringError::InvalidPromptAsset(_)));
     }
 
@@ -556,8 +569,8 @@ mod tests {
             .to_str()
             .unwrap()
             .to_string();
-        let err =
-            QueryStructuring::new(make_settings(&write_vocab(&dir), &p), noop_client()).unwrap_err();
+        let err = QueryStructuring::new(make_settings(&write_vocab(&dir), &p), noop_client())
+            .unwrap_err();
         assert!(matches!(err, QueryStructuringError::InvalidPromptAsset(_)));
     }
 
@@ -573,7 +586,11 @@ mod tests {
     async fn structure_builds_exactly_two_messages_system_then_user() {
         let dir = TempArtifactDir::new();
         let (client, captured) = MockModelClient::new_with_capture(valid_response());
-        make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap();
+        make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap();
 
         let req = captured.lock().unwrap().take().unwrap();
         assert_eq!(req.messages.len(), 2);
@@ -585,7 +602,11 @@ mod tests {
     async fn structure_user_message_contains_compact_vocabulary_json() {
         let dir = TempArtifactDir::new();
         let (client, captured) = MockModelClient::new_with_capture(valid_response());
-        make_qs(&dir, client).unwrap().structure(&make_request("the query")).await.unwrap();
+        make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("the query"))
+            .await
+            .unwrap();
 
         let req = captured.lock().unwrap().take().unwrap();
         let user_msg = &req.messages[1].content;
@@ -595,14 +616,21 @@ mod tests {
             user_msg.contains(expected_vocab),
             "user message did not contain expected compact vocabulary JSON"
         );
-        assert!(user_msg.contains("the query"), "user message did not contain query text");
+        assert!(
+            user_msg.contains("the query"),
+            "user message did not contain query text"
+        );
     }
 
     #[tokio::test]
     async fn structure_sends_json_object_response_mode() {
         let dir = TempArtifactDir::new();
         let (client, captured) = MockModelClient::new_with_capture(valid_response());
-        make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap();
+        make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap();
 
         let req = captured.lock().unwrap().take().unwrap();
         assert!(matches!(req.response_mode, ModelResponseMode::JsonObject));
@@ -612,7 +640,11 @@ mod tests {
     async fn structure_sends_temperature_zero() {
         let dir = TempArtifactDir::new();
         let (client, captured) = MockModelClient::new_with_capture(valid_response());
-        make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap();
+        make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap();
 
         let req = captured.lock().unwrap().take().unwrap();
         assert_eq!(req.temperature, 0.0_f32);
@@ -622,7 +654,11 @@ mod tests {
     async fn structure_sends_configured_max_output_tokens() {
         let dir = TempArtifactDir::new();
         let (client, captured) = MockModelClient::new_with_capture(valid_response());
-        make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap();
+        make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap();
 
         let req = captured.lock().unwrap().take().unwrap();
         assert_eq!(req.max_output_tokens, Some(256));
@@ -634,14 +670,22 @@ mod tests {
     async fn structure_succeeds_with_finish_reason_stop() {
         let dir = TempArtifactDir::new();
         let client = MockModelClient::new(valid_response());
-        assert!(make_qs(&dir, client).unwrap().structure(&make_request("q")).await.is_ok());
+        assert!(make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
     async fn structure_preserves_token_usage_on_success() {
         let dir = TempArtifactDir::new();
         let client = MockModelClient::new(valid_response());
-        let out = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap();
+        let out = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap();
 
         assert_eq!(out.token_usage.prompt_tokens, Some(100));
         assert_eq!(out.token_usage.completion_tokens, Some(50));
@@ -674,8 +718,11 @@ mod tests {
             total_tokens: Some(380),
             ..valid_response()
         });
-        let out =
-            make_qs(&dir, client).unwrap().structure(&make_request("lock contention")).await.unwrap();
+        let out = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("lock contention"))
+            .await
+            .unwrap();
 
         let q = &out.structured_query;
         assert_eq!(q.intent, "diagnose lock contention");
@@ -704,8 +751,15 @@ mod tests {
             content: "not json at all".to_string(),
             ..valid_response()
         });
-        let err = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap_err();
-        assert!(matches!(err, QueryStructuringError::InvalidModelOutput { .. }));
+        let err = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            QueryStructuringError::InvalidModelOutput { .. }
+        ));
     }
 
     #[tokio::test]
@@ -717,8 +771,15 @@ mod tests {
             content: content.to_string(),
             ..valid_response()
         });
-        let err = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap_err();
-        assert!(matches!(err, QueryStructuringError::InvalidModelOutput { .. }));
+        let err = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            QueryStructuringError::InvalidModelOutput { .. }
+        ));
     }
 
     #[tokio::test]
@@ -729,8 +790,15 @@ mod tests {
             content: content.to_string(),
             ..valid_response()
         });
-        let err = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap_err();
-        assert!(matches!(err, QueryStructuringError::InvalidModelOutput { .. }));
+        let err = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            QueryStructuringError::InvalidModelOutput { .. }
+        ));
     }
 
     #[tokio::test]
@@ -741,8 +809,15 @@ mod tests {
             content: content.to_string(),
             ..valid_response()
         });
-        let err = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap_err();
-        assert!(matches!(err, QueryStructuringError::InvalidModelOutput { .. }));
+        let err = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            QueryStructuringError::InvalidModelOutput { .. }
+        ));
     }
 
     #[tokio::test]
@@ -753,7 +828,11 @@ mod tests {
             content: content.to_string(),
             ..valid_response()
         });
-        let err = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap_err();
+        let err = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap_err();
         assert!(matches!(
             err,
             QueryStructuringError::InvalidModelOutput { reason, .. }
@@ -769,7 +848,11 @@ mod tests {
             finish_reason: Some(ModelFinishReason::Length),
             ..valid_response()
         });
-        let err = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap_err();
+        let err = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap_err();
         assert!(matches!(
             err,
             QueryStructuringError::InvalidModelOutput { reason, .. }
@@ -784,8 +867,15 @@ mod tests {
             finish_reason: Some(ModelFinishReason::ContentFilter),
             ..valid_response()
         });
-        let err = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap_err();
-        assert!(matches!(err, QueryStructuringError::InvalidModelOutput { .. }));
+        let err = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            QueryStructuringError::InvalidModelOutput { .. }
+        ));
     }
 
     // ── structure() — InvalidModelOutput metadata preservation ───────────────
@@ -800,7 +890,11 @@ mod tests {
             completion_tokens: Some(30),
             total_tokens: Some(230),
         });
-        let err = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap_err();
+        let err = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap_err();
         let QueryStructuringError::InvalidModelOutput { token_usage, .. } = err else {
             panic!("expected InvalidModelOutput");
         };
@@ -817,7 +911,11 @@ mod tests {
             finish_reason: Some(ModelFinishReason::Stop),
             ..valid_response()
         });
-        let err = make_qs(&dir, client).unwrap().structure(&make_request("q")).await.unwrap_err();
+        let err = make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .unwrap_err();
         let QueryStructuringError::InvalidModelOutput { finish_reason, .. } = err else {
             panic!("expected InvalidModelOutput");
         };
@@ -842,7 +940,10 @@ mod tests {
             noop_client(),
         )
         .unwrap_err();
-        assert!(matches!(err, QueryStructuringError::InvalidControlledVocabulary(_)));
+        assert!(matches!(
+            err,
+            QueryStructuringError::InvalidControlledVocabulary(_)
+        ));
     }
 
     // ── Constructor — InvalidPromptAsset for empty fields ─────────────────────
@@ -858,8 +959,8 @@ mod tests {
             .to_str()
             .unwrap()
             .to_string();
-        let err =
-            QueryStructuring::new(make_settings(&write_vocab(&dir), &p), noop_client()).unwrap_err();
+        let err = QueryStructuring::new(make_settings(&write_vocab(&dir), &p), noop_client())
+            .unwrap_err();
         assert!(matches!(err, QueryStructuringError::InvalidPromptAsset(_)));
     }
 
@@ -874,8 +975,8 @@ mod tests {
             .to_str()
             .unwrap()
             .to_string();
-        let err =
-            QueryStructuring::new(make_settings(&write_vocab(&dir), &p), noop_client()).unwrap_err();
+        let err = QueryStructuring::new(make_settings(&write_vocab(&dir), &p), noop_client())
+            .unwrap_err();
         assert!(matches!(err, QueryStructuringError::InvalidPromptAsset(_)));
     }
 
@@ -888,7 +989,11 @@ mod tests {
             finish_reason: None,
             ..valid_response()
         });
-        assert!(make_qs(&dir, client).unwrap().structure(&make_request("q")).await.is_ok());
+        assert!(make_qs(&dir, client)
+            .unwrap()
+            .structure(&make_request("q"))
+            .await
+            .is_ok());
     }
 
     // ── substitute_template — vocab placeholder precedes query ────────────────

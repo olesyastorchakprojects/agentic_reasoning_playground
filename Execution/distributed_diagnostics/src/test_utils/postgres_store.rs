@@ -21,7 +21,10 @@ impl MockPostgresIncidentCardStore {
         &self,
         case_ids: &[String],
     ) -> Result<Vec<IncidentCard>, IncidentCardStoreError> {
-        self.captured_case_ids.lock().unwrap().push(case_ids.to_vec());
+        self.captured_case_ids
+            .lock()
+            .unwrap()
+            .push(case_ids.to_vec());
         self.responses.lock().unwrap().remove(0)
     }
 }

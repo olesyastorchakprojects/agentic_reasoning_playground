@@ -13,10 +13,10 @@ use crate::shared_types::{
 // Error boundary
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum PromptContextAssemblyError {
     #[error("invalid settings: {0}")]
-    InvalidSettings(&'static str),
+    InvalidSettings(String),
     #[error("prompt asset error: {0}")]
     PromptAsset(String),
     #[error("missing hydrated primary card")]
@@ -50,7 +50,7 @@ struct DiagnosticResponsePromptAsset {
 
 #[derive(serde::Serialize)]
 struct JsonContext<'a> {
-    task: &'static str,
+    task: String,
     user_problem: &'a str,
     input_token_count: usize,
     normalized_incident_query: NormalizedIncidentQueryDto,
@@ -74,7 +74,7 @@ struct NormalizedIncidentQueryDto {
 
 #[derive(serde::Serialize)]
 struct IncidentChunkDto {
-    role: &'static str,
+    role: String,
     chunk_id: String,
     case_id: String,
     score: f32,
@@ -92,7 +92,7 @@ struct CompetingPrecedentDto {
 
 #[derive(serde::Serialize)]
 struct TheoryChunkDto {
-    role: &'static str,
+    role: String,
     chunk_id: String,
     score: f32,
     text: String,
@@ -231,7 +231,7 @@ impl PromptContextAssembly {
 
         // Serialize context to JSON
         let ctx = JsonContext {
-            task: "diagnostic_response",
+            task: "diagnostic_response".to_string(),
             user_problem: &request.query,
             input_token_count: request.input_token_count,
             normalized_incident_query,
@@ -267,7 +267,7 @@ impl PromptContextAssembly {
 fn validate_settings(s: &PromptContextSettings) -> Result<(), PromptContextAssemblyError> {
     if s.prompt_asset_path.is_empty() {
         return Err(PromptContextAssemblyError::InvalidSettings(
-            "prompt_asset_path must not be empty",
+            "prompt_asset_path must not be empty".to_string(),
         ));
     }
 
@@ -275,38 +275,38 @@ fn validate_settings(s: &PromptContextSettings) -> Result<(), PromptContextAssem
 
     if cp.evidence_for_match.source != ChunkPackingSource::PrimaryIncident {
         return Err(PromptContextAssemblyError::InvalidSettings(
-            "evidence_for_match.source must be PrimaryIncident",
+            "evidence_for_match.source must be PrimaryIncident".to_string(),
         ));
     }
     if cp.first_check_hint.source != ChunkPackingSource::PrimaryIncident {
         return Err(PromptContextAssemblyError::InvalidSettings(
-            "first_check_hint.source must be PrimaryIncident",
+            "first_check_hint.source must be PrimaryIncident".to_string(),
         ));
     }
     if cp.supporting_explanation.source != ChunkPackingSource::PrimaryIncident {
         return Err(PromptContextAssemblyError::InvalidSettings(
-            "supporting_explanation.source must be PrimaryIncident",
+            "supporting_explanation.source must be PrimaryIncident".to_string(),
         ));
     }
     if cp.alternative_context.source != ChunkPackingSource::AlternativeIncident {
         return Err(PromptContextAssemblyError::InvalidSettings(
-            "alternative_context.source must be AlternativeIncident",
+            "alternative_context.source must be AlternativeIncident".to_string(),
         ));
     }
     if cp.mechanism_explanation.source != ChunkPackingSource::Theory {
         return Err(PromptContextAssemblyError::InvalidSettings(
-            "mechanism_explanation.source must be Theory",
+            "mechanism_explanation.source must be Theory".to_string(),
         ));
     }
 
     if cp.evidence_for_match.limit < 1 {
         return Err(PromptContextAssemblyError::InvalidSettings(
-            "evidence_for_match.limit must be >= 1",
+            "evidence_for_match.limit must be >= 1".to_string(),
         ));
     }
     if cp.first_check_hint.limit < 1 {
         return Err(PromptContextAssemblyError::InvalidSettings(
-            "first_check_hint.limit must be >= 1",
+            "first_check_hint.limit must be >= 1".to_string(),
         ));
     }
 
@@ -314,12 +314,13 @@ fn validate_settings(s: &PromptContextSettings) -> Result<(), PromptContextAssem
         match cp.alternative_context.per_case_limit {
             None => {
                 return Err(PromptContextAssemblyError::InvalidSettings(
-                    "alternative_context.per_case_limit must be Some(n > 0) when limit > 0",
+                    "alternative_context.per_case_limit must be Some(n > 0) when limit > 0"
+                        .to_string(),
                 ))
             }
             Some(0) => {
                 return Err(PromptContextAssemblyError::InvalidSettings(
-                    "alternative_context.per_case_limit must be > 0 when limit > 0",
+                    "alternative_context.per_case_limit must be > 0 when limit > 0".to_string(),
                 ))
             }
             _ => {}
@@ -328,7 +329,7 @@ fn validate_settings(s: &PromptContextSettings) -> Result<(), PromptContextAssem
 
     if !cp.mechanism_explanation.tag_priority.is_empty() {
         return Err(PromptContextAssemblyError::InvalidSettings(
-            "mechanism_explanation.tag_priority must be empty because theory chunks do not expose tags",
+            "mechanism_explanation.tag_priority must be empty because theory chunks do not expose tags".to_string(),
         ));
     }
 
@@ -764,7 +765,7 @@ fn build_normalized_incident_query(query: &StructuredUserQuery) -> NormalizedInc
 
 fn incident_chunk_to_dto(chunk: &PromptIncidentEvidenceChunk) -> IncidentChunkDto {
     IncidentChunkDto {
-        role: role_to_str(chunk.role),
+        role: role_to_str(chunk.role).to_string(),
         chunk_id: chunk.chunk_id.clone(),
         case_id: chunk.case_id.clone(),
         score: chunk.score,
@@ -779,7 +780,7 @@ fn incident_chunk_to_dto(chunk: &PromptIncidentEvidenceChunk) -> IncidentChunkDt
 
 fn theory_chunk_to_dto(chunk: &PromptTheoryEvidenceChunk) -> TheoryChunkDto {
     TheoryChunkDto {
-        role: role_to_str(chunk.role),
+        role: role_to_str(chunk.role).to_string(),
         chunk_id: chunk.chunk_id.clone(),
         score: chunk.score,
         text: chunk.text.clone(),

@@ -11,7 +11,7 @@ use crate::test_utils::postgres_store::MockPostgresIncidentCardStore as Postgres
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum CardHydrationError {
     #[error("missing hydrated card for case_id: {case_id}")]
     MissingCard { case_id: String },
@@ -28,7 +28,9 @@ pub struct CardHydration {
 
 impl CardHydration {
     pub fn new(incident_card_store: Arc<PostgresIncidentCardStore>) -> Self {
-        Self { incident_card_store }
+        Self {
+            incident_card_store,
+        }
     }
 
     pub async fn hydrate(
@@ -36,7 +38,10 @@ impl CardHydration {
         candidates: &CandidateCardRetrievalOutput,
     ) -> Result<CardHydrationOutput, CardHydrationError> {
         if candidates.primary.is_none() && candidates.alternatives.is_empty() {
-            return Ok(CardHydrationOutput { primary: None, alternatives: vec![] });
+            return Ok(CardHydrationOutput {
+                primary: None,
+                alternatives: vec![],
+            });
         }
 
         let mut case_ids: Vec<String> = Vec::new();
@@ -60,9 +65,12 @@ impl CardHydration {
             .primary
             .as_ref()
             .map(|p| {
-                lookup.get(&p.case_id).cloned().ok_or_else(|| CardHydrationError::MissingCard {
-                    case_id: p.case_id.clone(),
-                })
+                lookup
+                    .get(&p.case_id)
+                    .cloned()
+                    .ok_or_else(|| CardHydrationError::MissingCard {
+                        case_id: p.case_id.clone(),
+                    })
             })
             .transpose()?;
 
@@ -70,13 +78,19 @@ impl CardHydration {
             .alternatives
             .iter()
             .map(|alt| {
-                lookup.get(&alt.case_id).cloned().ok_or_else(|| {
-                    CardHydrationError::MissingCard { case_id: alt.case_id.clone() }
-                })
+                lookup
+                    .get(&alt.case_id)
+                    .cloned()
+                    .ok_or_else(|| CardHydrationError::MissingCard {
+                        case_id: alt.case_id.clone(),
+                    })
             })
             .collect::<Result<Vec<IncidentCard>, _>>()?;
 
-        Ok(CardHydrationOutput { primary, alternatives })
+        Ok(CardHydrationOutput {
+            primary,
+            alternatives,
+        })
     }
 }
 
@@ -89,7 +103,10 @@ mod tests {
     use crate::test_utils::postgres_store::MockPostgresIncidentCardStore;
 
     fn candidate(case_id: &str) -> CandidateCard {
-        CandidateCard { case_id: case_id.to_string(), score: 0.9 }
+        CandidateCard {
+            case_id: case_id.to_string(),
+            score: 0.9,
+        }
     }
 
     fn card(case_id: &str) -> IncidentCard {
@@ -138,7 +155,10 @@ mod tests {
     async fn empty_candidates_returns_empty_without_store_call() {
         let mock = Arc::new(MockPostgresIncidentCardStore::new(vec![]));
         let sut = CardHydration::new(mock.clone());
-        let candidates = CandidateCardRetrievalOutput { primary: None, alternatives: vec![] };
+        let candidates = CandidateCardRetrievalOutput {
+            primary: None,
+            alternatives: vec![],
+        };
 
         let out = sut.hydrate(&candidates).await.unwrap();
 
@@ -151,7 +171,9 @@ mod tests {
 
     #[tokio::test]
     async fn primary_only_hydrated_correctly() {
-        let mock = Arc::new(MockPostgresIncidentCardStore::new(vec![ok(vec![card("card-1")])]));
+        let mock = Arc::new(MockPostgresIncidentCardStore::new(vec![ok(vec![card(
+            "card-1",
+        )])]));
         let sut = CardHydration::new(mock);
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
@@ -181,7 +203,11 @@ mod tests {
         let out = sut.hydrate(&candidates).await.unwrap();
 
         assert!(out.primary.is_none());
-        let ids: Vec<&str> = out.alternatives.iter().map(|c| c.case_id.as_str()).collect();
+        let ids: Vec<&str> = out
+            .alternatives
+            .iter()
+            .map(|c| c.case_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["card-A", "card-B"]);
     }
 
@@ -204,7 +230,11 @@ mod tests {
 
         assert_eq!(mock.captured_case_ids.lock().unwrap().len(), 1);
         assert_eq!(out.primary.unwrap().case_id, "card-1");
-        let ids: Vec<&str> = out.alternatives.iter().map(|c| c.case_id.as_str()).collect();
+        let ids: Vec<&str> = out
+            .alternatives
+            .iter()
+            .map(|c| c.case_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["card-2", "card-3"]);
     }
 
@@ -246,7 +276,9 @@ mod tests {
 
     #[tokio::test]
     async fn missing_alternative_card_returns_missing_card_error() {
-        let mock = Arc::new(MockPostgresIncidentCardStore::new(vec![ok(vec![card("card-1")])]));
+        let mock = Arc::new(MockPostgresIncidentCardStore::new(vec![ok(vec![card(
+            "card-1",
+        )])]));
         let sut = CardHydration::new(mock);
         let candidates = CandidateCardRetrievalOutput {
             primary: None,

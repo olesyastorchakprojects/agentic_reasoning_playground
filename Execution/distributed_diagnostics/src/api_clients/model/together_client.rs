@@ -40,8 +40,9 @@ impl TogetherModelClient {
 
     pub fn from_settings(settings: &TogetherModelSettings) -> Result<Self, ModelClientError> {
         let config = TogetherModelClientConfig {
-            base_url: url::Url::parse(&settings.url)
-                .map_err(|_| ModelClientError::InvalidRequest("base_url must be a valid URL"))?,
+            base_url: url::Url::parse(&settings.url).map_err(|_| {
+                ModelClientError::InvalidRequest("base_url must be a valid URL".to_string())
+            })?,
             api_key: settings.api_key.clone(),
             model_name: settings.model_name.clone(),
             timeout_sec: settings.timeout_sec,
@@ -57,31 +58,43 @@ fn validate_client_config(
 ) -> Result<(), ModelClientError> {
     let scheme = config.base_url.scheme();
     if scheme != "http" && scheme != "https" {
-        return Err(ModelClientError::InvalidRequest("base_url must use http or https"));
+        return Err(ModelClientError::InvalidRequest(
+            "base_url must use http or https".to_string(),
+        ));
     }
     if config.base_url.host().is_none() {
-        return Err(ModelClientError::InvalidRequest("base_url must contain a host"));
+        return Err(ModelClientError::InvalidRequest(
+            "base_url must contain a host".to_string(),
+        ));
     }
     if config.base_url.query().is_some() {
         return Err(ModelClientError::InvalidRequest(
-            "base_url must not contain query parameters",
+            "base_url must not contain query parameters".to_string(),
         ));
     }
     if config.base_url.fragment().is_some() {
-        return Err(ModelClientError::InvalidRequest("base_url must not contain a fragment"));
+        return Err(ModelClientError::InvalidRequest(
+            "base_url must not contain a fragment".to_string(),
+        ));
     }
     if config.api_key.trim().is_empty() {
-        return Err(ModelClientError::InvalidRequest("api_key must not be empty"));
+        return Err(ModelClientError::InvalidRequest(
+            "api_key must not be empty".to_string(),
+        ));
     }
     if config.model_name.trim().is_empty() {
-        return Err(ModelClientError::InvalidRequest("model_name must not be empty"));
+        return Err(ModelClientError::InvalidRequest(
+            "model_name must not be empty".to_string(),
+        ));
     }
     if config.timeout_sec == 0 {
-        return Err(ModelClientError::InvalidRequest("timeout_sec must be > 0"));
+        return Err(ModelClientError::InvalidRequest(
+            "timeout_sec must be > 0".to_string(),
+        ));
     }
     if policy.max_attempts == 0 {
         return Err(ModelClientError::InvalidRequest(
-            "retry_policy.max_attempts must be > 0",
+            "retry_policy.max_attempts must be > 0".to_string(),
         ));
     }
     Ok(())
@@ -212,8 +225,9 @@ impl ModelClient for TogetherModelClient {
             .await?
         };
 
-        let wire_resp: WireResponse = serde_json::from_slice(&raw_response)
-            .map_err(|_| ModelClientError::InvalidResponse("failed to parse response JSON"))?;
+        let wire_resp: WireResponse = serde_json::from_slice(&raw_response).map_err(|_| {
+            ModelClientError::InvalidResponse("failed to parse response JSON".to_string())
+        })?;
 
         map_response(wire_resp)
     }
@@ -239,7 +253,9 @@ fn map_finish_reason(s: &str) -> ModelFinishReason {
 
 fn map_response(wire: WireResponse) -> Result<ModelGenerationResponse, ModelClientError> {
     if wire.choices.is_empty() {
-        return Err(ModelClientError::InvalidResponse("choices array is empty"));
+        return Err(ModelClientError::InvalidResponse(
+            "choices array is empty".to_string(),
+        ));
     }
 
     let choice = &wire.choices[0];
@@ -247,10 +263,14 @@ fn map_response(wire: WireResponse) -> Result<ModelGenerationResponse, ModelClie
         .message
         .content
         .as_deref()
-        .ok_or(ModelClientError::InvalidResponse("missing message.content"))?;
+        .ok_or(ModelClientError::InvalidResponse(
+            "missing message.content".to_string(),
+        ))?;
 
     if content.trim().is_empty() {
-        return Err(ModelClientError::InvalidResponse("assistant content is empty"));
+        return Err(ModelClientError::InvalidResponse(
+            "assistant content is empty".to_string(),
+        ));
     }
 
     let finish_reason = choice.finish_reason.as_deref().map(map_finish_reason);

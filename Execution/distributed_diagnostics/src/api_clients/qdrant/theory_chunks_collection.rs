@@ -1,29 +1,31 @@
 use async_trait::async_trait;
 
 use crate::api_clients::embedding_client::{EmbeddingClient, EmbeddingClientError};
-use crate::utils::tokenizer::HfTokenizer;
 use crate::config::{CollectionRetrievalSettings, EmbeddingModelSettings};
+use crate::utils::tokenizer::HfTokenizer;
 
-use super::dense_search_client::{DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient};
+use super::dense_search_client::{
+    DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient,
+};
 use super::hybrid_search_client::{
     HybridSearchClientError, HybridSearchRequest, QdrantHybridSearchClient,
 };
-use super::sparse_preparation;
 use super::shared_types::{
-    Bm25TermStatsArtifact, EmbeddingConfig, NormalizedUserQuery, QdrantDenseCollectionConfig,
-    QdrantHybridCollectionConfig, QdrantPayloadValue, RetryPolicyConfig, SparseStrategyConfig,
-    SparseVocabularyArtifact, dense_collection_config_from_settings,
-    embedding_config_from_settings, hybrid_collection_config_from_settings,
+    dense_collection_config_from_settings, embedding_config_from_settings,
+    hybrid_collection_config_from_settings, Bm25TermStatsArtifact, EmbeddingConfig,
+    NormalizedUserQuery, QdrantDenseCollectionConfig, QdrantHybridCollectionConfig,
+    QdrantPayloadValue, RetryPolicyConfig, SparseStrategyConfig, SparseVocabularyArtifact,
 };
+use super::sparse_preparation;
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum TheoryChunksCollectionError {
     #[error("invalid request: {0}")]
-    InvalidRequest(&'static str),
+    InvalidRequest(String),
     #[error("query preparation failed: {0}")]
-    QueryPreparation(&'static str),
+    QueryPreparation(String),
     #[error("embedding shape does not match configured dimension")]
     IncorrectEmbeddingShape,
     #[error("qdrant dense error: {0}")]
@@ -33,7 +35,7 @@ pub enum TheoryChunksCollectionError {
     #[error("embedding client error: {0}")]
     Embedding(#[from] EmbeddingClientError),
     #[error("payload mapping failed: {0}")]
-    PayloadMapping(&'static str),
+    PayloadMapping(String),
 }
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -82,12 +84,21 @@ impl QdrantTheoryChunksCollectionDense {
         embedding_model: &EmbeddingModelSettings,
         qdrant_url: &str,
     ) -> Result<Self, TheoryChunksCollectionError> {
-        let embedding = embedding_config_from_settings(embedding_model)
-            .map_err(|_| TheoryChunksCollectionError::InvalidRequest("invalid embedding settings"))?;
+        let embedding = embedding_config_from_settings(embedding_model).map_err(|_| {
+            TheoryChunksCollectionError::InvalidRequest("invalid embedding settings".to_string())
+        })?;
         let qdrant = dense_collection_config_from_settings(collection_settings, qdrant_url)
-            .map_err(|_| TheoryChunksCollectionError::InvalidRequest("invalid dense collection settings"))?;
+            .map_err(|_| {
+                TheoryChunksCollectionError::InvalidRequest(
+                    "invalid dense collection settings".to_string(),
+                )
+            })?;
 
-        Self::new(embedding, qdrant, collection_settings.embedding_retry.clone())
+        Self::new(
+            embedding,
+            qdrant,
+            collection_settings.embedding_retry.clone(),
+        )
     }
 
     pub fn new(
@@ -100,7 +111,12 @@ impl QdrantTheoryChunksCollectionDense {
         let qdrant_client =
             QdrantDenseSearchClient::new(qdrant.qdrant_base_url.clone(), retry_policy)
                 .map_err(TheoryChunksCollectionError::QdrantDense)?;
-        Ok(Self { embedding, qdrant, embedding_client, qdrant_client })
+        Ok(Self {
+            embedding,
+            qdrant,
+            embedding_client,
+            qdrant_client,
+        })
     }
 }
 
@@ -162,14 +178,25 @@ impl QdrantTheoryChunksCollectionHybrid {
         embedding_model: &EmbeddingModelSettings,
         qdrant_url: &str,
     ) -> Result<Self, TheoryChunksCollectionError> {
-        let embedding = embedding_config_from_settings(embedding_model)
-            .map_err(|_| TheoryChunksCollectionError::InvalidRequest("invalid embedding settings"))?;
+        let embedding = embedding_config_from_settings(embedding_model).map_err(|_| {
+            TheoryChunksCollectionError::InvalidRequest("invalid embedding settings".to_string())
+        })?;
         let (qdrant, sparse) =
             hybrid_collection_config_from_settings(collection_settings, qdrant_url).map_err(
-                |_| TheoryChunksCollectionError::InvalidRequest("invalid hybrid collection settings"),
+                |_| {
+                    TheoryChunksCollectionError::InvalidRequest(
+                        "invalid hybrid collection settings".to_string(),
+                    )
+                },
             )?;
 
-        Self::new(embedding, qdrant, sparse, collection_settings.embedding_retry.clone()).await
+        Self::new(
+            embedding,
+            qdrant,
+            sparse,
+            collection_settings.embedding_retry.clone(),
+        )
+        .await
     }
 
     pub async fn new(
@@ -180,7 +207,7 @@ impl QdrantTheoryChunksCollectionHybrid {
     ) -> Result<Self, TheoryChunksCollectionError> {
         let loaded = sparse_preparation::load_sparse_artifacts(&sparse, &qdrant.collection_name.0)
             .await
-            .map_err(TheoryChunksCollectionError::InvalidRequest)?;
+            .map_err(|e| TheoryChunksCollectionError::InvalidRequest(e.to_string()))?;
 
         let embedding_client = EmbeddingClient::new(embedding.clone(), retry_policy.clone())
             .map_err(TheoryChunksCollectionError::Embedding)?;
@@ -226,7 +253,7 @@ impl TheoryChunksCollection for QdrantTheoryChunksCollectionHybrid {
             self.bm25_term_stats.as_ref(),
             &self.sparse,
         )
-        .map_err(TheoryChunksCollectionError::QueryPreparation)?;
+        .map_err(|e| TheoryChunksCollectionError::QueryPreparation(e.to_string()))?;
 
         let hybrid_req = HybridSearchRequest {
             collection_name: self.qdrant.collection_name.clone(),
@@ -255,14 +282,18 @@ impl TheoryChunksCollection for QdrantTheoryChunksCollectionHybrid {
 
 fn validate_request(req: &TheoryChunkSearchRequest) -> Result<(), TheoryChunksCollectionError> {
     if req.user_query.0.trim().is_empty() {
-        return Err(TheoryChunksCollectionError::InvalidRequest("user_query must not be empty"));
+        return Err(TheoryChunksCollectionError::InvalidRequest(
+            "user_query must not be empty".to_string(),
+        ));
     }
     if req.limit == 0 {
-        return Err(TheoryChunksCollectionError::InvalidRequest("limit must be > 0"));
+        return Err(TheoryChunksCollectionError::InvalidRequest(
+            "limit must be > 0".to_string(),
+        ));
     }
     if !req.score_threshold.is_finite() || req.score_threshold < 0.0 {
         return Err(TheoryChunksCollectionError::InvalidRequest(
-            "score_threshold must be finite and non-negative",
+            "score_threshold must be finite and non-negative".to_string(),
         ));
     }
     Ok(())
@@ -275,20 +306,36 @@ fn map_hit(
     let chunk_id = match fields.get("chunk_id") {
         Some(QdrantPayloadValue::String(s)) if !s.is_empty() => s.clone(),
         Some(QdrantPayloadValue::String(_)) => {
-            return Err(TheoryChunksCollectionError::PayloadMapping("chunk_id is empty"))
+            return Err(TheoryChunksCollectionError::PayloadMapping(
+                "chunk_id is empty".to_string(),
+            ))
         }
-        _ => return Err(TheoryChunksCollectionError::PayloadMapping("missing or invalid chunk_id")),
+        _ => {
+            return Err(TheoryChunksCollectionError::PayloadMapping(
+                "missing or invalid chunk_id".to_string(),
+            ))
+        }
     };
 
     let text = match fields.get("text") {
         Some(QdrantPayloadValue::String(s)) if !s.is_empty() => s.clone(),
         Some(QdrantPayloadValue::String(_)) => {
-            return Err(TheoryChunksCollectionError::PayloadMapping("text is empty"))
+            return Err(TheoryChunksCollectionError::PayloadMapping(
+                "text is empty".to_string(),
+            ))
         }
-        _ => return Err(TheoryChunksCollectionError::PayloadMapping("missing or invalid text")),
+        _ => {
+            return Err(TheoryChunksCollectionError::PayloadMapping(
+                "missing or invalid text".to_string(),
+            ))
+        }
     };
 
-    Ok(TheoryChunkSearchHit { chunk_id, score, text })
+    Ok(TheoryChunkSearchHit {
+        chunk_id,
+        score,
+        text,
+    })
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -299,10 +346,15 @@ mod tests {
     use crate::api_clients::qdrant::shared_types::{
         QdrantCollectionName, QdrantVectorName, RetryBackoffKind,
     };
-    use crate::test_utils::{MockHttpServer, MockResponse, TempArtifactDir, populate_tokenizer_cache};
+    use crate::test_utils::{
+        populate_tokenizer_cache, MockHttpServer, MockResponse, TempArtifactDir,
+    };
 
     fn policy() -> RetryPolicyConfig {
-        RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
+        RetryPolicyConfig {
+            max_attempts: 1,
+            backoff: RetryBackoffKind::Exponential,
+        }
     }
 
     fn emb_config(base_url: &str) -> EmbeddingConfig {
@@ -430,7 +482,10 @@ mod tests {
         };
 
         let err = client.search(&valid_request()).await.unwrap_err();
-        assert!(matches!(err, TheoryChunksCollectionError::IncorrectEmbeddingShape));
+        assert!(matches!(
+            err,
+            TheoryChunksCollectionError::IncorrectEmbeddingShape
+        ));
         assert!(qdrant_server.take_bodies().await.is_empty());
     }
 
@@ -457,7 +512,8 @@ mod tests {
     #[tokio::test]
     async fn dense_transport_error_wrapped_as_qdrant_dense() {
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
-        let qdrant_server = MockHttpServer::new(vec![MockResponse::status(500, b"e".to_vec())]).await;
+        let qdrant_server =
+            MockHttpServer::new(vec![MockResponse::status(500, b"e".to_vec())]).await;
         let client = QdrantTheoryChunksCollectionDense::new(
             emb_config(&emb_server.base_url()),
             dense_col(&qdrant_server.base_url()),
@@ -579,7 +635,12 @@ mod tests {
             policy(),
         )
         .unwrap();
-        assert!(client.search(&valid_request()).await.unwrap().hits.is_empty());
+        assert!(client
+            .search(&valid_request())
+            .await
+            .unwrap()
+            .hits
+            .is_empty());
     }
 
     // ── Hybrid artifact validation ─────────────────────────────────────────────

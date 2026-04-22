@@ -1,30 +1,31 @@
 use async_trait::async_trait;
 
 use crate::api_clients::embedding_client::{EmbeddingClient, EmbeddingClientError};
-use crate::utils::tokenizer::HfTokenizer;
 use crate::config::{CollectionRetrievalSettings, EmbeddingModelSettings};
+use crate::utils::tokenizer::HfTokenizer;
 
-use super::dense_search_client::{DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient};
+use super::dense_search_client::{
+    DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient,
+};
 use super::hybrid_search_client::{
     HybridSearchClientError, HybridSearchRequest, QdrantHybridSearchClient,
 };
-use super::sparse_preparation;
 use super::shared_types::{
-    Bm25TermStatsArtifact, EmbeddingConfig, NormalizedUserQuery,
-    QdrantDenseCollectionConfig, QdrantHybridCollectionConfig, QdrantPayloadValue,
-    RetryPolicyConfig, SparseStrategyConfig, SparseVocabularyArtifact,
     dense_collection_config_from_settings, embedding_config_from_settings,
-    hybrid_collection_config_from_settings,
+    hybrid_collection_config_from_settings, Bm25TermStatsArtifact, EmbeddingConfig,
+    NormalizedUserQuery, QdrantDenseCollectionConfig, QdrantHybridCollectionConfig,
+    QdrantPayloadValue, RetryPolicyConfig, SparseStrategyConfig, SparseVocabularyArtifact,
 };
+use super::sparse_preparation;
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum CardsCollectionError {
     #[error("invalid request: {0}")]
-    InvalidRequest(&'static str),
+    InvalidRequest(String),
     #[error("query preparation failed: {0}")]
-    QueryPreparation(&'static str),
+    QueryPreparation(String),
     #[error("embedding shape does not match configured dimension")]
     IncorrectEmbeddingShape,
     #[error("qdrant dense error: {0}")]
@@ -34,7 +35,7 @@ pub enum CardsCollectionError {
     #[error("embedding client error: {0}")]
     Embedding(#[from] EmbeddingClientError),
     #[error("payload mapping failed: {0}")]
-    PayloadMapping(&'static str),
+    PayloadMapping(String),
 }
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -82,12 +83,21 @@ impl QdrantCardsCollectionDense {
         embedding_model: &EmbeddingModelSettings,
         qdrant_url: &str,
     ) -> Result<Self, CardsCollectionError> {
-        let embedding = embedding_config_from_settings(embedding_model)
-            .map_err(|_| CardsCollectionError::InvalidRequest("invalid embedding settings"))?;
+        let embedding = embedding_config_from_settings(embedding_model).map_err(|_| {
+            CardsCollectionError::InvalidRequest("invalid embedding settings".to_string())
+        })?;
         let qdrant = dense_collection_config_from_settings(collection_settings, qdrant_url)
-            .map_err(|_| CardsCollectionError::InvalidRequest("invalid dense collection settings"))?;
+            .map_err(|_| {
+                CardsCollectionError::InvalidRequest(
+                    "invalid dense collection settings".to_string(),
+                )
+            })?;
 
-        Self::new(embedding, qdrant, collection_settings.embedding_retry.clone())
+        Self::new(
+            embedding,
+            qdrant,
+            collection_settings.embedding_retry.clone(),
+        )
     }
 
     pub fn new(
@@ -101,7 +111,12 @@ impl QdrantCardsCollectionDense {
             QdrantDenseSearchClient::new(qdrant.qdrant_base_url.clone(), retry_policy)
                 .map_err(CardsCollectionError::QdrantDense)?;
 
-        Ok(Self { embedding, qdrant, embedding_client, qdrant_client })
+        Ok(Self {
+            embedding,
+            qdrant,
+            embedding_client,
+            qdrant_client,
+        })
     }
 }
 
@@ -163,14 +178,24 @@ impl QdrantCardsCollectionHybrid {
         embedding_model: &EmbeddingModelSettings,
         qdrant_url: &str,
     ) -> Result<Self, CardsCollectionError> {
-        let embedding = embedding_config_from_settings(embedding_model)
-            .map_err(|_| CardsCollectionError::InvalidRequest("invalid embedding settings"))?;
-        let (qdrant, sparse) =
-            hybrid_collection_config_from_settings(collection_settings, qdrant_url).map_err(
-                |_| CardsCollectionError::InvalidRequest("invalid hybrid collection settings"),
-            )?;
+        let embedding = embedding_config_from_settings(embedding_model).map_err(|_| {
+            CardsCollectionError::InvalidRequest("invalid embedding settings".to_string())
+        })?;
+        let (qdrant, sparse) = hybrid_collection_config_from_settings(
+            collection_settings,
+            qdrant_url,
+        )
+        .map_err(|_| {
+            CardsCollectionError::InvalidRequest("invalid hybrid collection settings".to_string())
+        })?;
 
-        Self::new(embedding, qdrant, sparse, collection_settings.embedding_retry.clone()).await
+        Self::new(
+            embedding,
+            qdrant,
+            sparse,
+            collection_settings.embedding_retry.clone(),
+        )
+        .await
     }
 
     pub async fn new(
@@ -181,7 +206,7 @@ impl QdrantCardsCollectionHybrid {
     ) -> Result<Self, CardsCollectionError> {
         let loaded = sparse_preparation::load_sparse_artifacts(&sparse, &qdrant.collection_name.0)
             .await
-            .map_err(CardsCollectionError::InvalidRequest)?;
+            .map_err(|e| CardsCollectionError::InvalidRequest(e.to_string()))?;
 
         let embedding_client = EmbeddingClient::new(embedding.clone(), retry_policy.clone())
             .map_err(CardsCollectionError::Embedding)?;
@@ -227,7 +252,7 @@ impl CardsCollection for QdrantCardsCollectionHybrid {
             self.bm25_term_stats.as_ref(),
             &self.sparse,
         )
-        .map_err(CardsCollectionError::QueryPreparation)?;
+        .map_err(|e| CardsCollectionError::QueryPreparation(e.to_string()))?;
 
         let hybrid_req = HybridSearchRequest {
             collection_name: self.qdrant.collection_name.clone(),
@@ -256,14 +281,18 @@ impl CardsCollection for QdrantCardsCollectionHybrid {
 
 fn validate_request(req: &CardSearchRequest) -> Result<(), CardsCollectionError> {
     if req.user_query.0.trim().is_empty() {
-        return Err(CardsCollectionError::InvalidRequest("user_query must not be empty"));
+        return Err(CardsCollectionError::InvalidRequest(
+            "user_query must not be empty".to_string(),
+        ));
     }
     if req.limit == 0 {
-        return Err(CardsCollectionError::InvalidRequest("limit must be > 0"));
+        return Err(CardsCollectionError::InvalidRequest(
+            "limit must be > 0".to_string(),
+        ));
     }
     if !req.score_threshold.is_finite() || req.score_threshold < 0.0 {
         return Err(CardsCollectionError::InvalidRequest(
-            "score_threshold must be finite and non-negative",
+            "score_threshold must be finite and non-negative".to_string(),
         ));
     }
     Ok(())
@@ -276,9 +305,15 @@ fn map_hit_to_card_hit(
     let case_id = match fields.get("doc_id") {
         Some(QdrantPayloadValue::String(s)) if !s.is_empty() => s.clone(),
         Some(QdrantPayloadValue::String(_)) => {
-            return Err(CardsCollectionError::PayloadMapping("doc_id is empty"))
+            return Err(CardsCollectionError::PayloadMapping(
+                "doc_id is empty".to_string(),
+            ))
         }
-        _ => return Err(CardsCollectionError::PayloadMapping("missing or invalid doc_id")),
+        _ => {
+            return Err(CardsCollectionError::PayloadMapping(
+                "missing or invalid doc_id".to_string(),
+            ))
+        }
     };
     Ok(CardSearchHit { case_id, score })
 }
@@ -288,18 +323,23 @@ fn map_hit_to_card_hit(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{
-        BagOfWordsSettings, CollectionRetrievalSettings, CollectionSettings, DenseCollectionSettings,
-        EmbeddingModelSettings, HybridCollectionSettings, SparsePreprocessingSettings,
-        SparseSettings, SparseStrategySettings, TokenizerSettings,
-    };
     use crate::api_clients::qdrant::shared_types::{
         QdrantCollectionName, QdrantVectorName, RetryBackoffKind,
     };
-    use crate::test_utils::{MockHttpServer, MockResponse, TempArtifactDir, populate_tokenizer_cache};
+    use crate::config::{
+        BagOfWordsSettings, CollectionRetrievalSettings, CollectionSettings,
+        DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
+        SparsePreprocessingSettings, SparseSettings, SparseStrategySettings, TokenizerSettings,
+    };
+    use crate::test_utils::{
+        populate_tokenizer_cache, MockHttpServer, MockResponse, TempArtifactDir,
+    };
 
     fn policy() -> RetryPolicyConfig {
-        RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
+        RetryPolicyConfig {
+            max_attempts: 1,
+            backoff: RetryBackoffKind::Exponential,
+        }
     }
 
     fn emb_config(base_url: &str) -> EmbeddingConfig {
@@ -544,7 +584,7 @@ mod tests {
         emb_cfg.embedding_dimension = 2;
         // Override dimension so embedding client accepts the response, but collection rejects it
         emb_cfg.embedding_dimension = 1; // make client accept dim=1
-        // Now set collection config expecting dim=2
+                                         // Now set collection config expecting dim=2
         let emb_resp2 = serde_json::json!({"embeddings": [[0.1]]}).to_string();
         let emb_server2 = MockHttpServer::new(vec![MockResponse::ok(emb_resp2)]).await;
 
@@ -628,7 +668,8 @@ mod tests {
     #[tokio::test]
     async fn valid_payload_maps_to_card_hit() {
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
-        let qdrant_server = MockHttpServer::new(vec![MockResponse::ok(qdrant_resp("case_abc"))]).await;
+        let qdrant_server =
+            MockHttpServer::new(vec![MockResponse::ok(qdrant_resp("case_abc"))]).await;
         let client = QdrantCardsCollectionDense::new(
             emb_config(&emb_server.base_url()),
             dense_collection_config(&qdrant_server.base_url()),
@@ -700,11 +741,10 @@ mod tests {
     #[tokio::test]
     async fn empty_transport_result_returns_empty_search_result() {
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
-        let qdrant_server =
-            MockHttpServer::new(vec![MockResponse::ok(
-                serde_json::json!({"result": {"points": []}}).to_string(),
-            )])
-            .await;
+        let qdrant_server = MockHttpServer::new(vec![MockResponse::ok(
+            serde_json::json!({"result": {"points": []}}).to_string(),
+        )])
+        .await;
         let client = QdrantCardsCollectionDense::new(
             emb_config(&emb_server.base_url()),
             dense_collection_config(&qdrant_server.base_url()),
@@ -798,7 +838,8 @@ mod tests {
             &vocab_json("cards__sparse_vocabulary", "cards", "test/model"),
         );
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
-        let qdrant_server = MockHttpServer::new(vec![MockResponse::status(500, b"err".to_vec())]).await;
+        let qdrant_server =
+            MockHttpServer::new(vec![MockResponse::status(500, b"err".to_vec())]).await;
 
         let client = QdrantCardsCollectionHybrid::new(
             emb_config(&emb_server.base_url()),

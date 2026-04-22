@@ -1,29 +1,31 @@
 use async_trait::async_trait;
 
-use crate::api_clients::embedding_client::{EmbeddingClient, EmbeddingClientError};
-use crate::utils::tokenizer::HfTokenizer;
-use crate::config::{CollectionRetrievalSettings, EmbeddingModelSettings};
-use super::dense_search_client::{DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient};
+use super::dense_search_client::{
+    DenseSearchClientError, DenseSearchRequest, QdrantDenseSearchClient,
+};
 use super::hybrid_search_client::{
     HybridSearchClientError, HybridSearchRequest, QdrantHybridSearchClient,
 };
-use super::sparse_preparation;
 use super::shared_types::{
-    Bm25TermStatsArtifact, EmbeddingConfig, NormalizedUserQuery, QdrantDenseCollectionConfig,
-    QdrantFilter, QdrantHybridCollectionConfig, QdrantMatchAnyFilter, QdrantPayloadValue,
-    RetryPolicyConfig, SparseStrategyConfig, SparseVocabularyArtifact,
     dense_collection_config_from_settings, embedding_config_from_settings,
-    hybrid_collection_config_from_settings,
+    hybrid_collection_config_from_settings, Bm25TermStatsArtifact, EmbeddingConfig,
+    NormalizedUserQuery, QdrantDenseCollectionConfig, QdrantFilter, QdrantHybridCollectionConfig,
+    QdrantMatchAnyFilter, QdrantPayloadValue, RetryPolicyConfig, SparseStrategyConfig,
+    SparseVocabularyArtifact,
 };
+use super::sparse_preparation;
+use crate::api_clients::embedding_client::{EmbeddingClient, EmbeddingClientError};
+use crate::config::{CollectionRetrievalSettings, EmbeddingModelSettings};
+use crate::utils::tokenizer::HfTokenizer;
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum PracticeChunksCollectionError {
     #[error("invalid request: {0}")]
-    InvalidRequest(&'static str),
+    InvalidRequest(String),
     #[error("query preparation failed: {0}")]
-    QueryPreparation(&'static str),
+    QueryPreparation(String),
     #[error("embedding shape does not match configured dimension")]
     IncorrectEmbeddingShape,
     #[error("qdrant dense error: {0}")]
@@ -33,7 +35,7 @@ pub enum PracticeChunksCollectionError {
     #[error("embedding client error: {0}")]
     Embedding(#[from] EmbeddingClientError),
     #[error("payload mapping failed: {0}")]
-    PayloadMapping(&'static str),
+    PayloadMapping(String),
 }
 
 // ─── Public types ─────────────────────────────────────────────────────────────
@@ -92,14 +94,20 @@ impl QdrantPracticeChunksCollectionDense {
         qdrant_url: &str,
     ) -> Result<Self, PracticeChunksCollectionError> {
         let embedding = embedding_config_from_settings(embedding_model).map_err(|_| {
-            PracticeChunksCollectionError::InvalidRequest("invalid embedding settings")
+            PracticeChunksCollectionError::InvalidRequest("invalid embedding settings".to_string())
         })?;
         let qdrant = dense_collection_config_from_settings(collection_settings, qdrant_url)
             .map_err(|_| {
-                PracticeChunksCollectionError::InvalidRequest("invalid dense collection settings")
+                PracticeChunksCollectionError::InvalidRequest(
+                    "invalid dense collection settings".to_string(),
+                )
             })?;
 
-        Self::new(embedding, qdrant, collection_settings.embedding_retry.clone())
+        Self::new(
+            embedding,
+            qdrant,
+            collection_settings.embedding_retry.clone(),
+        )
     }
 
     pub fn new(
@@ -112,7 +120,12 @@ impl QdrantPracticeChunksCollectionDense {
         let qdrant_client =
             QdrantDenseSearchClient::new(qdrant.qdrant_base_url.clone(), retry_policy)
                 .map_err(PracticeChunksCollectionError::QdrantDense)?;
-        Ok(Self { embedding, qdrant, embedding_client, qdrant_client })
+        Ok(Self {
+            embedding,
+            qdrant,
+            embedding_client,
+            qdrant_client,
+        })
     }
 }
 
@@ -177,18 +190,24 @@ impl QdrantPracticeChunksCollectionHybrid {
         qdrant_url: &str,
     ) -> Result<Self, PracticeChunksCollectionError> {
         let embedding = embedding_config_from_settings(embedding_model).map_err(|_| {
-            PracticeChunksCollectionError::InvalidRequest("invalid embedding settings")
+            PracticeChunksCollectionError::InvalidRequest("invalid embedding settings".to_string())
         })?;
         let (qdrant, sparse) =
             hybrid_collection_config_from_settings(collection_settings, qdrant_url).map_err(
                 |_| {
                     PracticeChunksCollectionError::InvalidRequest(
-                        "invalid hybrid collection settings",
+                        "invalid hybrid collection settings".to_string(),
                     )
                 },
             )?;
 
-        Self::new(embedding, qdrant, sparse, collection_settings.embedding_retry.clone()).await
+        Self::new(
+            embedding,
+            qdrant,
+            sparse,
+            collection_settings.embedding_retry.clone(),
+        )
+        .await
     }
 
     pub async fn new(
@@ -199,7 +218,7 @@ impl QdrantPracticeChunksCollectionHybrid {
     ) -> Result<Self, PracticeChunksCollectionError> {
         let loaded = sparse_preparation::load_sparse_artifacts(&sparse, &qdrant.collection_name.0)
             .await
-            .map_err(PracticeChunksCollectionError::InvalidRequest)?;
+            .map_err(|e| PracticeChunksCollectionError::InvalidRequest(e.to_string()))?;
 
         let embedding_client = EmbeddingClient::new(embedding.clone(), retry_policy.clone())
             .map_err(PracticeChunksCollectionError::Embedding)?;
@@ -245,7 +264,7 @@ impl PracticeChunksCollection for QdrantPracticeChunksCollectionHybrid {
             self.bm25_term_stats.as_ref(),
             &self.sparse,
         )
-        .map_err(PracticeChunksCollectionError::QueryPreparation)?;
+        .map_err(|e| PracticeChunksCollectionError::QueryPreparation(e.to_string()))?;
 
         let filter = map_filter(&request.filter);
 
@@ -276,22 +295,28 @@ impl PracticeChunksCollection for QdrantPracticeChunksCollectionHybrid {
 
 fn validate_request(req: &PracticeChunkSearchRequest) -> Result<(), PracticeChunksCollectionError> {
     if req.user_query.0.trim().is_empty() {
-        return Err(PracticeChunksCollectionError::InvalidRequest("user_query must not be empty"));
+        return Err(PracticeChunksCollectionError::InvalidRequest(
+            "user_query must not be empty".to_string(),
+        ));
     }
     if req.filter.case_ids.is_empty() {
-        return Err(PracticeChunksCollectionError::InvalidRequest("filter.case_ids must not be empty"));
+        return Err(PracticeChunksCollectionError::InvalidRequest(
+            "filter.case_ids must not be empty".to_string(),
+        ));
     }
     if req.filter.chunk_tags.is_empty() {
         return Err(PracticeChunksCollectionError::InvalidRequest(
-            "filter.chunk_tags must not be empty",
+            "filter.chunk_tags must not be empty".to_string(),
         ));
     }
     if req.limit == 0 {
-        return Err(PracticeChunksCollectionError::InvalidRequest("limit must be > 0"));
+        return Err(PracticeChunksCollectionError::InvalidRequest(
+            "limit must be > 0".to_string(),
+        ));
     }
     if !req.score_threshold.is_finite() || req.score_threshold < 0.0 {
         return Err(PracticeChunksCollectionError::InvalidRequest(
-            "score_threshold must be finite and non-negative",
+            "score_threshold must be finite and non-negative".to_string(),
         ));
     }
     Ok(())
@@ -318,22 +343,28 @@ fn map_hit(
 ) -> Result<PracticeChunkSearchHit, PracticeChunksCollectionError> {
     let chunk_id = match fields.get("chunk_id") {
         Some(QdrantPayloadValue::String(s)) => s.clone(),
-        _ => return Err(PracticeChunksCollectionError::PayloadMapping("missing or invalid chunk_id")),
+        _ => {
+            return Err(PracticeChunksCollectionError::PayloadMapping(
+                "missing or invalid chunk_id".to_string(),
+            ))
+        }
     };
 
     let case_id = match fields.get("doc_id") {
         Some(QdrantPayloadValue::String(s)) if !s.is_empty() => s.clone(),
         Some(QdrantPayloadValue::String(_)) => {
-            return Err(PracticeChunksCollectionError::PayloadMapping("empty doc_id"))
+            return Err(PracticeChunksCollectionError::PayloadMapping(
+                "empty doc_id".to_string(),
+            ))
         }
         Some(_) => {
             return Err(PracticeChunksCollectionError::PayloadMapping(
-                "invalid doc_id type",
+                "invalid doc_id type".to_string(),
             ))
         }
         None => {
             return Err(PracticeChunksCollectionError::PayloadMapping(
-                "missing or invalid doc_id",
+                "missing or invalid doc_id".to_string(),
             ))
         }
     };
@@ -342,17 +373,27 @@ fn map_hit(
         Some(QdrantPayloadValue::StringList(v)) => v.clone(),
         _ => {
             return Err(PracticeChunksCollectionError::PayloadMapping(
-                "missing or invalid chunk_tags",
+                "missing or invalid chunk_tags".to_string(),
             ))
         }
     };
 
     let text = match fields.get("text") {
         Some(QdrantPayloadValue::String(s)) => s.clone(),
-        _ => return Err(PracticeChunksCollectionError::PayloadMapping("missing or invalid text")),
+        _ => {
+            return Err(PracticeChunksCollectionError::PayloadMapping(
+                "missing or invalid text".to_string(),
+            ))
+        }
     };
 
-    Ok(PracticeChunkSearchHit { chunk_id, score, case_id, chunk_tags, text })
+    Ok(PracticeChunkSearchHit {
+        chunk_id,
+        score,
+        case_id,
+        chunk_tags,
+        text,
+    })
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -363,10 +404,15 @@ mod tests {
     use crate::api_clients::qdrant::shared_types::{
         QdrantCollectionName, QdrantVectorName, RetryBackoffKind,
     };
-    use crate::test_utils::{MockHttpServer, MockResponse, TempArtifactDir, populate_tokenizer_cache};
+    use crate::test_utils::{
+        populate_tokenizer_cache, MockHttpServer, MockResponse, TempArtifactDir,
+    };
 
     fn policy() -> RetryPolicyConfig {
-        RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
+        RetryPolicyConfig {
+            max_attempts: 1,
+            backoff: RetryBackoffKind::Exponential,
+        }
     }
 
     fn emb_config(base_url: &str) -> EmbeddingConfig {
@@ -456,7 +502,10 @@ mod tests {
         .unwrap();
         let req = PracticeChunkSearchRequest {
             user_query: NormalizedUserQuery("q".into()),
-            filter: PracticeChunkFilter { case_ids: vec![], chunk_tags: vec!["t".into()] },
+            filter: PracticeChunkFilter {
+                case_ids: vec![],
+                chunk_tags: vec!["t".into()],
+            },
             limit: 5,
             score_threshold: 0.2,
         };
@@ -478,7 +527,10 @@ mod tests {
         .unwrap();
         let req = PracticeChunkSearchRequest {
             user_query: NormalizedUserQuery("q".into()),
-            filter: PracticeChunkFilter { case_ids: vec!["c".into()], chunk_tags: vec![] },
+            filter: PracticeChunkFilter {
+                case_ids: vec!["c".into()],
+                chunk_tags: vec![],
+            },
             limit: 5,
             score_threshold: 0.2,
         };
@@ -555,7 +607,10 @@ mod tests {
         };
 
         let err = client.search(&valid_request()).await.unwrap_err();
-        assert!(matches!(err, PracticeChunksCollectionError::IncorrectEmbeddingShape));
+        assert!(matches!(
+            err,
+            PracticeChunksCollectionError::IncorrectEmbeddingShape
+        ));
         assert!(qdrant_server.take_bodies().await.is_empty());
     }
 
@@ -564,11 +619,10 @@ mod tests {
     #[tokio::test]
     async fn dense_maps_filter_correctly() {
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
-        let qdrant_server =
-            MockHttpServer::new(vec![MockResponse::ok(
-                serde_json::json!({"result": {"points": []}}).to_string(),
-            )])
-            .await;
+        let qdrant_server = MockHttpServer::new(vec![MockResponse::ok(
+            serde_json::json!({"result": {"points": []}}).to_string(),
+        )])
+        .await;
         let client = QdrantPracticeChunksCollectionDense::new(
             emb_config(&emb_server.base_url()),
             dense_col(&qdrant_server.base_url()),
@@ -590,7 +644,8 @@ mod tests {
     #[tokio::test]
     async fn dense_transport_error_wrapped_as_qdrant_dense() {
         let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
-        let qdrant_server = MockHttpServer::new(vec![MockResponse::status(500, b"e".to_vec())]).await;
+        let qdrant_server =
+            MockHttpServer::new(vec![MockResponse::status(500, b"e".to_vec())]).await;
         let client = QdrantPracticeChunksCollectionDense::new(
             emb_config(&emb_server.base_url()),
             dense_col(&qdrant_server.base_url()),

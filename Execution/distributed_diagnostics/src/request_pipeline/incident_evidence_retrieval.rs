@@ -34,10 +34,10 @@ const ALTERNATIVE_TAGS: &[&str] = &[
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum IncidentEvidenceRetrievalError {
     #[error("invalid settings: {0}")]
-    InvalidSettings(&'static str),
+    InvalidSettings(String),
     #[error("practice chunks collection error: {0}")]
     Collection(#[from] PracticeChunksCollectionError),
 }
@@ -63,9 +63,14 @@ impl IncidentEvidenceRetrieval {
         settings: CollectionRetrievalSettings,
     ) -> Result<Self, IncidentEvidenceRetrievalError> {
         if settings.top_k == 0 {
-            return Err(IncidentEvidenceRetrievalError::InvalidSettings("top_k must be greater than 0"));
+            return Err(IncidentEvidenceRetrievalError::InvalidSettings(
+                "top_k must be greater than 0".to_string(),
+            ));
         }
-        Ok(Self { collection, settings })
+        Ok(Self {
+            collection,
+            settings,
+        })
     }
 
     pub async fn retrieve(
@@ -87,20 +92,22 @@ impl IncidentEvidenceRetrieval {
         };
 
         let alternative_chunks = if !candidates.alternatives.is_empty() {
-            let case_ids = candidates.alternatives.iter().map(|c| c.case_id.clone()).collect();
-            let req = build_request(
-                &request.query,
-                case_ids,
-                ALTERNATIVE_TAGS,
-                &self.settings,
-            );
+            let case_ids = candidates
+                .alternatives
+                .iter()
+                .map(|c| c.case_id.clone())
+                .collect();
+            let req = build_request(&request.query, case_ids, ALTERNATIVE_TAGS, &self.settings);
             let result = self.collection.search(&req).await?;
             map_hits(result.hits)
         } else {
             vec![]
         };
 
-        Ok(IncidentEvidenceRetrievalOutput { primary_chunks, alternative_chunks })
+        Ok(IncidentEvidenceRetrievalOutput {
+            primary_chunks,
+            alternative_chunks,
+        })
     }
 }
 
@@ -146,8 +153,8 @@ mod tests {
         PracticeChunkSearchHit, PracticeChunkSearchResult,
     };
     use crate::config::{CollectionSettings, DenseCollectionSettings};
-    use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
     use crate::shared_types::CandidateCard;
+    use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
@@ -158,8 +165,14 @@ mod tests {
             top_k,
             score_threshold: 0.5,
             max_alternatives: 3,
-            embedding_retry: RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential },
-            qdrant_retry: RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential },
+            embedding_retry: RetryPolicyConfig {
+                max_attempts: 1,
+                backoff: RetryBackoffKind::Exponential,
+            },
+            qdrant_retry: RetryPolicyConfig {
+                max_attempts: 1,
+                backoff: RetryBackoffKind::Exponential,
+            },
             collection: CollectionSettings::Dense(DenseCollectionSettings {
                 name: "test".to_string(),
                 vector_name: "v".to_string(),
@@ -169,7 +182,10 @@ mod tests {
     }
 
     fn request(query: &str) -> NormalizedUserRequest {
-        NormalizedUserRequest { query: query.to_string(), input_token_count: 10 }
+        NormalizedUserRequest {
+            query: query.to_string(),
+            input_token_count: 10,
+        }
     }
 
     fn hit(chunk_id: &str, case_id: &str, score: f32) -> PracticeChunkSearchHit {
@@ -183,7 +199,10 @@ mod tests {
     }
 
     fn candidate(case_id: &str) -> CandidateCard {
-        CandidateCard { case_id: case_id.to_string(), score: 0.9 }
+        CandidateCard {
+            case_id: case_id.to_string(),
+            score: 0.9,
+        }
     }
 
     // ─── Mock ─────────────────────────────────────────────────────────────────
@@ -194,7 +213,9 @@ mod tests {
     }
 
     impl MockCollection {
-        fn new(responses: Vec<Result<PracticeChunkSearchResult, PracticeChunksCollectionError>>) -> Arc<Self> {
+        fn new(
+            responses: Vec<Result<PracticeChunkSearchResult, PracticeChunksCollectionError>>,
+        ) -> Arc<Self> {
             Arc::new(Self {
                 responses: Mutex::new(responses),
                 captured: Mutex::new(vec![]),
@@ -217,7 +238,9 @@ mod tests {
         }
     }
 
-    fn ok_result(hits: Vec<PracticeChunkSearchHit>) -> Result<PracticeChunkSearchResult, PracticeChunksCollectionError> {
+    fn ok_result(
+        hits: Vec<PracticeChunkSearchHit>,
+    ) -> Result<PracticeChunkSearchResult, PracticeChunksCollectionError> {
         Ok(PracticeChunkSearchResult { hits })
     }
 
@@ -227,7 +250,10 @@ mod tests {
     fn new_fails_when_top_k_is_zero() {
         let mock = MockCollection::new(vec![]);
         let err = IncidentEvidenceRetrieval::new(mock, settings(0)).unwrap_err();
-        assert!(matches!(err, IncidentEvidenceRetrievalError::InvalidSettings(_)));
+        assert!(matches!(
+            err,
+            IncidentEvidenceRetrievalError::InvalidSettings(_)
+        ));
     }
 
     #[test]
@@ -242,7 +268,10 @@ mod tests {
     async fn empty_candidates_returns_empty_output_without_collection_call() {
         let mock = MockCollection::new(vec![]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
-        let candidates = CandidateCardRetrievalOutput { primary: None, alternatives: vec![] };
+        let candidates = CandidateCardRetrievalOutput {
+            primary: None,
+            alternatives: vec![],
+        };
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
 
@@ -341,7 +370,11 @@ mod tests {
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
-            alternatives: vec![candidate("card-A"), candidate("card-B"), candidate("card-C")],
+            alternatives: vec![
+                candidate("card-A"),
+                candidate("card-B"),
+                candidate("card-C"),
+            ],
         };
 
         sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -423,7 +456,9 @@ mod tests {
             alternatives: vec![],
         };
 
-        sut.retrieve(&request("exact query text"), &candidates).await.unwrap();
+        sut.retrieve(&request("exact query text"), &candidates)
+            .await
+            .unwrap();
 
         assert_eq!(mock.captured_requests()[0].user_query.0, "exact query text");
     }
@@ -432,7 +467,11 @@ mod tests {
 
     #[tokio::test]
     async fn primary_chunk_order_preserved() {
-        let hits = vec![hit("c3", "x", 0.9), hit("c1", "x", 0.7), hit("c2", "x", 0.5)];
+        let hits = vec![
+            hit("c3", "x", 0.9),
+            hit("c1", "x", 0.7),
+            hit("c2", "x", 0.5),
+        ];
         let mock = MockCollection::new(vec![ok_result(hits)]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
@@ -442,7 +481,11 @@ mod tests {
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
 
-        let ids: Vec<&str> = out.primary_chunks.iter().map(|c| c.chunk_id.as_str()).collect();
+        let ids: Vec<&str> = out
+            .primary_chunks
+            .iter()
+            .map(|c| c.chunk_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["c3", "c1", "c2"]);
     }
 
@@ -458,7 +501,11 @@ mod tests {
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
 
-        let ids: Vec<&str> = out.alternative_chunks.iter().map(|c| c.chunk_id.as_str()).collect();
+        let ids: Vec<&str> = out
+            .alternative_chunks
+            .iter()
+            .map(|c| c.chunk_id.as_str())
+            .collect();
         assert_eq!(ids, vec!["c2", "c1"]);
     }
 
@@ -482,9 +529,9 @@ mod tests {
 
     #[tokio::test]
     async fn primary_collection_error_propagated() {
-        let mock = MockCollection::new(vec![
-            Err(PracticeChunksCollectionError::InvalidRequest("boom")),
-        ]);
+        let mock = MockCollection::new(vec![Err(PracticeChunksCollectionError::InvalidRequest(
+            "boom".to_string(),
+        ))]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
@@ -497,9 +544,9 @@ mod tests {
 
     #[tokio::test]
     async fn alternative_collection_error_propagated() {
-        let mock = MockCollection::new(vec![
-            Err(PracticeChunksCollectionError::InvalidRequest("boom")),
-        ]);
+        let mock = MockCollection::new(vec![Err(PracticeChunksCollectionError::InvalidRequest(
+            "boom".to_string(),
+        ))]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
@@ -514,7 +561,9 @@ mod tests {
     async fn alternative_error_after_primary_success_fails_whole_call() {
         let mock = MockCollection::new(vec![
             ok_result(vec![hit("p1", "card-1", 0.9)]),
-            Err(PracticeChunksCollectionError::InvalidRequest("boom")),
+            Err(PracticeChunksCollectionError::InvalidRequest(
+                "boom".to_string(),
+            )),
         ]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {

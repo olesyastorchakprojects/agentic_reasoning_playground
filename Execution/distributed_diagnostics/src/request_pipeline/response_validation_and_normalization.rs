@@ -9,12 +9,12 @@ use crate::shared_types::{
 // Error type
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum ResponseValidationAndNormalizationError {
     #[error("invalid response shape: {0}")]
-    InvalidResponseShape(&'static str),
+    InvalidResponseShape(String),
     #[error("business rule violation: {0}")]
-    BusinessRuleViolation(&'static str),
+    BusinessRuleViolation(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -62,7 +62,7 @@ impl ResponseValidationAndNormalization {
         let raw = serde_json::from_value::<RawDiagnosticResponse>(input.response_json.clone())
             .map_err(|_| {
                 ResponseValidationAndNormalizationError::InvalidResponseShape(
-                    "response JSON does not match expected shape",
+                    "response JSON does not match expected shape".to_string(),
                 )
             })?;
 
@@ -98,7 +98,7 @@ fn check_required_keys_present(
 ) -> Result<(), ResponseValidationAndNormalizationError> {
     let obj = json.as_object().ok_or(
         ResponseValidationAndNormalizationError::InvalidResponseShape(
-            "response JSON does not match expected shape",
+            "response JSON does not match expected shape".to_string(),
         ),
     )?;
 
@@ -106,7 +106,7 @@ fn check_required_keys_present(
         if !obj.contains_key(*key) {
             return Err(
                 ResponseValidationAndNormalizationError::InvalidResponseShape(
-                    "response JSON does not match expected shape",
+                    "response JSON does not match expected shape".to_string(),
                 ),
             );
         }
@@ -117,7 +117,7 @@ fn check_required_keys_present(
             if !ri.contains_key(*key) {
                 return Err(
                     ResponseValidationAndNormalizationError::InvalidResponseShape(
-                        "response JSON does not match expected shape",
+                        "response JSON does not match expected shape".to_string(),
                     ),
                 );
             }
@@ -150,31 +150,31 @@ fn apply_business_rules(
     let hyp_len = raw.active_hypotheses.len();
     if hyp_len < 2 || hyp_len > 3 {
         return Err(BusinessRuleViolation(
-            "active_hypotheses must contain 2 or 3 items",
+            "active_hypotheses must contain 2 or 3 items".to_string(),
         ));
     }
 
     for h in &raw.active_hypotheses {
         if h.trim().is_empty() {
             return Err(BusinessRuleViolation(
-                "every active_hypotheses item must be non-empty after trimming",
+                "every active_hypotheses item must be non-empty after trimming".to_string(),
             ));
         }
     }
 
     if raw.problem_understanding.trim().is_empty() {
         return Err(BusinessRuleViolation(
-            "problem_understanding must be non-empty after trimming",
+            "problem_understanding must be non-empty after trimming".to_string(),
         ));
     }
     if raw.similar_practical_context.trim().is_empty() {
         return Err(BusinessRuleViolation(
-            "similar_practical_context must be non-empty after trimming",
+            "similar_practical_context must be non-empty after trimming".to_string(),
         ));
     }
     if raw.first_check.trim().is_empty() {
         return Err(BusinessRuleViolation(
-            "first_check must be non-empty after trimming",
+            "first_check must be non-empty after trimming".to_string(),
         ));
     }
     if raw
@@ -184,7 +184,7 @@ fn apply_business_rules(
         .is_empty()
     {
         return Err(BusinessRuleViolation(
-            "supports_primary_if must be non-empty after trimming",
+            "supports_primary_if must be non-empty after trimming".to_string(),
         ));
     }
     if raw
@@ -194,7 +194,7 @@ fn apply_business_rules(
         .is_empty()
     {
         return Err(BusinessRuleViolation(
-            "supports_competing_if must be non-empty after trimming",
+            "supports_competing_if must be non-empty after trimming".to_string(),
         ));
     }
 
@@ -208,7 +208,7 @@ fn apply_business_rules(
     for value in required_fields {
         if contains_prohibited_phrase(value) {
             return Err(BusinessRuleViolation(
-                "response contains prohibited final-diagnosis language",
+                "response contains prohibited final-diagnosis language".to_string(),
             ));
         }
     }
@@ -216,24 +216,25 @@ fn apply_business_rules(
     if let Some(s) = &raw.result_interpretation.inconclusive_if {
         if s.trim().is_empty() {
             return Err(BusinessRuleViolation(
-                "inconclusive_if must be non-empty after trimming when present",
+                "inconclusive_if must be non-empty after trimming when present".to_string(),
             ));
         }
         if contains_prohibited_phrase(s) {
             return Err(BusinessRuleViolation(
-                "response contains prohibited final-diagnosis language",
+                "response contains prohibited final-diagnosis language".to_string(),
             ));
         }
     }
     if let Some(s) = &raw.competing_interpretation {
         if s.trim().is_empty() {
             return Err(BusinessRuleViolation(
-                "competing_interpretation must be non-empty after trimming when present",
+                "competing_interpretation must be non-empty after trimming when present"
+                    .to_string(),
             ));
         }
         if contains_prohibited_phrase(s) {
             return Err(BusinessRuleViolation(
-                "response contains prohibited final-diagnosis language",
+                "response contains prohibited final-diagnosis language".to_string(),
             ));
         }
     }

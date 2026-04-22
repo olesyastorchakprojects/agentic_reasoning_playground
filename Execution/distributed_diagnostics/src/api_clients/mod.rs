@@ -8,8 +8,10 @@ use thiserror::Error;
 pub use embedding_client::EmbeddingClientError;
 pub use model::{ModelApiClientError, ModelClientError};
 pub use postgres::{IncidentCardStoreError, PostgresApiClientError};
-pub use qdrant::{QdrantApiClientError, CardsCollectionError, DenseSearchClientError, HybridSearchClientError,
-    PracticeChunksCollectionError, TheoryChunksCollectionError};
+pub use qdrant::{
+    CardsCollectionError, DenseSearchClientError, HybridSearchClientError,
+    PracticeChunksCollectionError, QdrantApiClientError, TheoryChunksCollectionError,
+};
 
 #[derive(Debug, Error)]
 pub enum ApiClientError {

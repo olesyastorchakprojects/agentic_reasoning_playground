@@ -18,7 +18,6 @@ struct Cli {
 #[tokio::main]
 async fn main() -> Result<(), RuntimeError> {
     let cli = Cli::parse();
-    let _settings =
-        config::load(&cli.config, &cli.ingest_config).map_err(RuntimeError::Config)?;
+    let _settings = config::load(&cli.config, &cli.ingest_config).map_err(RuntimeError::Config)?;
     Ok(())
 }

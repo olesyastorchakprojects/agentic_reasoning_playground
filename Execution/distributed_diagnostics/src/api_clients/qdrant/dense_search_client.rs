@@ -8,16 +8,16 @@ use super::shared_types::{
 };
 use std::collections::BTreeMap;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum DenseSearchClientError {
     #[error("invalid request: {0}")]
-    InvalidRequest(&'static str),
+    InvalidRequest(String),
     #[error("transport failure: {0}")]
     Transport(String),
     #[error("unexpected HTTP status: {0}")]
     UnexpectedStatus(u16),
     #[error("invalid response: {0}")]
-    InvalidResponse(&'static str),
+    InvalidResponse(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -49,7 +49,11 @@ impl QdrantDenseSearchClient {
         validate_config(&qdrant_base_url, &retry_policy)?;
 
         let http_client = reqwest::Client::new();
-        Ok(Self { http_client, qdrant_base_url, retry_policy })
+        Ok(Self {
+            http_client,
+            qdrant_base_url,
+            retry_policy,
+        })
     }
 
     pub async fn search(
@@ -122,24 +126,28 @@ fn validate_config(
 ) -> Result<(), DenseSearchClientError> {
     let s = base_url.scheme();
     if s != "http" && s != "https" {
-        return Err(DenseSearchClientError::InvalidRequest("qdrant_base_url must use http or https"));
+        return Err(DenseSearchClientError::InvalidRequest(
+            "qdrant_base_url must use http or https".to_string(),
+        ));
     }
     if base_url.host().is_none() {
-        return Err(DenseSearchClientError::InvalidRequest("qdrant_base_url must contain a host"));
+        return Err(DenseSearchClientError::InvalidRequest(
+            "qdrant_base_url must contain a host".to_string(),
+        ));
     }
     if base_url.query().is_some() {
         return Err(DenseSearchClientError::InvalidRequest(
-            "qdrant_base_url must not contain query parameters",
+            "qdrant_base_url must not contain query parameters".to_string(),
         ));
     }
     if base_url.fragment().is_some() {
         return Err(DenseSearchClientError::InvalidRequest(
-            "qdrant_base_url must not contain a fragment",
+            "qdrant_base_url must not contain a fragment".to_string(),
         ));
     }
     if policy.max_attempts == 0 {
         return Err(DenseSearchClientError::InvalidRequest(
-            "retry_policy.max_attempts must be > 0",
+            "retry_policy.max_attempts must be > 0".to_string(),
         ));
     }
     Ok(())
@@ -147,14 +155,18 @@ fn validate_config(
 
 fn validate_request(req: &DenseSearchRequest) -> Result<(), DenseSearchClientError> {
     if req.embedding.values.is_empty() {
-        return Err(DenseSearchClientError::InvalidRequest("embedding must not be empty"));
+        return Err(DenseSearchClientError::InvalidRequest(
+            "embedding must not be empty".to_string(),
+        ));
     }
     if req.limit == 0 {
-        return Err(DenseSearchClientError::InvalidRequest("limit must be > 0"));
+        return Err(DenseSearchClientError::InvalidRequest(
+            "limit must be > 0".to_string(),
+        ));
     }
     if !req.score_threshold.is_finite() || req.score_threshold < 0.0 {
         return Err(DenseSearchClientError::InvalidRequest(
-            "score_threshold must be finite and non-negative",
+            "score_threshold must be finite and non-negative".to_string(),
         ));
     }
     Ok(())
@@ -177,29 +189,33 @@ fn encode_match_any(m: &QdrantMatchAnyFilter) -> serde_json::Value {
 }
 
 fn parse_response(raw: &[u8]) -> Result<DenseSearchResponse, DenseSearchClientError> {
-    let v: serde_json::Value = serde_json::from_slice(raw)
-        .map_err(|_| DenseSearchClientError::InvalidResponse("failed to parse response JSON"))?;
+    let v: serde_json::Value = serde_json::from_slice(raw).map_err(|_| {
+        DenseSearchClientError::InvalidResponse("failed to parse response JSON".to_string())
+    })?;
 
     let points = v
         .get("result")
         .and_then(|r| r.get("points"))
         .and_then(|p| p.as_array())
-        .ok_or(DenseSearchClientError::InvalidResponse("missing result.points"))?;
+        .ok_or(DenseSearchClientError::InvalidResponse(
+            "missing result.points".to_string(),
+        ))?;
 
     let mut hits = Vec::with_capacity(points.len());
     for point in points {
-        let score = point
-            .get("score")
-            .and_then(|s| s.as_f64())
-            .ok_or(DenseSearchClientError::InvalidResponse("missing score in hit"))? as f32;
+        let score = point.get("score").and_then(|s| s.as_f64()).ok_or(
+            DenseSearchClientError::InvalidResponse("missing score in hit".to_string()),
+        )? as f32;
 
-        let payload_obj = point
-            .get("payload")
-            .and_then(|p| p.as_object())
-            .ok_or(DenseSearchClientError::InvalidResponse("missing payload in hit"))?;
+        let payload_obj = point.get("payload").and_then(|p| p.as_object()).ok_or(
+            DenseSearchClientError::InvalidResponse("missing payload in hit".to_string()),
+        )?;
 
         let fields = parse_payload(payload_obj)?;
-        hits.push(RawQdrantHit { score, payload: RawQdrantPayload { fields } });
+        hits.push(RawQdrantHit {
+            score,
+            payload: RawQdrantPayload { fields },
+        });
     }
 
     Ok(DenseSearchResponse { hits })
@@ -221,10 +237,11 @@ pub fn json_to_payload_value(
 ) -> Result<QdrantPayloadValue, DenseSearchClientError> {
     match v {
         serde_json::Value::String(s) => Ok(QdrantPayloadValue::String(s.clone())),
-        serde_json::Value::Number(n) => n
-            .as_f64()
-            .map(QdrantPayloadValue::Number)
-            .ok_or(DenseSearchClientError::InvalidResponse("unsupported numeric payload value")),
+        serde_json::Value::Number(n) => n.as_f64().map(QdrantPayloadValue::Number).ok_or(
+            DenseSearchClientError::InvalidResponse(
+                "unsupported numeric payload value".to_string(),
+            ),
+        ),
         serde_json::Value::Bool(b) => Ok(QdrantPayloadValue::Bool(*b)),
         serde_json::Value::Null => Ok(QdrantPayloadValue::Null),
         serde_json::Value::Array(arr) => {
@@ -234,7 +251,7 @@ pub fn json_to_payload_value(
                     serde_json::Value::String(s) => strings.push(s.clone()),
                     _ => {
                         return Err(DenseSearchClientError::InvalidResponse(
-                            "unsupported payload array element type",
+                            "unsupported payload array element type".to_string(),
                         ))
                     }
                 }
@@ -242,7 +259,7 @@ pub fn json_to_payload_value(
             Ok(QdrantPayloadValue::StringList(strings))
         }
         serde_json::Value::Object(_) => Err(DenseSearchClientError::InvalidResponse(
-            "unsupported nested object in payload",
+            "unsupported nested object in payload".to_string(),
         )),
     }
 }
@@ -269,7 +286,10 @@ mod tests {
     use crate::utils::retry::RetryBackoffKind;
 
     fn policy() -> RetryPolicyConfig {
-        RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
+        RetryPolicyConfig {
+            max_attempts: 1,
+            backoff: RetryBackoffKind::Exponential,
+        }
     }
 
     fn client(base_url: &str) -> QdrantDenseSearchClient {
@@ -279,7 +299,9 @@ mod tests {
     fn simple_request(_base: &str) -> DenseSearchRequest {
         DenseSearchRequest {
             collection_name: QdrantCollectionName("test_col".into()),
-            embedding: Embedding { values: vec![0.1, 0.2, 0.3] },
+            embedding: Embedding {
+                values: vec![0.1, 0.2, 0.3],
+            },
             vector_name: None,
             filter: None,
             limit: 5,
@@ -289,8 +311,13 @@ mod tests {
 
     #[test]
     fn constructor_rejects_zero_max_attempts() {
-        let p = RetryPolicyConfig { max_attempts: 0, backoff: RetryBackoffKind::Exponential };
-        assert!(QdrantDenseSearchClient::new(url::Url::parse("http://localhost/").unwrap(), p).is_err());
+        let p = RetryPolicyConfig {
+            max_attempts: 0,
+            backoff: RetryBackoffKind::Exponential,
+        };
+        assert!(
+            QdrantDenseSearchClient::new(url::Url::parse("http://localhost/").unwrap(), p).is_err()
+        );
     }
 
     #[tokio::test]
@@ -392,7 +419,10 @@ mod tests {
         let bodies = server.take_bodies().await;
         let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
         assert_eq!(body["filter"]["must"][0]["key"], "card_id");
-        assert_eq!(body["filter"]["must"][0]["match"]["any"], serde_json::json!(["id1", "id2"]));
+        assert_eq!(
+            body["filter"]["must"][0]["match"]["any"],
+            serde_json::json!(["id1", "id2"])
+        );
     }
 
     #[tokio::test]
@@ -409,7 +439,9 @@ mod tests {
         let server = MockHttpServer::new(vec![MockResponse::status(500, b"err".to_vec())]).await;
         let c = client(&server.base_url());
         assert!(matches!(
-            c.search(&simple_request(&server.base_url())).await.unwrap_err(),
+            c.search(&simple_request(&server.base_url()))
+                .await
+                .unwrap_err(),
             DenseSearchClientError::UnexpectedStatus(500)
         ));
     }
@@ -420,7 +452,9 @@ mod tests {
         let server = MockHttpServer::new(vec![MockResponse::ok(resp)]).await;
         let c = client(&server.base_url());
         assert!(matches!(
-            c.search(&simple_request(&server.base_url())).await.unwrap_err(),
+            c.search(&simple_request(&server.base_url()))
+                .await
+                .unwrap_err(),
             DenseSearchClientError::InvalidResponse(_)
         ));
     }
@@ -434,7 +468,9 @@ mod tests {
         let server = MockHttpServer::new(vec![MockResponse::ok(resp)]).await;
         let c = client(&server.base_url());
         assert!(matches!(
-            c.search(&simple_request(&server.base_url())).await.unwrap_err(),
+            c.search(&simple_request(&server.base_url()))
+                .await
+                .unwrap_err(),
             DenseSearchClientError::InvalidResponse(_)
         ));
     }
@@ -448,7 +484,9 @@ mod tests {
         let server = MockHttpServer::new(vec![MockResponse::ok(resp)]).await;
         let c = client(&server.base_url());
         assert!(matches!(
-            c.search(&simple_request(&server.base_url())).await.unwrap_err(),
+            c.search(&simple_request(&server.base_url()))
+                .await
+                .unwrap_err(),
             DenseSearchClientError::InvalidResponse(_)
         ));
     }
@@ -462,7 +500,9 @@ mod tests {
         let server = MockHttpServer::new(vec![MockResponse::ok(resp)]).await;
         let c = client(&server.base_url());
         assert!(matches!(
-            c.search(&simple_request(&server.base_url())).await.unwrap_err(),
+            c.search(&simple_request(&server.base_url()))
+                .await
+                .unwrap_err(),
             DenseSearchClientError::InvalidResponse(_)
         ));
     }

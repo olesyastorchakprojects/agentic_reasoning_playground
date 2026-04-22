@@ -12,9 +12,7 @@ The current version exists to define:
 
 This document does not define:
 - detailed observability spans, metrics, or dashboards;
-- orchestration flows;
 - domain logic;
-- request/response workflows above the current runtime API-client layer;
 - detailed behavior of individual API-client modules already specified elsewhere;
 - pre-ingest incident-card chunk generation from PostgreSQL.
 
@@ -33,6 +31,7 @@ This document is the crate-level source of truth for:
 Detailed child-module behavior and child-module generation remain defined in their dedicated specifications under:
 - `Specification/runtime/api_clients/`
 - `Specification/runtime/request_pipeline/`
+- `Specification/runtime/orchestrator/`
 - `Specification/runtime/utils/`
 
 Related external preprocessing specification:
@@ -56,6 +55,7 @@ The current crate-level structure consists of:
 - `observability`
 - `api_clients`
 - `request_pipeline`
+- `orchestrator`
 - `utils`
 
 The current required crate-level module tree is:
@@ -77,6 +77,17 @@ The current required crate-level module tree is:
     - `incident_evidence_retrieval`
     - `theory_evidence_retrieval`
     - `prompt_context_assembly`
+    - `llm_structured_generation`
+    - `response_validation_and_normalization`
+  - `orchestrator`
+    - `transition_policy`
+    - `step_executor`
+    - `run_state`
+      - `model`
+      - `view`
+      - `apply`
+    - `run_repository`
+    - `errors`
   - `utils`
     - `retry`
     - `tokenizer`
@@ -89,6 +100,9 @@ Structure rules:
 - `observability` owns observability initialization and lifetime management;
 - `api_clients` is the parent boundary for runtime external-service clients;
 - `request_pipeline` is the parent boundary for request-processing leaf modules above the current API-client layer;
+- `orchestrator` is the parent boundary for durable run state, run-state views,
+  run-state mutation, transition policy, step execution, repository access, and
+  orchestration-owned errors;
 - `utils` owns reusable crate-wide helpers that are intentionally shared across multiple runtime areas;
 - child API-client subtrees keep their own dedicated module contracts;
 - the generated crate structure must remain extension-friendly for future runtime layers.
@@ -101,8 +115,17 @@ Current request-pipeline file-layout rule:
 - `request_pipeline::incident_evidence_retrieval` is generated as `src/request_pipeline/incident_evidence_retrieval.rs`;
 - `request_pipeline::theory_evidence_retrieval` is generated as `src/request_pipeline/theory_evidence_retrieval.rs`;
 - `request_pipeline::prompt_context_assembly` is generated as `src/request_pipeline/prompt_context_assembly.rs`;
+- `request_pipeline::llm_structured_generation` is generated as `src/request_pipeline/llm_structured_generation.rs`;
+- `request_pipeline::response_validation_and_normalization` is generated as `src/request_pipeline/response_validation_and_normalization.rs`;
 - the current version must not split `query_structuring` into a nested `mod.rs` subtree;
 - future refactoring into a directory module is allowed only after the crate-level runtime specification is updated.
+
+Current orchestrator file-layout rule:
+- `orchestrator::run_state::model` is generated as `src/orchestrator/run_state/model.rs`;
+- `orchestrator::run_state::view` is generated as `src/orchestrator/run_state/view.rs`;
+- `orchestrator::run_state::apply` is generated as `src/orchestrator/run_state/apply.rs`;
+- other orchestrator modules and parent module files are owned by
+  `Specification/runtime/generated_artifacts.md`.
 
 ## 3) Module Boundary Rules
 

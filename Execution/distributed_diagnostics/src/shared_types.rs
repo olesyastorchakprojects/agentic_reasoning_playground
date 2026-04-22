@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UserRequest {
     pub query: String,
 }
@@ -61,13 +61,13 @@ pub struct IncidentCard {
     pub source_refs: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NormalizedUserRequest {
     pub query: String,
     pub input_token_count: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StructuredUserQuery {
     pub intent: String,
     pub scenario: String,
@@ -84,33 +84,33 @@ pub struct StructuredUserQuery {
     pub confidence: StructuredUserQueryConfidence,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct QueryStructuringOutput {
     pub structured_query: StructuredUserQuery,
     pub token_usage: ModelTokenUsage,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModelTokenUsage {
     pub prompt_tokens: Option<usize>,
     pub completion_tokens: Option<usize>,
     pub total_tokens: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StructuredUserQueryTerm {
     pub term: String,
     pub evidence_span: String,
     pub support_level: StructuredUserQuerySupportLevel,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RejectedNearbyTerm {
     pub term: String,
     pub reason: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StructuredUserQuerySupportLevel {
     Explicit,
@@ -118,7 +118,7 @@ pub enum StructuredUserQuerySupportLevel {
     WeakInference,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StructuredUserQueryConfidence {
     Low,
@@ -126,25 +126,25 @@ pub enum StructuredUserQueryConfidence {
     High,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CandidateCard {
     pub case_id: String,
     pub score: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CandidateCardRetrievalOutput {
     pub primary: Option<CandidateCard>,
     pub alternatives: Vec<CandidateCard>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CardHydrationOutput {
     pub primary: Option<IncidentCard>,
     pub alternatives: Vec<IncidentCard>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IncidentEvidenceChunk {
     pub chunk_id: String,
     pub case_id: String,
@@ -153,20 +153,20 @@ pub struct IncidentEvidenceChunk {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct IncidentEvidenceRetrievalOutput {
     pub primary_chunks: Vec<IncidentEvidenceChunk>,
     pub alternative_chunks: Vec<IncidentEvidenceChunk>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TheoryEvidenceChunk {
     pub chunk_id: String,
     pub score: f32,
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TheoryEvidenceRetrievalOutput {
     pub chunks: Vec<TheoryEvidenceChunk>,
 }
@@ -181,6 +181,8 @@ pub struct TheoryEvidenceRetrievalOutput {
     strum_macros::EnumString,
     strum_macros::Display,
     strum_macros::AsRefStr,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 pub enum IncidentChunkTag {
     #[strum(serialize = "chunk_role:symptom")]
@@ -211,7 +213,7 @@ pub enum IncidentChunkTag {
     Lesson,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PromptEvidenceRole {
     EvidenceForMatch,
     FirstCheckHint,
@@ -220,7 +222,7 @@ pub enum PromptEvidenceRole {
     MechanismExplanation,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PromptIncidentEvidenceChunk {
     pub role: PromptEvidenceRole,
     pub chunk_id: String,
@@ -230,7 +232,7 @@ pub struct PromptIncidentEvidenceChunk {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PromptTheoryEvidenceChunk {
     pub role: PromptEvidenceRole,
     pub chunk_id: String,
@@ -238,25 +240,25 @@ pub struct PromptTheoryEvidenceChunk {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PromptContextAssemblyOutput {
     pub prompt: String,
     pub incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>,
     pub theory_chunks: Vec<PromptTheoryEvidenceChunk>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LlmStructuredGenerationOutput {
     pub response_json: serde_json::Value,
     pub token_usage: ModelTokenUsage,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ResponseValidationAndNormalizationOutput {
     pub response: DiagnosticResponse,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DiagnosticResponse {
     pub problem_understanding: String,
     pub similar_practical_context: String,
@@ -266,7 +268,7 @@ pub struct DiagnosticResponse {
     pub competing_interpretation: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DiagnosticResultInterpretation {
     pub supports_primary_if: String,
     pub supports_competing_if: String,
