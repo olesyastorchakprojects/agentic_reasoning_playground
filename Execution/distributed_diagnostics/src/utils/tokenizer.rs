@@ -4,7 +4,7 @@ use std::time::Duration;
 use backon::{ExponentialBuilder, Retryable};
 use tokenizers::Tokenizer;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum TokenizerError {
     #[error("failed to load tokenizer from {path}: {reason}")]
     Load { path: String, reason: String },
@@ -42,8 +42,7 @@ impl HfTokenizer {
     /// 3 attempts (exponential backoff with jitter), validates, and caches.
     pub async fn load(source: &str) -> Result<Self, TokenizerError> {
         let url = hf_tokenizer_url(source);
-        let inner =
-            load_or_download_from_url(source, &tokenizer_cache_root(), &url).await?;
+        let inner = load_or_download_from_url(source, &tokenizer_cache_root(), &url).await?;
         Ok(Self { inner })
     }
 
@@ -100,10 +99,14 @@ fn download_backoff() -> ExponentialBuilder {
 }
 
 async fn fetch_bytes(url: &str, client: &reqwest::Client) -> Result<Vec<u8>, TokenizerError> {
-    let response = client.get(url).send().await.map_err(|e| TokenizerError::Download {
-        url: url.to_string(),
-        reason: e.to_string(),
-    })?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| TokenizerError::Download {
+            url: url.to_string(),
+            reason: e.to_string(),
+        })?;
 
     if !response.status().is_success() {
         return Err(TokenizerError::Download {
@@ -112,10 +115,14 @@ async fn fetch_bytes(url: &str, client: &reqwest::Client) -> Result<Vec<u8>, Tok
         });
     }
 
-    response.bytes().await.map(|b| b.to_vec()).map_err(|e| TokenizerError::Download {
-        url: url.to_string(),
-        reason: e.to_string(),
-    })
+    response
+        .bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| TokenizerError::Download {
+            url: url.to_string(),
+            reason: e.to_string(),
+        })
 }
 
 async fn load_or_download_from_url(
@@ -195,7 +202,9 @@ fn strip_tokenizer_markers(token: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{MockHttpServer, MockResponse, TempArtifactDir, populate_tokenizer_cache};
+    use crate::test_utils::{
+        populate_tokenizer_cache, MockHttpServer, MockResponse, TempArtifactDir,
+    };
 
     // ── strip_tokenizer_markers ──────────────────────────────────────────────
 
@@ -296,7 +305,10 @@ mod tests {
 
         let result = load_or_download_from_url(source, dir.path(), &url).await;
         assert!(result.is_ok(), "expected Ok, got {result:?}");
-        assert!(cache_path(dir.path(), source).exists(), "cache file should be written");
+        assert!(
+            cache_path(dir.path(), source).exists(),
+            "cache file should be written"
+        );
     }
 
     #[tokio::test]
@@ -304,9 +316,11 @@ mod tests {
         let dir = TempArtifactDir::new();
         let source = "test/fail-model";
 
-        let server =
-            MockHttpServer::new(vec![MockResponse::status(500, b"Internal Server Error".to_vec())])
-                .await;
+        let server = MockHttpServer::new(vec![MockResponse::status(
+            500,
+            b"Internal Server Error".to_vec(),
+        )])
+        .await;
         let url = format!("{}/tokenizer.json", server.base_url());
 
         let result = load_or_download_from_url(source, dir.path(), &url).await;

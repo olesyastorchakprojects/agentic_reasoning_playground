@@ -25,6 +25,7 @@ backon       = "1"
 url          = "2"
 sqlx         = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chrono", "json"] }
 chrono       = { version = "0.4", features = ["serde"] }
+uuid         = { version = "1", features = ["v4", "serde"] }
 jsonschema   = "0.26"
 strum        = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"

@@ -2,7 +2,7 @@ use crate::config::InputNormalizationSettings;
 use crate::shared_types::{NormalizedUserRequest, UserRequest};
 use crate::utils::tokenizer::{HfTokenizer, TokenizerError};
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum InputNormalizationError {
     #[error("query is empty after normalization")]
     EmptyQuery,
@@ -26,14 +26,21 @@ impl InputNormalization {
         settings: InputNormalizationSettings,
     ) -> Result<Self, InputNormalizationError> {
         let tokenizer = HfTokenizer::load(&settings.tokenizer_source).await?;
-        Ok(Self { tokenizer, max_input_tokens: settings.max_input_tokens })
+        Ok(Self {
+            tokenizer,
+            max_input_tokens: settings.max_input_tokens,
+        })
     }
 
     pub fn normalize(
         &self,
         request: UserRequest,
     ) -> Result<NormalizedUserRequest, InputNormalizationError> {
-        let query: String = request.query.split_whitespace().collect::<Vec<_>>().join(" ");
+        let query: String = request
+            .query
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
 
         if query.is_empty() {
             return Err(InputNormalizationError::EmptyQuery);
@@ -53,7 +60,10 @@ impl InputNormalization {
             });
         }
 
-        Ok(NormalizedUserRequest { query, input_token_count })
+        Ok(NormalizedUserRequest {
+            query,
+            input_token_count,
+        })
     }
 }
 
@@ -81,11 +91,16 @@ mod tests {
                 .unwrap();
             rt.block_on(HfTokenizer::load(TEST_SOURCE)).unwrap()
         };
-        InputNormalization { tokenizer, max_input_tokens }
+        InputNormalization {
+            tokenizer,
+            max_input_tokens,
+        }
     }
 
     fn req(query: &str) -> UserRequest {
-        UserRequest { query: query.to_string() }
+        UserRequest {
+            query: query.to_string(),
+        }
     }
 
     fn populate_zero_token_cache(source: &str) {
@@ -100,7 +115,9 @@ mod tests {
             .expect("build wordlevel tokenizer");
         let mut tokenizer = Tokenizer::new(model);
         tokenizer.with_pre_tokenizer(Some(Whitespace));
-        tokenizer.save(&cache, false).expect("save tokenizer to cache");
+        tokenizer
+            .save(&cache, false)
+            .expect("save tokenizer to cache");
     }
 
     // ── constructor ──────────────────────────────────────────────────────────
@@ -162,7 +179,10 @@ mod tests {
                 .unwrap();
             rt.block_on(HfTokenizer::load(ZERO_TOKEN_SOURCE)).unwrap()
         };
-        let norm = InputNormalization { tokenizer, max_input_tokens: 100 };
+        let norm = InputNormalization {
+            tokenizer,
+            max_input_tokens: 100,
+        };
         let result = norm.normalize(req("unknownterm"));
         assert!(
             matches!(result, Err(InputNormalizationError::EmptyQuery)),
@@ -186,7 +206,13 @@ mod tests {
         let norm = make_normalization(1);
         let result = norm.normalize(req("service down"));
         assert!(
-            matches!(result, Err(InputNormalizationError::InputTooLong { token_count: 2, max_input_tokens: 1 })),
+            matches!(
+                result,
+                Err(InputNormalizationError::InputTooLong {
+                    token_count: 2,
+                    max_input_tokens: 1
+                })
+            ),
             "expected InputTooLong, got {result:?}"
         );
     }

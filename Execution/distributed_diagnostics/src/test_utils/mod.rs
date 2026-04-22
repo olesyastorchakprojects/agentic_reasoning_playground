@@ -22,10 +22,16 @@ pub struct MockResponse {
 
 impl MockResponse {
     pub fn ok(body: impl Into<Vec<u8>>) -> Self {
-        Self { status: 200, body: body.into() }
+        Self {
+            status: 200,
+            body: body.into(),
+        }
     }
     pub fn status(status: u16, body: impl Into<Vec<u8>>) -> Self {
-        Self { status, body: body.into() }
+        Self {
+            status,
+            body: body.into(),
+        }
     }
 }
 
@@ -43,7 +49,9 @@ impl MockHttpServer {
     /// Spawn a mock server that will respond with `responses` in order.
     /// Panics if the server cannot bind.
     pub async fn new(responses: Vec<MockResponse>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock server");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock server");
         let addr = listener.local_addr().expect("local_addr");
         let recorded_bodies = Arc::new(Mutex::new(Vec::new()));
         let recorded_clone = Arc::clone(&recorded_bodies);
@@ -58,12 +66,20 @@ impl MockHttpServer {
             }
         });
 
-        Self { addr, recorded_bodies, _handle: handle }
+        Self {
+            addr,
+            recorded_bodies,
+            _handle: handle,
+        }
     }
 
-    pub fn addr(&self) -> SocketAddr { self.addr }
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
 
-    pub fn base_url(&self) -> String { format!("http://{}", self.addr) }
+    pub fn base_url(&self) -> String {
+        format!("http://{}", self.addr)
+    }
 
     /// Return all request bodies received so far.
     pub async fn take_bodies(&self) -> Vec<Vec<u8>> {
@@ -154,7 +170,9 @@ pub fn populate_tokenizer_cache(source: &str) {
         .expect("build wordlevel tokenizer");
     let mut tokenizer = Tokenizer::new(model);
     tokenizer.with_pre_tokenizer(Some(Whitespace));
-    tokenizer.save(&cache, false).expect("save tokenizer to cache");
+    tokenizer
+        .save(&cache, false)
+        .expect("save tokenizer to cache");
     populated.insert(source.to_string());
 }
 
@@ -165,10 +183,14 @@ pub struct TempArtifactDir {
 
 impl TempArtifactDir {
     pub fn new() -> Self {
-        Self { inner: TempDir::new().expect("tempdir") }
+        Self {
+            inner: TempDir::new().expect("tempdir"),
+        }
     }
 
-    pub fn path(&self) -> &std::path::Path { self.inner.path() }
+    pub fn path(&self) -> &std::path::Path {
+        self.inner.path()
+    }
 
     /// Write `content` to `filename` inside the temp dir; return full path.
     pub fn write_json(&self, filename: &str, content: &str) -> PathBuf {
@@ -202,7 +224,9 @@ impl TempArtifactDir {
 
         let mut tokenizer = Tokenizer::new(model);
         tokenizer.with_pre_tokenizer(Some(Whitespace));
-        tokenizer.save(&path, false).expect("save tokenizer artifact");
+        tokenizer
+            .save(&path, false)
+            .expect("save tokenizer artifact");
 
         path
     }

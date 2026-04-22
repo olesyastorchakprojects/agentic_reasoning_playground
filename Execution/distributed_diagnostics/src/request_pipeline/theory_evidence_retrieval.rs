@@ -5,14 +5,16 @@ use crate::api_clients::qdrant::theory_chunks_collection::{
     TheoryChunkSearchRequest, TheoryChunksCollection, TheoryChunksCollectionError,
 };
 use crate::config::CollectionRetrievalSettings;
-use crate::shared_types::{NormalizedUserRequest, TheoryEvidenceChunk, TheoryEvidenceRetrievalOutput};
+use crate::shared_types::{
+    NormalizedUserRequest, TheoryEvidenceChunk, TheoryEvidenceRetrievalOutput,
+};
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum TheoryEvidenceRetrievalError {
     #[error("invalid settings: {0}")]
-    InvalidSettings(&'static str),
+    InvalidSettings(String),
     #[error("theory chunks collection error: {0}")]
     Collection(TheoryChunksCollectionError),
 }
@@ -39,25 +41,28 @@ impl TheoryEvidenceRetrieval {
     ) -> Result<Self, TheoryEvidenceRetrievalError> {
         if settings.top_k == 0 {
             return Err(TheoryEvidenceRetrievalError::InvalidSettings(
-                "top_k must be greater than 0",
+                "top_k must be greater than 0".to_string(),
             ));
         }
         if settings.score_threshold < 0.0 {
             return Err(TheoryEvidenceRetrievalError::InvalidSettings(
-                "score_threshold must be non-negative",
+                "score_threshold must be non-negative".to_string(),
             ));
         }
         if settings.score_threshold.is_nan() {
             return Err(TheoryEvidenceRetrievalError::InvalidSettings(
-                "score_threshold must not be NaN",
+                "score_threshold must not be NaN".to_string(),
             ));
         }
         if settings.score_threshold.is_infinite() {
             return Err(TheoryEvidenceRetrievalError::InvalidSettings(
-                "score_threshold must not be infinite",
+                "score_threshold must not be infinite".to_string(),
             ));
         }
-        Ok(Self { collection, settings })
+        Ok(Self {
+            collection,
+            settings,
+        })
     }
 
     pub async fn retrieve(
@@ -127,7 +132,10 @@ mod tests {
     }
 
     fn request(query: &str) -> NormalizedUserRequest {
-        NormalizedUserRequest { query: query.to_string(), input_token_count: 10 }
+        NormalizedUserRequest {
+            query: query.to_string(),
+            input_token_count: 10,
+        }
     }
 
     fn hit(chunk_id: &str, score: f32, text: &str) -> TheoryChunkSearchHit {
@@ -171,7 +179,9 @@ mod tests {
         }
     }
 
-    fn ok(hits: Vec<TheoryChunkSearchHit>) -> Result<TheoryChunkSearchResult, TheoryChunksCollectionError> {
+    fn ok(
+        hits: Vec<TheoryChunkSearchHit>,
+    ) -> Result<TheoryChunkSearchResult, TheoryChunksCollectionError> {
         Ok(TheoryChunkSearchResult { hits })
     }
 
@@ -181,7 +191,10 @@ mod tests {
     fn new_rejects_top_k_zero() {
         let mock = MockCollection::new(vec![]);
         let err = TheoryEvidenceRetrieval::new(mock, settings(0, 0.5)).unwrap_err();
-        assert!(matches!(err, TheoryEvidenceRetrievalError::InvalidSettings(_)));
+        assert!(matches!(
+            err,
+            TheoryEvidenceRetrievalError::InvalidSettings(_)
+        ));
     }
 
     #[test]
@@ -196,28 +209,40 @@ mod tests {
     fn new_rejects_negative_score_threshold() {
         let mock = MockCollection::new(vec![]);
         let err = TheoryEvidenceRetrieval::new(mock, settings(5, -0.1)).unwrap_err();
-        assert!(matches!(err, TheoryEvidenceRetrievalError::InvalidSettings(_)));
+        assert!(matches!(
+            err,
+            TheoryEvidenceRetrievalError::InvalidSettings(_)
+        ));
     }
 
     #[test]
     fn new_rejects_nan_score_threshold() {
         let mock = MockCollection::new(vec![]);
         let err = TheoryEvidenceRetrieval::new(mock, settings(5, f32::NAN)).unwrap_err();
-        assert!(matches!(err, TheoryEvidenceRetrievalError::InvalidSettings(_)));
+        assert!(matches!(
+            err,
+            TheoryEvidenceRetrievalError::InvalidSettings(_)
+        ));
     }
 
     #[test]
     fn new_rejects_positive_infinity_score_threshold() {
         let mock = MockCollection::new(vec![]);
         let err = TheoryEvidenceRetrieval::new(mock, settings(5, f32::INFINITY)).unwrap_err();
-        assert!(matches!(err, TheoryEvidenceRetrievalError::InvalidSettings(_)));
+        assert!(matches!(
+            err,
+            TheoryEvidenceRetrievalError::InvalidSettings(_)
+        ));
     }
 
     #[test]
     fn new_rejects_negative_infinity_score_threshold() {
         let mock = MockCollection::new(vec![]);
         let err = TheoryEvidenceRetrieval::new(mock, settings(5, f32::NEG_INFINITY)).unwrap_err();
-        assert!(matches!(err, TheoryEvidenceRetrievalError::InvalidSettings(_)));
+        assert!(matches!(
+            err,
+            TheoryEvidenceRetrievalError::InvalidSettings(_)
+        ));
     }
 
     // ─── retrieve: single collection call ────────────────────────────────────
@@ -236,8 +261,13 @@ mod tests {
     async fn request_construction_uses_unchanged_query_text() {
         let mock = MockCollection::new(vec![ok(vec![])]);
         let sut = TheoryEvidenceRetrieval::new(mock.clone(), settings(5, 0.5)).unwrap();
-        sut.retrieve(&request("raft leader election")).await.unwrap();
-        assert_eq!(mock.captured_requests()[0].user_query.0, "raft leader election");
+        sut.retrieve(&request("raft leader election"))
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.captured_requests()[0].user_query.0,
+            "raft leader election"
+        );
     }
 
     #[tokio::test]
@@ -319,7 +349,9 @@ mod tests {
 
     #[tokio::test]
     async fn all_returned_hits_passed_through_without_truncation() {
-        let hits: Vec<_> = (0..5).map(|i| hit(&format!("c{i}"), 0.9 - i as f32 * 0.1, "t")).collect();
+        let hits: Vec<_> = (0..5)
+            .map(|i| hit(&format!("c{i}"), 0.9 - i as f32 * 0.1, "t"))
+            .collect();
         let mock = MockCollection::new(vec![ok(hits)]);
         let sut = TheoryEvidenceRetrieval::new(mock, settings(5, 0.0)).unwrap();
         let out = sut.retrieve(&request("q")).await.unwrap();
@@ -343,9 +375,9 @@ mod tests {
 
     #[tokio::test]
     async fn collection_error_wrapped_as_collection_variant() {
-        let mock = MockCollection::new(vec![Err(
-            TheoryChunksCollectionError::InvalidRequest("boom"),
-        )]);
+        let mock = MockCollection::new(vec![Err(TheoryChunksCollectionError::InvalidRequest(
+            "boom".to_string(),
+        ))]);
         let sut = TheoryEvidenceRetrieval::new(mock, settings(5, 0.5)).unwrap();
         let err = sut.retrieve(&request("q")).await.unwrap_err();
         assert!(matches!(err, TheoryEvidenceRetrievalError::Collection(_)));

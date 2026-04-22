@@ -18,12 +18,17 @@ pub async fn load_sparse_artifacts(
     collection_name: &str,
 ) -> Result<LoadedSparseArtifacts, &'static str> {
     let (vocab_path, stats_path) = match strategy {
-        SparseStrategyConfig::BagOfWords { sparse_vocabulary_path } => {
-            (sparse_vocabulary_path.as_str(), None)
-        }
-        SparseStrategyConfig::Bm25Like { sparse_vocabulary_path, bm25_term_stats_path, .. } => {
-            (sparse_vocabulary_path.as_str(), Some(bm25_term_stats_path.as_str()))
-        }
+        SparseStrategyConfig::BagOfWords {
+            sparse_vocabulary_path,
+        } => (sparse_vocabulary_path.as_str(), None),
+        SparseStrategyConfig::Bm25Like {
+            sparse_vocabulary_path,
+            bm25_term_stats_path,
+            ..
+        } => (
+            sparse_vocabulary_path.as_str(),
+            Some(bm25_term_stats_path.as_str()),
+        ),
     };
 
     let vocabulary = SparseVocabularyArtifact::load_from_file(vocab_path)
@@ -46,7 +51,11 @@ pub async fn load_sparse_artifacts(
         None
     };
 
-    Ok(LoadedSparseArtifacts { vocabulary, bm25_term_stats, tokenizer })
+    Ok(LoadedSparseArtifacts {
+        vocabulary,
+        bm25_term_stats,
+        tokenizer,
+    })
 }
 
 pub fn build_sparse_vector(
@@ -65,7 +74,12 @@ pub fn build_sparse_vector(
                 .ok_or("no sparse terms after vocabulary lookup")?;
             Ok(SparseVector { indices, values })
         }
-        SparseStrategyConfig::Bm25Like { k1, b, idf_smoothing, .. } => {
+        SparseStrategyConfig::Bm25Like {
+            k1,
+            b,
+            idf_smoothing,
+            ..
+        } => {
             let stats = bm25_stats.ok_or("bm25 term stats must be loaded for Bm25Like")?;
             let (indices, values) = build_bm25_like_query(
                 &tokens,
@@ -176,7 +190,10 @@ fn build_bm25_like_query(
     let mut values: Vec<f32> = Vec::with_capacity(tf_map.len());
 
     for (token_id, tf) in &tf_map {
-        let df = document_frequency_by_token_id.get(token_id).copied().unwrap_or(0) as f64;
+        let df = document_frequency_by_token_id
+            .get(token_id)
+            .copied()
+            .unwrap_or(0) as f64;
         let idf = ((n - df + idf_s) / (df + idf_s) + 1.0).ln();
         let tf_norm = (*tf as f64 * (k1 + 1.0))
             / (*tf as f64 + k1 * (1.0 - b + b * doc_len / average_document_length));
@@ -198,7 +215,7 @@ fn build_bm25_like_query(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{TempArtifactDir, populate_tokenizer_cache};
+    use crate::test_utils::{populate_tokenizer_cache, TempArtifactDir};
 
     fn vocab_json(
         vocabulary_name: &str,
@@ -272,7 +289,12 @@ mod tests {
         let dir = make_artifacts_dir();
         let vocab_path = dir.write_json(
             "vocab.json",
-            &vocab_json("cards__sparse_vocabulary", "cards", TEST_SOURCE, "tokenizers"),
+            &vocab_json(
+                "cards__sparse_vocabulary",
+                "cards",
+                TEST_SOURCE,
+                "tokenizers",
+            ),
         );
 
         let loaded = load_sparse_artifacts(
@@ -284,7 +306,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(loaded.vocabulary.vocabulary_name, "cards__sparse_vocabulary");
+        assert_eq!(
+            loaded.vocabulary.vocabulary_name,
+            "cards__sparse_vocabulary"
+        );
         assert!(loaded.bm25_term_stats.is_none());
         assert_eq!(
             loaded.tokenizer.tokenize("service down"),
@@ -317,7 +342,12 @@ mod tests {
         let dir = make_artifacts_dir();
         let vocab_path = dir.write_json(
             "vocab.json",
-            &vocab_json("cards__sparse_vocabulary", "cards", TEST_SOURCE, "tokenizers"),
+            &vocab_json(
+                "cards__sparse_vocabulary",
+                "cards",
+                TEST_SOURCE,
+                "tokenizers",
+            ),
         );
         let stats_path = dir.write_json(
             "stats.json",
@@ -337,7 +367,10 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert_eq!(err, "bm25 term stats vocabulary_name does not match sparse vocabulary");
+        assert_eq!(
+            err,
+            "bm25 term stats vocabulary_name does not match sparse vocabulary"
+        );
     }
 
     // ── apply_sparse_normalization ───────────────────────────────────────────
@@ -356,7 +389,11 @@ mod tests {
 
     #[test]
     fn normalization_filters_unknown_placeholders() {
-        let tokens = vec!["[unk]".to_string(), "service".to_string(), "unk".to_string()];
+        let tokens = vec![
+            "[unk]".to_string(),
+            "service".to_string(),
+            "unk".to_string(),
+        ];
         let result = apply_sparse_normalization(tokens, false, 2);
         assert_eq!(result, vec!["service".to_string()]);
     }

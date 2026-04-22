@@ -9,17 +9,17 @@ use crate::shared_types::{
     LlmStructuredGenerationOutput, ModelTokenUsage, PromptContextAssemblyOutput,
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum LlmStructuredGenerationError {
     #[error("invalid config: {0}")]
-    InvalidConfig(&'static str),
+    InvalidConfig(String),
     #[error("invalid input: {0}")]
-    InvalidInput(&'static str),
+    InvalidInput(String),
     #[error(transparent)]
     Model(#[from] ModelClientError),
     #[error("invalid model output: {reason}")]
     InvalidModelOutput {
-        reason: &'static str,
+        reason: String,
         token_usage: ModelTokenUsage,
         finish_reason: Option<ModelFinishReason>,
     },
@@ -45,7 +45,7 @@ impl LlmStructuredGeneration {
     ) -> Result<Self, LlmStructuredGenerationError> {
         if settings.max_output_tokens == 0 {
             return Err(LlmStructuredGenerationError::InvalidConfig(
-                "max_output_tokens must be greater than zero",
+                "max_output_tokens must be greater than zero".to_string(),
             ));
         }
         Ok(Self {
@@ -60,7 +60,7 @@ impl LlmStructuredGeneration {
     ) -> Result<LlmStructuredGenerationOutput, LlmStructuredGenerationError> {
         if prompt_context.prompt.trim().is_empty() {
             return Err(LlmStructuredGenerationError::InvalidInput(
-                "prompt must be non-empty after trimming",
+                "prompt must be non-empty after trimming".to_string(),
             ));
         }
 
@@ -90,7 +90,7 @@ impl LlmStructuredGeneration {
             Some(ModelFinishReason::Stop) | None => {}
             Some(_) => {
                 return Err(LlmStructuredGenerationError::InvalidModelOutput {
-                    reason: "model stopped with a non-Stop finish reason",
+                    reason: "model stopped with a non-Stop finish reason".to_string(),
                     token_usage,
                     finish_reason,
                 });
@@ -100,7 +100,7 @@ impl LlmStructuredGeneration {
         // Step 3: parse content as JSON
         let parsed: serde_json::Value = serde_json::from_str(&content).map_err(|_| {
             LlmStructuredGenerationError::InvalidModelOutput {
-                reason: "model response is not valid JSON",
+                reason: "model response is not valid JSON".to_string(),
                 token_usage: token_usage.clone(),
                 finish_reason: finish_reason.clone(),
             }
@@ -108,7 +108,7 @@ impl LlmStructuredGeneration {
 
         if !parsed.is_object() {
             return Err(LlmStructuredGenerationError::InvalidModelOutput {
-                reason: "model response is not a JSON object",
+                reason: "model response is not a JSON object".to_string(),
                 token_usage,
                 finish_reason,
             });
@@ -336,7 +336,7 @@ mod tests {
             matches!(
                 err,
                 LlmStructuredGenerationError::InvalidModelOutput {
-                    reason,
+                    ref reason,
                     ..
                 } if reason.contains("non-Stop")
             ),

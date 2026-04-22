@@ -24,11 +24,10 @@ pub use practice_chunks_collection::{
     QdrantPracticeChunksCollectionDense, QdrantPracticeChunksCollectionHybrid,
 };
 pub use shared_types::{
-    Bm25TermStatsArtifact, Embedding, EmbeddingConfig, NormalizedUserQuery,
-    QdrantCollectionName, QdrantDenseCollectionConfig, QdrantFilter, QdrantHybridCollectionConfig,
-    QdrantMatchAnyFilter, QdrantPayloadValue, QdrantVectorName, RawQdrantHit, RawQdrantPayload,
-    RetryBackoffKind, RetryPolicyConfig, SparseStrategyConfig, SparseVector,
-    SparseVocabularyArtifact,
+    Bm25TermStatsArtifact, Embedding, EmbeddingConfig, NormalizedUserQuery, QdrantCollectionName,
+    QdrantDenseCollectionConfig, QdrantFilter, QdrantHybridCollectionConfig, QdrantMatchAnyFilter,
+    QdrantPayloadValue, QdrantVectorName, RawQdrantHit, RawQdrantPayload, RetryBackoffKind,
+    RetryPolicyConfig, SparseStrategyConfig, SparseVector, SparseVocabularyArtifact,
 };
 pub use theory_chunks_collection::{
     QdrantTheoryChunksCollectionDense, QdrantTheoryChunksCollectionHybrid, TheoryChunkSearchHit,

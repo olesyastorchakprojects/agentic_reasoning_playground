@@ -30,6 +30,7 @@ The current crate-level runtime unit-test scope covers:
 - `observability`
 - `api_clients`
 - `request_pipeline`
+- `orchestrator`
 - `utils`
 - `main`
 
@@ -332,6 +333,88 @@ Generated unit tests for the `prompt_context_assembly` runtime module must inclu
 - selected theory chunks preserve raw `chunk_id`, `score`, and `text`;
 - selected incident chunks are emitted in role order: `EvidenceForMatch`, `FirstCheckHint`, `SupportingExplanation`, then `AlternativeContext`;
 - no unselected chunks are included in output.
+
+### 4.13) `orchestrator`
+
+Generated unit tests for the `orchestrator` runtime subtree must include all of
+the following cases:
+
+- the crate exposes the top-level `orchestrator` module;
+- `orchestrator::run_state` exposes `model`, `view`, and `apply`;
+- public model, view, and writer types are importable from their documented
+  module paths;
+- id newtypes are copyable, comparable, hashable, and serializable;
+- unit enums serialize and deserialize successfully;
+- unit enums support `strum` parsing and string display;
+- `StepRecord::Pending` serializes and deserializes without losing
+  `record_id`, `step`, or `started_at`;
+- `StepRecord::Finished` with `Ok(StepResultEnvelope)` serializes and
+  deserializes without losing the result payload;
+- `StepRecord::Finished` with `Err(StepError)` serializes and deserializes
+  without losing the error variant;
+- `FinishedStepRecord.finished_at >= FinishedStepRecord.started_at` is enforced
+  by generated validation helpers when such helpers are generated;
+- `StepKind` and successful `StepResultEnvelope` compatibility is enforced by
+  generated validation helpers;
+- `StepKind` and step-specific `StepError` compatibility is enforced by
+  generated validation helpers;
+- text variants of `StepError` reject empty `message` values when generated
+  constructors or validators are present;
+- `RunStateView::new` wraps a borrowed `RunState`;
+- `RunStateView::run_id()` returns the underlying run id;
+- `RunStateView::status()` returns the underlying run status;
+- `RunStateView::iterations()` preserves `RunState.iterations` order;
+- `RunStateView::last_iteration()` returns the last iteration;
+- `IterationView::iteration_id()` returns the underlying iteration id;
+- `IterationView::steps()` preserves `RunIteration.step_records` order;
+- `IterationView::finished_steps()` returns only finished records and preserves
+  their relative order;
+- `IterationView::pending_step()` returns `Some` when the current iteration has
+  a pending step and `None` otherwise;
+- `IterationView::finished_step(kind)` returns the last finished step with the
+  requested `StepKind`;
+- `StepView` maps `StepRecord::Pending` to `StepView::Pending`;
+- `StepView` maps `StepRecord::Finished` to `StepView::Finished`;
+- `PendingStepView` returns the underlying `record_id`, `kind`, and
+  `started_at`;
+- `FinishedStepView` returns the underlying `record_id`, `kind`, `started_at`,
+  `finished_at`, and borrowed `Result<StepResultEnvelope, StepError>`;
+- `RunStateWriter::new` wraps a mutable `RunState`;
+- `begin_iteration(user_input)` appends a new iteration;
+- `begin_iteration(user_input)` returns `PendingStepAlreadyExists` when any
+  pending step already exists in the run;
+- the new iteration contains exactly one finished
+  `StepKind::UserInputReceived` record;
+- `begin_iteration(user_input)` returns a `CurrentIterationWriter` for the new
+  iteration;
+- successful mutating methods update `updated_at` and increment `revision`;
+- `current_iteration()` returns `NoCurrentIteration` when no iteration exists;
+- `current_iteration()` does not update `updated_at` or increment `revision`;
+- `CurrentIterationWriter::begin_step(step)` appends one pending step to the
+  current iteration;
+- `begin_step(step)` returns `PendingStepAlreadyExists` when any pending step
+  already exists in the run;
+- `CurrentIterationWriter::pending_step()` returns the pending step in the
+  current iteration when present;
+- `PendingStepWriter::record_success(result)` replaces the pending record with
+  a finished record containing `Ok(result)`;
+- `record_success(result)` rejects a result variant that does not match the
+  pending step kind;
+- `PendingStepWriter::record_failure(error)` replaces the pending record with
+  a finished record containing `Err(error)`;
+- `record_failure(error)` rejects step-specific error variants that do not
+  match the pending step kind;
+- successful `record_success` sets `RunStatus::Active`;
+- successful `record_failure` sets `RunStatus::Error`;
+- `wait_for_user()` sets `RunStatus::WaitingForUser`;
+- `wait_for_user()` returns `PendingStepAlreadyExists` when any pending step
+  exists in the run;
+- `archive_run()` sets `RunStatus::Archived`;
+- `archive_run()` succeeds even when a pending step exists in the run;
+- `archive_run()` is a pure no-op when the run is already archived and does not
+  modify `updated_at` or increment `revision`;
+- mutating methods except `archive_run()` return `RunArchived` when the run is
+  archived.
 
 ## 5) Completion Rule
 

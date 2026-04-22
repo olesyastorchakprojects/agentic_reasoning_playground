@@ -3,11 +3,11 @@ use std::time::Duration;
 use opentelemetry::global;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::trace::{
     BatchConfigBuilder, BatchSpanProcessor, Sampler, SdkTracerProvider,
 };
+use opentelemetry_sdk::Resource;
 use thiserror::Error;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 

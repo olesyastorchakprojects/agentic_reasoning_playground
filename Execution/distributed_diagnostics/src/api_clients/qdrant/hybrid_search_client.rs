@@ -2,24 +2,22 @@ use backon::Retryable;
 
 use crate::utils::retry::build_backoff;
 
-use super::dense_search_client::{
-    encode_filter, parse_payload, DenseSearchClientError,
-};
+use super::dense_search_client::{encode_filter, parse_payload, DenseSearchClientError};
 use super::shared_types::{
     Embedding, QdrantCollectionName, QdrantFilter, QdrantVectorName, RawQdrantHit,
     RawQdrantPayload, RetryPolicyConfig, SparseVector,
 };
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum HybridSearchClientError {
     #[error("invalid request: {0}")]
-    InvalidRequest(&'static str),
+    InvalidRequest(String),
     #[error("transport failure: {0}")]
     Transport(String),
     #[error("unexpected HTTP status: {0}")]
     UnexpectedStatus(u16),
     #[error("invalid response: {0}")]
-    InvalidResponse(&'static str),
+    InvalidResponse(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,7 +50,11 @@ impl QdrantHybridSearchClient {
     ) -> Result<Self, HybridSearchClientError> {
         validate_config(&qdrant_base_url, &retry_policy)?;
         let http_client = reqwest::Client::new();
-        Ok(Self { http_client, qdrant_base_url, retry_policy })
+        Ok(Self {
+            http_client,
+            qdrant_base_url,
+            retry_policy,
+        })
     }
 
     pub async fn search(
@@ -135,27 +137,27 @@ fn validate_config(
     let s = base_url.scheme();
     if s != "http" && s != "https" {
         return Err(HybridSearchClientError::InvalidRequest(
-            "qdrant_base_url must use http or https",
+            "qdrant_base_url must use http or https".to_string(),
         ));
     }
     if base_url.host().is_none() {
         return Err(HybridSearchClientError::InvalidRequest(
-            "qdrant_base_url must contain a host",
+            "qdrant_base_url must contain a host".to_string(),
         ));
     }
     if base_url.query().is_some() {
         return Err(HybridSearchClientError::InvalidRequest(
-            "qdrant_base_url must not contain query parameters",
+            "qdrant_base_url must not contain query parameters".to_string(),
         ));
     }
     if base_url.fragment().is_some() {
         return Err(HybridSearchClientError::InvalidRequest(
-            "qdrant_base_url must not contain a fragment",
+            "qdrant_base_url must not contain a fragment".to_string(),
         ));
     }
     if policy.max_attempts == 0 {
         return Err(HybridSearchClientError::InvalidRequest(
-            "retry_policy.max_attempts must be > 0",
+            "retry_policy.max_attempts must be > 0".to_string(),
         ));
     }
     Ok(())
@@ -163,58 +165,67 @@ fn validate_config(
 
 fn validate_request(req: &HybridSearchRequest) -> Result<(), HybridSearchClientError> {
     if req.embedding.values.is_empty() {
-        return Err(HybridSearchClientError::InvalidRequest("embedding must not be empty"));
+        return Err(HybridSearchClientError::InvalidRequest(
+            "embedding must not be empty".to_string(),
+        ));
     }
     if req.sparse_vector.indices.len() != req.sparse_vector.values.len() {
         return Err(HybridSearchClientError::InvalidRequest(
-            "sparse_vector indices and values must be aligned",
+            "sparse_vector indices and values must be aligned".to_string(),
         ));
     }
     if req.sparse_vector.indices.is_empty() {
-        return Err(HybridSearchClientError::InvalidRequest("sparse_vector must not be empty"));
+        return Err(HybridSearchClientError::InvalidRequest(
+            "sparse_vector must not be empty".to_string(),
+        ));
     }
     if req.limit == 0 {
-        return Err(HybridSearchClientError::InvalidRequest("limit must be > 0"));
+        return Err(HybridSearchClientError::InvalidRequest(
+            "limit must be > 0".to_string(),
+        ));
     }
     if !req.score_threshold.is_finite() || req.score_threshold < 0.0 {
         return Err(HybridSearchClientError::InvalidRequest(
-            "score_threshold must be finite and non-negative",
+            "score_threshold must be finite and non-negative".to_string(),
         ));
     }
     Ok(())
 }
 
 fn parse_response(raw: &[u8]) -> Result<HybridSearchResponse, HybridSearchClientError> {
-    let v: serde_json::Value = serde_json::from_slice(raw)
-        .map_err(|_| HybridSearchClientError::InvalidResponse("failed to parse response JSON"))?;
+    let v: serde_json::Value = serde_json::from_slice(raw).map_err(|_| {
+        HybridSearchClientError::InvalidResponse("failed to parse response JSON".to_string())
+    })?;
 
     let points = v
         .get("result")
         .and_then(|r| r.get("points"))
         .and_then(|p| p.as_array())
-        .ok_or(HybridSearchClientError::InvalidResponse("missing result.points"))?;
+        .ok_or(HybridSearchClientError::InvalidResponse(
+            "missing result.points".to_string(),
+        ))?;
 
     let mut hits = Vec::with_capacity(points.len());
     for point in points {
-        let score = point
-            .get("score")
-            .and_then(|s| s.as_f64())
-            .ok_or(HybridSearchClientError::InvalidResponse("missing score in hit"))? as f32;
+        let score = point.get("score").and_then(|s| s.as_f64()).ok_or(
+            HybridSearchClientError::InvalidResponse("missing score in hit".to_string()),
+        )? as f32;
 
-        let payload_obj = point
-            .get("payload")
-            .and_then(|p| p.as_object())
-            .ok_or(HybridSearchClientError::InvalidResponse("missing payload in hit"))?;
+        let payload_obj = point.get("payload").and_then(|p| p.as_object()).ok_or(
+            HybridSearchClientError::InvalidResponse("missing payload in hit".to_string()),
+        )?;
 
-        let fields = parse_payload(payload_obj)
-            .map_err(|e| match e {
-                DenseSearchClientError::InvalidResponse(msg) => {
-                    HybridSearchClientError::InvalidResponse(msg)
-                }
-                _ => HybridSearchClientError::InvalidResponse("payload parse error"),
-            })?;
+        let fields = parse_payload(payload_obj).map_err(|e| match e {
+            DenseSearchClientError::InvalidResponse(msg) => {
+                HybridSearchClientError::InvalidResponse(msg)
+            }
+            _ => HybridSearchClientError::InvalidResponse("payload parse error".to_string()),
+        })?;
 
-        hits.push(RawQdrantHit { score, payload: RawQdrantPayload { fields } });
+        hits.push(RawQdrantHit {
+            score,
+            payload: RawQdrantPayload { fields },
+        });
     }
 
     Ok(HybridSearchResponse { hits })
@@ -242,7 +253,10 @@ mod tests {
     use crate::utils::retry::RetryBackoffKind;
 
     fn policy() -> RetryPolicyConfig {
-        RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential }
+        RetryPolicyConfig {
+            max_attempts: 1,
+            backoff: RetryBackoffKind::Exponential,
+        }
     }
 
     fn client(base_url: &str) -> QdrantHybridSearchClient {
@@ -252,8 +266,13 @@ mod tests {
     fn simple_request() -> HybridSearchRequest {
         HybridSearchRequest {
             collection_name: QdrantCollectionName("col".into()),
-            embedding: Embedding { values: vec![0.1, 0.2] },
-            sparse_vector: SparseVector { indices: vec![1, 7], values: vec![1.0, 1.0] },
+            embedding: Embedding {
+                values: vec![0.1, 0.2],
+            },
+            sparse_vector: SparseVector {
+                indices: vec![1, 7],
+                values: vec![1.0, 1.0],
+            },
             vector_name: QdrantVectorName("dense".into()),
             sparse_vector_name: QdrantVectorName("sparse".into()),
             filter: None,
@@ -264,9 +283,13 @@ mod tests {
 
     #[test]
     fn constructor_rejects_zero_max_attempts() {
-        let p = RetryPolicyConfig { max_attempts: 0, backoff: RetryBackoffKind::Exponential };
+        let p = RetryPolicyConfig {
+            max_attempts: 0,
+            backoff: RetryBackoffKind::Exponential,
+        };
         assert!(
-            QdrantHybridSearchClient::new(url::Url::parse("http://localhost/").unwrap(), p).is_err()
+            QdrantHybridSearchClient::new(url::Url::parse("http://localhost/").unwrap(), p)
+                .is_err()
         );
     }
 
@@ -375,8 +398,7 @@ mod tests {
 
     #[tokio::test]
     async fn hit_without_score_returns_invalid_response() {
-        let resp =
-            serde_json::json!({"result": {"points": [{"payload": {"x": "y"}}]}}).to_string();
+        let resp = serde_json::json!({"result": {"points": [{"payload": {"x": "y"}}]}}).to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp)]).await;
         let c = client(&server.base_url());
         assert!(matches!(

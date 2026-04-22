@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
-use crate::api_clients::qdrant::cards_collection::{CardsCollection, CardsCollectionError, CardSearchRequest};
+use crate::api_clients::qdrant::cards_collection::{
+    CardSearchRequest, CardsCollection, CardsCollectionError,
+};
 use crate::api_clients::qdrant::shared_types::NormalizedUserQuery;
 use crate::shared_types::{CandidateCard, CandidateCardRetrievalOutput, NormalizedUserRequest};
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum CandidateCardRetrievalError {
     #[error("invalid configuration: {0}")]
-    InvalidConfiguration(&'static str),
+    InvalidConfiguration(String),
     #[error("cards collection error: {0}")]
     Collection(#[from] CardsCollectionError),
 }
@@ -43,35 +45,42 @@ impl CandidateCardRetrieval {
         let score_threshold = settings.score_threshold;
 
         if top_k == 0 {
-            return Err(CandidateCardRetrievalError::InvalidConfiguration("top_k must be greater than 0"));
+            return Err(CandidateCardRetrievalError::InvalidConfiguration(
+                "top_k must be greater than 0".to_string(),
+            ));
         }
         if top_k < 1 + max_alternatives {
             return Err(CandidateCardRetrievalError::InvalidConfiguration(
-                "top_k must be at least 1 + max_alternatives",
+                "top_k must be at least 1 + max_alternatives".to_string(),
             ));
         }
         if score_threshold < 0.0 {
             return Err(CandidateCardRetrievalError::InvalidConfiguration(
-                "score_threshold must not be negative",
+                "score_threshold must not be negative".to_string(),
             ));
         }
         if score_threshold.is_nan() {
             return Err(CandidateCardRetrievalError::InvalidConfiguration(
-                "score_threshold must not be NaN",
+                "score_threshold must not be NaN".to_string(),
             ));
         }
         if score_threshold.is_infinite() {
             return Err(CandidateCardRetrievalError::InvalidConfiguration(
-                "score_threshold must not be infinite",
+                "score_threshold must not be infinite".to_string(),
             ));
         }
         if max_alternatives > 2 {
             return Err(CandidateCardRetrievalError::InvalidConfiguration(
-                "max_alternatives must not exceed 2",
+                "max_alternatives must not exceed 2".to_string(),
             ));
         }
 
-        Ok(Self { cards_collection, top_k, max_alternatives, score_threshold })
+        Ok(Self {
+            cards_collection,
+            top_k,
+            max_alternatives,
+            score_threshold,
+        })
     }
 
     pub async fn retrieve(
@@ -87,7 +96,10 @@ impl CandidateCardRetrieval {
         let result = self.cards_collection.search(&search_request).await?;
 
         if result.hits.is_empty() {
-            return Ok(CandidateCardRetrievalOutput { primary: None, alternatives: vec![] });
+            return Ok(CandidateCardRetrievalOutput {
+                primary: None,
+                alternatives: vec![],
+            });
         }
 
         let mut hits = result.hits.into_iter();
@@ -99,10 +111,16 @@ impl CandidateCardRetrieval {
 
         let alternatives = hits
             .take(self.max_alternatives)
-            .map(|h| CandidateCard { case_id: h.case_id, score: h.score })
+            .map(|h| CandidateCard {
+                case_id: h.case_id,
+                score: h.score,
+            })
             .collect();
 
-        Ok(CandidateCardRetrievalOutput { primary, alternatives })
+        Ok(CandidateCardRetrievalOutput {
+            primary,
+            alternatives,
+        })
     }
 }
 
@@ -114,22 +132,30 @@ mod tests {
     use crate::api_clients::qdrant::cards_collection::{
         CardSearchHit, CardSearchResult, CardsCollectionError,
     };
-    use crate::config::{
-        CollectionRetrievalSettings, CollectionSettings, DenseCollectionSettings,
-    };
+    use crate::config::{CollectionRetrievalSettings, CollectionSettings, DenseCollectionSettings};
     use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
-    fn settings(top_k: usize, max_alternatives: usize, score_threshold: f32) -> CollectionRetrievalSettings {
+    fn settings(
+        top_k: usize,
+        max_alternatives: usize,
+        score_threshold: f32,
+    ) -> CollectionRetrievalSettings {
         CollectionRetrievalSettings {
             top_k,
             score_threshold,
             max_alternatives,
-            embedding_retry: RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential },
-            qdrant_retry: RetryPolicyConfig { max_attempts: 1, backoff: RetryBackoffKind::Exponential },
+            embedding_retry: RetryPolicyConfig {
+                max_attempts: 1,
+                backoff: RetryBackoffKind::Exponential,
+            },
+            qdrant_retry: RetryPolicyConfig {
+                max_attempts: 1,
+                backoff: RetryBackoffKind::Exponential,
+            },
             collection: CollectionSettings::Dense(DenseCollectionSettings {
                 name: "cards".to_string(),
                 vector_name: "v".to_string(),
@@ -139,11 +165,17 @@ mod tests {
     }
 
     fn request(query: &str) -> NormalizedUserRequest {
-        NormalizedUserRequest { query: query.to_string(), input_token_count: 5 }
+        NormalizedUserRequest {
+            query: query.to_string(),
+            input_token_count: 5,
+        }
     }
 
     fn hit(case_id: &str, score: f32) -> CardSearchHit {
-        CardSearchHit { case_id: case_id.to_string(), score }
+        CardSearchHit {
+            case_id: case_id.to_string(),
+            score,
+        }
     }
 
     // ─── Mock ─────────────────────────────────────────────────────────────────
@@ -162,7 +194,10 @@ mod tests {
         }
 
         fn failing(err: CardsCollectionError) -> Arc<Self> {
-            Arc::new(Self { response: Err(err), captured: Mutex::new(None) })
+            Arc::new(Self {
+                response: Err(err),
+                captured: Mutex::new(None),
+            })
         }
 
         fn captured(&self) -> Option<CardSearchRequest> {
@@ -179,7 +214,9 @@ mod tests {
             *self.captured.lock().unwrap() = Some(request.clone());
             match &self.response {
                 Ok(r) => Ok(r.clone()),
-                Err(_e) => Err(CardsCollectionError::InvalidRequest("mock error")),
+                Err(_e) => Err(CardsCollectionError::InvalidRequest(
+                    "mock error".to_string(),
+                )),
             }
         }
     }
@@ -299,7 +336,11 @@ mod tests {
         let out = sut.retrieve(&request("q")).await.unwrap();
 
         assert_eq!(out.primary.unwrap().case_id, "card-1");
-        let alt_ids: Vec<&str> = out.alternatives.iter().map(|c| c.case_id.as_str()).collect();
+        let alt_ids: Vec<&str> = out
+            .alternatives
+            .iter()
+            .map(|c| c.case_id.as_str())
+            .collect();
         assert_eq!(alt_ids, vec!["card-2", "card-3"]);
     }
 
@@ -322,10 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn max_alternatives_zero_returns_only_primary() {
-        let mock = MockCardsCollection::returning(vec![
-            hit("card-1", 0.9),
-            hit("card-2", 0.8),
-        ]);
+        let mock = MockCardsCollection::returning(vec![hit("card-1", 0.9), hit("card-2", 0.8)]);
         let sut = CandidateCardRetrieval::new(settings(2, 0, 0.5), mock).unwrap();
 
         let out = sut.retrieve(&request("q")).await.unwrap();
@@ -382,7 +420,8 @@ mod tests {
 
     #[tokio::test]
     async fn collection_error_wrapped_as_collection_variant() {
-        let mock = MockCardsCollection::failing(CardsCollectionError::InvalidRequest("boom"));
+        let mock =
+            MockCardsCollection::failing(CardsCollectionError::InvalidRequest("boom".to_string()));
         let sut = CandidateCardRetrieval::new(settings(3, 2, 0.5), mock).unwrap();
 
         let err = sut.retrieve(&request("q")).await.unwrap_err();

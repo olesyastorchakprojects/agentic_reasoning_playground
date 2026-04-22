@@ -51,6 +51,13 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/request_pipeline/incident_evidence_retrieval.rs`
 - `src/request_pipeline/theory_evidence_retrieval.rs`
 - `src/request_pipeline/prompt_context_assembly.rs`
+- `src/request_pipeline/llm_structured_generation.rs`
+- `src/request_pipeline/response_validation_and_normalization.rs`
+- `src/orchestrator/mod.rs`
+- `src/orchestrator/run_state/mod.rs`
+- `src/orchestrator/run_state/model.rs`
+- `src/orchestrator/run_state/view.rs`
+- `src/orchestrator/run_state/apply.rs`
 - `src/utils/mod.rs`
 - `src/utils/retry.rs`
 - `src/utils/tokenizer.rs`
@@ -67,6 +74,14 @@ Artifact rules:
 - `src/config/load.rs` must define config loading and merge logic for runtime TOML, ingest TOML, and environment values;
 - `src/observability/mod.rs` must define startup-time observability initialization from typed settings;
 - `src/request_pipeline/mod.rs` must expose request-pipeline child modules required by active runtime slice specifications;
+- `src/orchestrator/mod.rs` must expose `run_state`;
+- `src/orchestrator/run_state/mod.rs` must expose `model`, `view`, and `apply`;
+- `src/orchestrator/run_state/model.rs` must follow
+  `Specification/runtime/orchestrator/run_state/model.md`;
+- `src/orchestrator/run_state/view.rs` must follow
+  `Specification/runtime/orchestrator/run_state/view.md`;
+- `src/orchestrator/run_state/apply.rs` must follow
+  `Specification/runtime/orchestrator/run_state/apply.md`;
 - parent `mod.rs` files are required structural artifacts and must not be omitted;
 - the current crate-level artifact contract is structural and compositional, not behavior-duplicating.
 
@@ -101,6 +116,21 @@ Child artifacts for the request-pipeline leaf module `theory_evidence_retrieval`
 Child artifacts for the request-pipeline leaf module `prompt_context_assembly` are owned by:
 - `Specification/runtime/request_pipeline/prompt_context_assembly.md`
 
+Child artifacts for the request-pipeline leaf module `llm_structured_generation` are owned by:
+- `Specification/runtime/request_pipeline/llm_structured_generation.md`
+
+Child artifacts for the request-pipeline leaf module `response_validation_and_normalization` are owned by:
+- `Specification/runtime/request_pipeline/response_validation_and_normalization.md`
+
+Child artifacts for the orchestrator run-state model are owned by:
+- `Specification/runtime/orchestrator/run_state/model.md`
+
+Child artifacts for the orchestrator run-state views are owned by:
+- `Specification/runtime/orchestrator/run_state/view.md`
+
+Child artifacts for the orchestrator run-state writer are owned by:
+- `Specification/runtime/orchestrator/run_state/apply.md`
+
 Child artifacts for the tokenizer utility module are owned by:
 - `Specification/runtime/utils/tokenizer.md`
 
@@ -129,6 +159,12 @@ Current delegated child specifications:
 - `Specification/runtime/request_pipeline/incident_evidence_retrieval.md`
 - `Specification/runtime/request_pipeline/theory_evidence_retrieval.md`
 - `Specification/runtime/request_pipeline/prompt_context_assembly.md`
+- `Specification/runtime/request_pipeline/llm_structured_generation.md`
+- `Specification/runtime/request_pipeline/response_validation_and_normalization.md`
+- `Specification/runtime/orchestrator/modules.md`
+- `Specification/runtime/orchestrator/run_state/model.md`
+- `Specification/runtime/orchestrator/run_state/view.md`
+- `Specification/runtime/orchestrator/run_state/apply.md`
 - `Specification/runtime/utils/tokenizer.md`
 - `Specification/card_to_chunk_converter/incident_card_chunk_conversion.md`
 
@@ -141,9 +177,12 @@ Rules:
 - the generated crate must include a dedicated parent `observability` module;
 - the generated crate must include a dedicated parent `api_clients` module;
 - the generated crate must include a dedicated parent `request_pipeline` module when request-pipeline child specifications are active;
+- the generated crate must include a dedicated parent `orchestrator` module when orchestrator specifications are active;
 - the generated crate must include a dedicated `utils` module for reusable crate-wide helpers;
 - `src/api_clients/mod.rs` must expose the delegated root child module `embedding_client` in addition to the structural child subtrees;
-- the generated crate must include structural parent modules for `model`, `qdrant`, `postgres`, and `request_pipeline`;
+- the generated crate must include structural parent modules for `model`, `qdrant`, `postgres`, `request_pipeline`, `orchestrator`, and `orchestrator/run_state`;
+- planned orchestrator modules from `Specification/runtime/orchestrator/modules.md`
+  must not be generated until their dedicated module specifications exist;
 - the generated Qdrant subtree may include internal decomposition files such as `sparse_preparation.rs` when required by child specifications;
 - structural parent modules must remain present even when most child implementation files are generated from delegated child specifications;
 - structural files must contain real Rust module declarations and required parent-level definitions, not placeholders or TODO-only stubs.

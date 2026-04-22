@@ -1,8 +1,7 @@
-pub use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
 use crate::config::{
-    CollectionRetrievalSettings, CollectionSettings, EmbeddingModelSettings,
-    SparseStrategySettings,
+    CollectionRetrievalSettings, CollectionSettings, EmbeddingModelSettings, SparseStrategySettings,
 };
+pub use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -107,8 +106,11 @@ impl SparseVocabularyArtifact {
         let json: SparseVocabularyJson = serde_json::from_str(&content)
             .map_err(|e| format!("invalid vocabulary JSON at {path}: {e}"))?;
 
-        let token_id_by_token: BTreeMap<String, u32> =
-            json.tokens.into_iter().map(|e| (e.token, e.token_id)).collect();
+        let token_id_by_token: BTreeMap<String, u32> = json
+            .tokens
+            .into_iter()
+            .map(|e| (e.token, e.token_id))
+            .collect();
 
         Ok(Self {
             vocabulary_name: json.vocabulary_name,
@@ -170,12 +172,16 @@ impl Bm25TermStatsArtifact {
             let id: u32 = k
                 .parse()
                 .map_err(|_| format!("non-integer token id key: {k}"))?;
-            let freq = v.as_u64().ok_or_else(|| format!("invalid df value for id {id}"))?;
+            let freq = v
+                .as_u64()
+                .ok_or_else(|| format!("invalid df value for id {id}"))?;
             if freq == 0 {
                 return Err(format!("document_frequency must be > 0 for token id {id}"));
             }
             if freq > document_count {
-                return Err(format!("df {freq} > document_count {document_count} for token {id}"));
+                return Err(format!(
+                    "df {freq} > document_count {document_count} for token {id}"
+                ));
             }
             document_frequency_by_token_id.insert(id, freq);
         }
@@ -241,8 +247,8 @@ pub struct RawQdrantHit {
 pub(crate) fn embedding_config_from_settings(
     settings: &EmbeddingModelSettings,
 ) -> Result<EmbeddingConfig, String> {
-    let base_url = url::Url::parse(&settings.url)
-        .map_err(|e| format!("invalid embedding model url: {e}"))?;
+    let base_url =
+        url::Url::parse(&settings.url).map_err(|e| format!("invalid embedding model url: {e}"))?;
 
     Ok(EmbeddingConfig {
         base_url,
