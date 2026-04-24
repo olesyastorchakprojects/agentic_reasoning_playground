@@ -93,6 +93,13 @@ impl<'a> RunStateView<'a> {
 
     pub fn status(&self) -> RunStatus;
 
+    pub fn iteration_count(&self) -> usize;
+
+    pub fn iteration(
+        &self,
+        iteration_id: RunIterationId,
+    ) -> Option<&'a RunIteration>;
+
     pub fn iterations(
         &self,
     ) -> impl DoubleEndedIterator<Item = IterationView<'a>>;
@@ -112,6 +119,8 @@ The generated module must define:
 ```rust
 impl<'a> IterationView<'a> {
     pub fn iteration_id(&self) -> RunIterationId;
+
+    pub fn step_count(&self) -> usize;
 
     pub fn steps(
         &self,
@@ -149,6 +158,7 @@ impl<'a> PendingStepView<'a> {
     pub fn record_id(&self) -> StepRecordId;
     pub fn kind(&self) -> StepKind;
     pub fn started_at(&self) -> DateTime<Utc>;
+    pub fn to_owned(&self) -> PendingStepRecord;
 }
 
 impl<'a> FinishedStepView<'a> {
@@ -157,12 +167,29 @@ impl<'a> FinishedStepView<'a> {
     pub fn started_at(&self) -> DateTime<Utc>;
     pub fn finished_at(&self) -> DateTime<Utc>;
     pub fn result(&self) -> &'a Result<StepResultEnvelope, StepError>;
+    pub fn to_owned(&self) -> FinishedStepRecord;
+}
+
+impl<'a> StepView<'a> {
+    pub fn to_owned(&self) -> StepRecord;
 }
 ```
 
+`iteration_count()` must equal `RunState.iterations.len()`.
+
+`iteration(iteration_id)` must return the underlying stored `RunIteration`
+borrow when the requested id exists and `None` otherwise.
+
+`step_count()` must equal `RunIteration.step_records.len()`.
+
 ## 9) View Invariants
 
-View methods must not clone owned step payloads.
+Borrowing view methods such as `result()`, `iterations()`, `steps()`,
+`finished_steps()`, `pending_step()`, and `finished_step(kind)` must not clone
+owned step payloads.
+
+The explicit `to_owned()` helpers are the only view methods allowed to clone
+underlying owned records for orchestration persistence handoff and test setup.
 
 View methods that expose ids, kinds, and timestamps may return copied values.
 

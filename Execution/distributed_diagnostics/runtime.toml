@@ -101,13 +101,13 @@ fallback_to_any_chunk = false
 tag_priority = []
 
 [llm_structured_generation]
-max_output_tokens = 1200
+max_output_tokens = 4500
 
 [model]
-transport_kind = "ollama"
+transport_kind = "together"
 
 [model.ollama]
-model_name = "qwen2.5:1.5b-instruct"
+model_name = "qwen2.5:1.5b-instruct-ctx32k"
 timeout_sec = 120
 
 [model.ollama.retry]

@@ -226,6 +226,9 @@ pub fn parse_payload(
 ) -> Result<BTreeMap<String, QdrantPayloadValue>, DenseSearchClientError> {
     let mut fields = BTreeMap::new();
     for (k, v) in obj {
+        if matches!(v, serde_json::Value::Object(_)) {
+            continue;
+        }
         let pv = json_to_payload_value(v)?;
         fields.insert(k.clone(), pv);
     }
@@ -492,18 +495,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_payload_shape_returns_invalid_response() {
+    async fn nested_payload_objects_are_ignored() {
         let resp = serde_json::json!({
-            "result": {"points": [{"score": 0.5, "payload": {"nested": {"a": "b"}}}]}
+            "result": {"points": [{"score": 0.5, "payload": {"chunk_id": "c1", "nested": {"a": "b"}}}]}
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp)]).await;
         let c = client(&server.base_url());
-        assert!(matches!(
-            c.search(&simple_request(&server.base_url()))
-                .await
-                .unwrap_err(),
-            DenseSearchClientError::InvalidResponse(_)
-        ));
+        let response = c.search(&simple_request(&server.base_url())).await.unwrap();
+        assert_eq!(response.hits.len(), 1);
+        assert_eq!(
+            response.hits[0].payload.fields.get("chunk_id"),
+            Some(&QdrantPayloadValue::String("c1".to_string()))
+        );
+        assert!(!response.hits[0].payload.fields.contains_key("nested"));
     }
 }

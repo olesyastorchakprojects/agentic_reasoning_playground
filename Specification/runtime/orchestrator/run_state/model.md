@@ -212,7 +212,29 @@ pub struct RunIteration {
 }
 ```
 
-## 5) Model Invariants
+## 5) Constructors
+
+The generated module must define:
+
+```rust
+impl RunState {
+    pub fn new() -> Self;
+}
+```
+
+`RunState::new()` must construct a valid empty run header suitable for
+`RunRepository::create_run(&state)`.
+
+It must:
+
+- generate `run_id` with `Uuid::new_v4()`;
+- set `status = RunStatus::Active`;
+- set `created_at = Utc::now()`;
+- set `updated_at = created_at`;
+- set `revision = 0`;
+- set `iterations = Vec::new()`.
+
+## 6) Model Invariants
 
 `RunState` timestamp invariant:
 
@@ -225,6 +247,18 @@ pub struct RunIteration {
 Pending step invariant:
 
 - at most one `StepRecord::Pending(_)` may exist in a `RunState`.
+
+`RunStatus` semantics:
+
+- `RunStatus::Active` means that the run remains open for future orchestration
+  invocations, including retry with the same iteration or continuation with a
+  later user input;
+- a successful user-facing response from one orchestration invocation does not
+  by itself move the run into a separate terminal success status;
+- `RunStatus::Archived` is the current explicit closed-state marker for a run;
+- `RunStatus::Error` means the last attempted step recording ended in failure,
+  but the run may still later be resumed or superseded by a new iteration if
+  higher-level product behavior allows that.
 
 `FinishedStepRecord.result` success variant must match `FinishedStepRecord.step`:
 

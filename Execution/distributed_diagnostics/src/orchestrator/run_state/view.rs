@@ -44,6 +44,17 @@ impl<'a> RunStateView<'a> {
         self.state.status
     }
 
+    pub fn iteration_count(&self) -> usize {
+        self.state.iterations.len()
+    }
+
+    pub fn iteration(&self, iteration_id: RunIterationId) -> Option<&'a RunIteration> {
+        self.state
+            .iterations
+            .iter()
+            .find(|iteration| iteration.iteration_id == iteration_id)
+    }
+
     pub fn iterations(&self) -> impl DoubleEndedIterator<Item = IterationView<'a>> {
         self.state
             .iterations
@@ -62,6 +73,10 @@ impl<'a> RunStateView<'a> {
 impl<'a> IterationView<'a> {
     pub fn iteration_id(&self) -> RunIterationId {
         self.iteration.iteration_id
+    }
+
+    pub fn step_count(&self) -> usize {
+        self.iteration.step_records.len()
     }
 
     pub fn steps(&self) -> impl DoubleEndedIterator<Item = StepView<'a>> {
@@ -109,6 +124,10 @@ impl<'a> PendingStepView<'a> {
     pub fn started_at(&self) -> DateTime<Utc> {
         self.record.started_at
     }
+
+    pub fn to_owned(&self) -> PendingStepRecord {
+        self.record.clone()
+    }
 }
 
 impl<'a> FinishedStepView<'a> {
@@ -130,6 +149,19 @@ impl<'a> FinishedStepView<'a> {
 
     pub fn result(&self) -> &'a Result<StepResultEnvelope, StepError> {
         &self.record.result
+    }
+
+    pub fn to_owned(&self) -> FinishedStepRecord {
+        self.record.clone()
+    }
+}
+
+impl<'a> StepView<'a> {
+    pub fn to_owned(&self) -> StepRecord {
+        match self {
+            StepView::Pending(pending) => StepRecord::Pending(pending.to_owned()),
+            StepView::Finished(finished) => StepRecord::Finished(finished.to_owned()),
+        }
     }
 }
 
@@ -245,8 +277,8 @@ mod tests {
         // via the view API — verify the import compiles.
         let _: Option<PendingStepView<'_>> = None;
         let _: Option<FinishedStepView<'_>> = None;
-        drop(_view);
-        drop(&mut state);
+        let _ = _view;
+        let _ = &mut state;
     }
 
     // ─── RunStateView::new ────────────────────────────────────────────────────
@@ -307,6 +339,38 @@ mod tests {
         assert_eq!(view.iterations().count(), 0);
     }
 
+    #[test]
+    fn iteration_count_equals_underlying_iterations_len() {
+        let state = state_with_iterations(vec![iteration(vec![]), iteration(vec![])]);
+        let view = RunStateView::new(&state);
+        assert_eq!(view.iteration_count(), 2);
+    }
+
+    #[test]
+    fn iteration_returns_underlying_iteration_for_existing_id() {
+        let wanted = new_iteration_id();
+        let state = state_with_iterations(vec![
+            RunIteration {
+                iteration_id: new_iteration_id(),
+                step_records: vec![],
+            },
+            RunIteration {
+                iteration_id: wanted,
+                step_records: vec![],
+            },
+        ]);
+        let view = RunStateView::new(&state);
+        let iteration = view.iteration(wanted).expect("iteration must exist");
+        assert_eq!(iteration.iteration_id, wanted);
+    }
+
+    #[test]
+    fn iteration_returns_none_for_unknown_id() {
+        let state = state_with_iterations(vec![iteration(vec![])]);
+        let view = RunStateView::new(&state);
+        assert!(view.iteration(new_iteration_id()).is_none());
+    }
+
     // ─── RunStateView::last_iteration ─────────────────────────────────────────
 
     #[test]
@@ -345,6 +409,16 @@ mod tests {
         }]);
         let view = RunStateView::new(&state);
         assert_eq!(view.last_iteration().unwrap().iteration_id(), iid);
+    }
+
+    #[test]
+    fn iteration_view_step_count_equals_underlying_step_records_len() {
+        let state = state_with_iterations(vec![iteration(vec![
+            finished_ok_record(StepKind::UserInputReceived, user_input_result()),
+            pending_record(StepKind::InputNormalization),
+        ])]);
+        let view = RunStateView::new(&state);
+        assert_eq!(view.last_iteration().unwrap().step_count(), 2);
     }
 
     // ─── IterationView::steps ─────────────────────────────────────────────────
@@ -471,6 +545,25 @@ mod tests {
         assert_eq!(pv.started_at(), started);
     }
 
+    #[test]
+    fn pending_step_view_to_owned_clones_underlying_record() {
+        let rid = new_step_record_id();
+        let started = Utc::now();
+        let record = StepRecord::Pending(PendingStepRecord {
+            record_id: rid,
+            step: StepKind::InputNormalization,
+            started_at: started,
+        });
+        let state = state_with_iterations(vec![iteration(vec![record.clone()])]);
+        let view = RunStateView::new(&state);
+        let owned = view.last_iteration().unwrap().pending_step().unwrap().to_owned();
+
+        match record {
+            StepRecord::Pending(expected) => assert_eq!(owned, expected),
+            StepRecord::Finished(_) => unreachable!(),
+        }
+    }
+
     // ─── FinishedStepView accessors ───────────────────────────────────────────
 
     #[test]
@@ -498,5 +591,47 @@ mod tests {
         assert_eq!(fv.started_at(), started);
         assert_eq!(fv.finished_at(), finished);
         assert_eq!(fv.result(), &result);
+    }
+
+    #[test]
+    fn finished_step_view_to_owned_clones_underlying_record() {
+        let rid = new_step_record_id();
+        let started = Utc::now();
+        let record = FinishedStepRecord {
+            record_id: rid,
+            step: StepKind::UserInputReceived,
+            started_at: started,
+            finished_at: started,
+            result: Ok(user_input_result()),
+        };
+        let state = state_with_iterations(vec![iteration(vec![StepRecord::Finished(
+            record.clone(),
+        )])]);
+        let view = RunStateView::new(&state);
+        let owned = view
+            .last_iteration()
+            .unwrap()
+            .finished_step(StepKind::UserInputReceived)
+            .unwrap()
+            .to_owned();
+        assert_eq!(owned, record);
+    }
+
+    #[test]
+    fn step_view_to_owned_preserves_pending_variant_and_fields() {
+        let record = pending_record(StepKind::InputNormalization);
+        let state = state_with_iterations(vec![iteration(vec![record.clone()])]);
+        let view = RunStateView::new(&state);
+        let owned = view.last_iteration().unwrap().steps().next().unwrap().to_owned();
+        assert_eq!(owned, record);
+    }
+
+    #[test]
+    fn step_view_to_owned_preserves_finished_variant_and_fields() {
+        let record = finished_ok_record(StepKind::UserInputReceived, user_input_result());
+        let state = state_with_iterations(vec![iteration(vec![record.clone()])]);
+        let view = RunStateView::new(&state);
+        let owned = view.last_iteration().unwrap().steps().next().unwrap().to_owned();
+        assert_eq!(owned, record);
     }
 }

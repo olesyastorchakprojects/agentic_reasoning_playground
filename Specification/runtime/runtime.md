@@ -80,6 +80,7 @@ The current required crate-level module tree is:
     - `llm_structured_generation`
     - `response_validation_and_normalization`
   - `orchestrator`
+    - `orchestrator`
     - `transition_policy`
     - `step_executor`
     - `run_state`
@@ -121,6 +122,7 @@ Current request-pipeline file-layout rule:
 - future refactoring into a directory module is allowed only after the crate-level runtime specification is updated.
 
 Current orchestrator file-layout rule:
+- `orchestrator::orchestrator` is generated as `src/orchestrator/orchestrator.rs`;
 - `orchestrator::run_state::model` is generated as `src/orchestrator/run_state/model.rs`;
 - `orchestrator::run_state::view` is generated as `src/orchestrator/run_state/view.rs`;
 - `orchestrator::run_state::apply` is generated as `src/orchestrator/run_state/apply.rs`;
