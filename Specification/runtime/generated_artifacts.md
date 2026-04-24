@@ -43,6 +43,7 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/api_clients/model/mod.rs`
 - `src/api_clients/qdrant/mod.rs`
 - `src/api_clients/postgres/mod.rs`
+- `src/api_clients/postgres/run_state_store.rs`
 - `src/request_pipeline/mod.rs`
 - `src/request_pipeline/input_normalization.rs`
 - `src/request_pipeline/query_structuring.rs`
@@ -54,6 +55,11 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/request_pipeline/llm_structured_generation.rs`
 - `src/request_pipeline/response_validation_and_normalization.rs`
 - `src/orchestrator/mod.rs`
+- `src/orchestrator/orchestrator.rs`
+- `src/orchestrator/run_repository.rs`
+- `src/orchestrator/step_executor.rs`
+- `src/orchestrator/transition_policy/mod.rs`
+- `src/orchestrator/transition_policy/linear_pipeline.rs`
 - `src/orchestrator/run_state/mod.rs`
 - `src/orchestrator/run_state/model.rs`
 - `src/orchestrator/run_state/view.rs`
@@ -74,7 +80,19 @@ Artifact rules:
 - `src/config/load.rs` must define config loading and merge logic for runtime TOML, ingest TOML, and environment values;
 - `src/observability/mod.rs` must define startup-time observability initialization from typed settings;
 - `src/request_pipeline/mod.rs` must expose request-pipeline child modules required by active runtime slice specifications;
-- `src/orchestrator/mod.rs` must expose `run_state`;
+- `src/api_clients/postgres/mod.rs` must expose `run_state_store` in addition to other active postgres child modules;
+- `src/api_clients/postgres/run_state_store.rs` must follow
+  `Specification/runtime/api_clients/postgres/run_state_store.md`;
+- `src/orchestrator/mod.rs` must expose `orchestrator`, `run_state`, `run_repository`, `step_executor`, and `transition_policy`;
+- `src/orchestrator/orchestrator.rs` must follow
+  `Specification/runtime/orchestrator/orchestrator.md`;
+- `src/orchestrator/run_repository.rs` must follow
+  `Specification/runtime/orchestrator/run_repository.md`;
+- `src/orchestrator/step_executor.rs` must follow
+  `Specification/runtime/orchestrator/step_executor.md`;
+- `src/orchestrator/transition_policy/mod.rs` and
+  `src/orchestrator/transition_policy/linear_pipeline.rs` must follow
+  `Specification/runtime/orchestrator/transition_policy.md`;
 - `src/orchestrator/run_state/mod.rs` must expose `model`, `view`, and `apply`;
 - `src/orchestrator/run_state/model.rs` must follow
   `Specification/runtime/orchestrator/run_state/model.md`;
@@ -122,6 +140,21 @@ Child artifacts for the request-pipeline leaf module `llm_structured_generation`
 Child artifacts for the request-pipeline leaf module `response_validation_and_normalization` are owned by:
 - `Specification/runtime/request_pipeline/response_validation_and_normalization.md`
 
+Child artifacts for the postgres run-state store are owned by:
+- `Specification/runtime/api_clients/postgres/run_state_store.md`
+
+Child artifacts for the orchestrator transition policy are owned by:
+- `Specification/runtime/orchestrator/transition_policy.md`
+
+Child artifacts for the orchestrator lifecycle module are owned by:
+- `Specification/runtime/orchestrator/orchestrator.md`
+
+Child artifacts for the orchestrator step executor are owned by:
+- `Specification/runtime/orchestrator/step_executor.md`
+
+Child artifacts for the orchestrator run repository are owned by:
+- `Specification/runtime/orchestrator/run_repository.md`
+
 Child artifacts for the orchestrator run-state model are owned by:
 - `Specification/runtime/orchestrator/run_state/model.md`
 
@@ -161,7 +194,12 @@ Current delegated child specifications:
 - `Specification/runtime/request_pipeline/prompt_context_assembly.md`
 - `Specification/runtime/request_pipeline/llm_structured_generation.md`
 - `Specification/runtime/request_pipeline/response_validation_and_normalization.md`
+- `Specification/runtime/api_clients/postgres/run_state_store.md`
 - `Specification/runtime/orchestrator/modules.md`
+- `Specification/runtime/orchestrator/orchestrator.md`
+- `Specification/runtime/orchestrator/run_repository.md`
+- `Specification/runtime/orchestrator/transition_policy.md`
+- `Specification/runtime/orchestrator/step_executor.md`
 - `Specification/runtime/orchestrator/run_state/model.md`
 - `Specification/runtime/orchestrator/run_state/view.md`
 - `Specification/runtime/orchestrator/run_state/apply.md`

@@ -330,7 +330,7 @@ fn map_filter(f: &PracticeChunkFilter) -> QdrantFilter {
                 values: f.case_ids.clone(),
             },
             QdrantMatchAnyFilter {
-                field_name: "chunk_tags".to_string(),
+                field_name: "tags".to_string(),
                 values: f.chunk_tags.clone(),
             },
         ],
@@ -369,11 +369,15 @@ fn map_hit(
         }
     };
 
-    let chunk_tags = match fields.get("chunk_tags") {
-        Some(QdrantPayloadValue::StringList(v)) => v.clone(),
+    let chunk_tags = match fields.get("tags").or_else(|| fields.get("chunk_tags")) {
+        Some(QdrantPayloadValue::StringList(v)) => v
+            .iter()
+            .filter(|tag| tag.starts_with("chunk_role:"))
+            .cloned()
+            .collect(),
         _ => {
             return Err(PracticeChunksCollectionError::PayloadMapping(
-                "missing or invalid chunk_tags".to_string(),
+                "missing or invalid tags".to_string(),
             ))
         }
     };
@@ -454,7 +458,7 @@ mod tests {
                 "payload": {
                     "chunk_id": "chunk1",
                     "doc_id": "case1",
-                    "chunk_tags": ["tag:x"],
+                    "tags": ["tag:x", "chunk_role:symptom"],
                     "text": "some text"
                 }
             }]}
@@ -634,7 +638,7 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
         let must = body["filter"]["must"].as_array().unwrap();
         let card_clause = must.iter().find(|c| c["key"] == "doc_id").unwrap();
-        let tag_clause = must.iter().find(|c| c["key"] == "chunk_tags").unwrap();
+        let tag_clause = must.iter().find(|c| c["key"] == "tags").unwrap();
         assert_eq!(card_clause["match"]["any"], serde_json::json!(["case1"]));
         assert_eq!(tag_clause["match"]["any"], serde_json::json!(["tag:x"]));
     }
@@ -689,7 +693,7 @@ mod tests {
         let result = client.search(&valid_request()).await.unwrap();
         assert_eq!(result.hits[0].chunk_id, "chunk1");
         assert_eq!(result.hits[0].case_id, "case1");
-        assert_eq!(result.hits[0].chunk_tags, vec!["tag:x"]);
+        assert_eq!(result.hits[0].chunk_tags, vec!["chunk_role:symptom"]);
         assert_eq!(result.hits[0].text, "some text");
     }
 
@@ -701,7 +705,7 @@ mod tests {
                 "payload": {
                     "chunk_id": "c1",
                     "doc_id": 123,
-                    "chunk_tags": ["t"],
+                    "tags": ["t"],
                     "text": "txt"
                 }
             }]}
@@ -729,7 +733,7 @@ mod tests {
                 "payload": {
                     "chunk_id": "c1",
                     "doc_id": "",
-                    "chunk_tags": ["t"],
+                    "tags": ["t"],
                     "text": "txt"
                 }
             }]}
@@ -753,8 +757,8 @@ mod tests {
     async fn one_invalid_hit_fails_whole_mapping() {
         let resp = serde_json::json!({
             "result": {"points": [
-                {"score": 0.9, "payload": {"chunk_id": "c1", "doc_id": "case1", "chunk_tags": ["t"], "text": "ok"}},
-                {"score": 0.7, "payload": {"chunk_id": "c2", "doc_id": 99, "chunk_tags": ["t"], "text": "bad"}}
+                {"score": 0.9, "payload": {"chunk_id": "c1", "doc_id": "case1", "tags": ["t"], "text": "ok"}},
+                {"score": 0.7, "payload": {"chunk_id": "c2", "doc_id": 99, "tags": ["t"], "text": "bad"}}
             ]}
         })
         .to_string();
@@ -787,6 +791,32 @@ mod tests {
         .unwrap();
         let result = client.search(&valid_request()).await.unwrap();
         assert!(result.hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn legacy_chunk_tags_payload_is_still_accepted() {
+        let resp = serde_json::json!({
+            "result": {"points": [{
+                "score": 0.8,
+                "payload": {
+                    "chunk_id": "chunk1",
+                    "doc_id": "case1",
+                    "chunk_tags": ["tag:x", "chunk_role:symptom"],
+                    "text": "some text"
+                }
+            }]}
+        })
+        .to_string();
+        let emb_server = MockHttpServer::new(vec![MockResponse::ok(emb_resp())]).await;
+        let qdrant_server = MockHttpServer::new(vec![MockResponse::ok(resp)]).await;
+        let client = QdrantPracticeChunksCollectionDense::new(
+            emb_config(&emb_server.base_url()),
+            dense_col(&qdrant_server.base_url()),
+            policy(),
+        )
+        .unwrap();
+        let result = client.search(&valid_request()).await.unwrap();
+        assert_eq!(result.hits[0].chunk_tags, vec!["chunk_role:symptom"]);
     }
 
     // ── Hybrid artifact validation ─────────────────────────────────────────────

@@ -363,9 +363,13 @@ the following cases:
 - `RunStateView::new` wraps a borrowed `RunState`;
 - `RunStateView::run_id()` returns the underlying run id;
 - `RunStateView::status()` returns the underlying run status;
+- `RunStateView::iteration_count()` equals `RunState.iterations.len()`;
+- `RunStateView::iteration(iteration_id)` returns the underlying stored
+  iteration borrow for an existing id and `None` for an unknown id;
 - `RunStateView::iterations()` preserves `RunState.iterations` order;
 - `RunStateView::last_iteration()` returns the last iteration;
 - `IterationView::iteration_id()` returns the underlying iteration id;
+- `IterationView::step_count()` equals `RunIteration.step_records.len()`;
 - `IterationView::steps()` preserves `RunIteration.step_records` order;
 - `IterationView::finished_steps()` returns only finished records and preserves
   their relative order;
@@ -377,8 +381,14 @@ the following cases:
 - `StepView` maps `StepRecord::Finished` to `StepView::Finished`;
 - `PendingStepView` returns the underlying `record_id`, `kind`, and
   `started_at`;
+- `PendingStepView::to_owned()` clones the underlying pending record without
+  changing its fields;
 - `FinishedStepView` returns the underlying `record_id`, `kind`, `started_at`,
   `finished_at`, and borrowed `Result<StepResultEnvelope, StepError>`;
+- `FinishedStepView::to_owned()` clones the underlying finished record without
+  changing its fields;
+- `StepView::to_owned()` preserves the pending-versus-finished variant and all
+  underlying fields;
 - `RunStateWriter::new` wraps a mutable `RunState`;
 - `begin_iteration(user_input)` appends a new iteration;
 - `begin_iteration(user_input)` returns `PendingStepAlreadyExists` when any
@@ -415,6 +425,167 @@ the following cases:
   modify `updated_at` or increment `revision`;
 - mutating methods except `archive_run()` return `RunArchived` when the run is
   archived.
+- `StepExecutor::new(...)` stores all supplied leaf modules without extra
+  validation behavior;
+- `StepExecutor::execute(...)` returns `StepError::MissingRequiredInput` when no
+  current iteration exists;
+- `StepExecutor::execute(...)` returns `StepError::InvalidState` for
+  `StepKind::UserInputReceived`;
+- each executable `StepKind` dispatches to the correct leaf-module method;
+- each executable `StepKind` returns the correct `StepResultEnvelope` variant on
+  success;
+- missing required finished inputs return `StepError::MissingRequiredInput`;
+- prerequisite finished steps recorded as `Err(...)` return
+  `StepError::MissingRequiredInput`;
+- mismatched prerequisite success-envelope variants return
+  `StepError::InvalidState`;
+- multi-input steps `IncidentEvidenceRetrieval` and `PromptContextAssembly`
+  require all declared finished inputs from the current iteration;
+- `StepExecutor::execute(...)` reads only the current iteration and does not
+  fall back to earlier iterations.
+- `RunRepository::new(...)` stores the supplied `PostgresRunStateStore`
+  dependency without extra validation behavior;
+- `RunRepository::create_run(...)` rejects a non-empty initial `RunState`;
+- `RunRepository::create_run(...)` maps duplicate-run store failure into
+  `RunRepositoryError::DuplicateRun`;
+- `RunRepository::load_run(...)` returns `Ok(None)` when the requested run does
+  not exist;
+- `RunRepository::append_iteration(...)` persists exactly one iteration and
+  updates the run header;
+- `RunRepository::append_step_record(...)` persists exactly one step record and
+  updates the run header;
+- `RunRepository::finish_step_record(...)` finishes one existing pending step
+  record, updates the run header, and does not create a new step-record row;
+- `RunRepository::update_run_header(...)` updates only the run header;
+- `RunRepository::list_runs(...)` returns rows ordered by `created_at desc`;
+- `RunRepository::list_runs(...)` derives `initial_user_query` from the
+  successful `UserInputReceived` step of the first iteration;
+- `RunRepository::list_runs(...)` derives `final_problem_understanding` from the
+  successful `ResponseValidationAndNormalization` step of the first iteration
+  when present;
+- `RunRepository::list_runs(...)` returns
+  `RunRepositoryError::MissingInitialUserQuery` when a stored run cannot provide
+  the required first-iteration initial user query.
+- `Orchestrator::new(...)` stores the supplied policy, executor, and repository
+  dependencies without extra validation behavior;
+- `run(user_input)` creates an empty run header before appending the first
+  iteration;
+- `run(user_input)` begins exactly one new first iteration from the supplied
+  `UserRequest`;
+- `run(user_input)` persists that first iteration before entering
+  `drive_to_outcome(...)`;
+- `resume(run_id)` loads the existing run and does not create a new iteration;
+- `resume_with_input(run_id, user_input)` loads the existing run, appends
+  exactly one new iteration, and preserves prior iterations unchanged;
+- `load_existing_run(run_id)` maps repository `Ok(None)` into
+  `OrchestratorError::RunNotFound { run_id }`;
+- `drive_to_outcome(...)` asks policy for a new `PolicyTransition` on each loop
+  iteration;
+- when policy returns `ExecuteStep { step }`, orchestrator opens a pending step
+  before calling `StepExecutor::execute(...)`;
+- when policy returns `ExecuteStep { step }`, orchestrator persists the pending
+  step record before calling `StepExecutor::execute(...)`;
+- the pending step persisted by orchestrator uses the same `record_id` returned
+  by `PendingStepWriter::record_id()`;
+- the pending step persisted by orchestrator uses the current iteration last
+  position as `step_sequence_no`;
+- after successful step execution, orchestrator records success in memory and
+  persists the matching finished step through `RunRepository::finish_step_record(...)`;
+- after failed step execution, orchestrator records failure in memory and
+  persists the matching finished step through `RunRepository::finish_step_record(...)`;
+- the finished record persisted by orchestrator uses the same `record_id` as
+  the pending record opened earlier in the loop;
+- `drive_to_outcome(...)` returns `RunOutcome::Finished` when policy returns
+  `FinishWithResult`;
+- `drive_to_outcome(...)` returns `RunOutcome::Failed` when policy returns
+  `FinishWithError`;
+- `drive_to_outcome(...)` never calls `StepExecutor::execute(...)` for
+  `StepKind::UserInputReceived`;
+- `resume(run_id)` preserves already successful finished steps in the current
+  iteration and lets policy continue from the persisted state;
+- `resume_with_input(run_id, user_input)` makes the new last iteration the only
+  iteration inspected by policy and executor for that invocation;
+- orchestrator does not reinterpret `RunOutcome::Finished` as automatic run
+  archival or final closure;
+- orchestrator unit tests may use generated private or `#[cfg(test)]` fakes,
+  spies, adapters, or harness constructors for `StepExecutor` and
+  `RunRepository` as long as the documented production public API remains
+  unchanged.
+
+### 4.14) `api_clients.postgres.run_state_store`
+
+Generated unit tests for `PostgresRunStateStore` must include all of the
+following cases:
+
+- `new(...)` fails when `PostgresRunStateStoreConfig.postgres_url` is empty
+  after trimming;
+- `insert_run(...)` validates the run header before any database write is
+  attempted;
+- `insert_run(...)` writes only the canonical run header fields and does not
+  implicitly write iterations or step records;
+- duplicate `run_id` insert fails with the exact
+  `RunStateStoreError::DuplicateRun(...)` variant;
+- `insert_iteration(...)` preserves the supplied `sequence_no`;
+- `insert_iteration(...)` fails when the parent `run_id` does not exist;
+- duplicate `(run_id, sequence_no)` iteration insert fails with the exact
+  `RunStateStoreError::DuplicateIteration { ... }` variant;
+- `insert_step_record(...)` preserves the supplied `sequence_no`;
+- `insert_step_record(...)` serializes successful finished payloads into
+  `result_json`;
+- `insert_step_record(...)` serializes failed finished payloads into
+  `error_json`;
+- `insert_step_record(...)` fails when the parent `iteration_id` does not
+  exist;
+- duplicate `(iteration_id, sequence_no)` step-record insert fails with the
+  exact `RunStateStoreError::DuplicateStepRecord { ... }` variant;
+- `finish_step_record(...)` updates one existing pending row into its finished
+  form and preserves `record_id`, `iteration_id`, `sequence_no`, `step`, and
+  `started_at`;
+- `finish_step_record(...)` fails with the exact
+  `RunStateStoreError::StepRecordNotFound(...)` variant when `record_id` does
+  not exist;
+- `finish_step_record(...)` fails with the exact
+  `RunStateStoreError::StepRecordAlreadyFinished(...)` variant when the stored
+  row is already finished;
+- `finish_step_record(...)` fails with the exact
+  `RunStateStoreError::StepKindMismatch { ... }` variant when
+  `finished_record.step` does not match the stored step kind;
+- `update_run_header(...)` updates only `status`, `updated_at`, and `revision`
+  on the parent run row;
+- `update_run_header(...)` fails with the exact
+  `RunStateStoreError::MissingParentRun(...)` variant when the target `run_id`
+  does not exist;
+- `load_run(...)` returns `Ok(None)` when the run does not exist;
+- `load_run(...)` reconstructs one canonical `RunState` hierarchy from valid
+  stored rows;
+- `load_run(...)` preserves iteration order by `sequence_no asc`;
+- `load_run(...)` preserves step-record order by `sequence_no asc`;
+- `list_run_ids(...)` returns run ids ordered by `created_at desc`;
+- `list_run_ids(...)` does not load full run hierarchy;
+- `list_run_summaries(...)` returns rows ordered by `created_at desc`;
+- `list_run_summaries(...)` derives `initial_user_query` from the successful
+  `UserInputReceived` step of the first iteration;
+- `list_run_summaries(...)` derives `final_problem_understanding` from the
+  successful `ResponseValidationAndNormalization` step of the first iteration
+  when present;
+- `list_run_summaries(...)` returns `final_problem_understanding = None` when
+  the first iteration has no successful final response;
+- `list_run_summaries(...)` ignores later iterations when building summary
+  fields;
+- `with_transaction(...)` commits child writes when the callback returns
+  `Ok(...)`;
+- `with_transaction(...)` rolls back child writes when the callback returns
+  `Err(...)`;
+- `with_transaction(...)` rolls back all earlier writes in the same callback
+  when a later tx-scoped write fails;
+- read mapping rejects unknown run `status` values;
+- read mapping rejects unknown step kind values;
+- read mapping rejects malformed `result_json`;
+- read mapping rejects malformed `error_json`;
+- read mapping rejects inconsistent pending-versus-finished row shapes;
+- read mapping rejects payload-variant mismatches between stored `step` and
+  deserialized payload;
+- raw SQLx/database errors do not leak through the public interface.
 
 ## 5) Completion Rule
 

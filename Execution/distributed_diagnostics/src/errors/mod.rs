@@ -2,6 +2,7 @@ use thiserror::Error;
 
 pub use crate::api_clients::ApiClientError;
 pub use crate::config::ConfigError;
+pub use crate::startup::StartupError;
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
@@ -9,6 +10,8 @@ pub enum RuntimeError {
     Config(#[from] ConfigError),
     #[error("api clients: {0}")]
     ApiClients(#[from] ApiClientError),
+    #[error("startup: {0}")]
+    Startup(#[from] StartupError),
 }
 
 #[cfg(test)]

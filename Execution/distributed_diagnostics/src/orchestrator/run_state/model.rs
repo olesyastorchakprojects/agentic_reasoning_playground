@@ -41,6 +41,7 @@ mod tests {
         RunIterationId(Uuid::new_v4())
     }
 
+    #[allow(dead_code)]
     fn pending(kind: StepKind) -> StepRecord {
         StepRecord::Pending(PendingStepRecord {
             record_id: step_record_id(),
@@ -60,6 +61,7 @@ mod tests {
         })
     }
 
+    #[allow(dead_code)]
     fn finished_err(kind: StepKind, error: StepError) -> StepRecord {
         let now = Utc::now();
         StepRecord::Finished(FinishedStepRecord {
@@ -73,6 +75,15 @@ mod tests {
 
     fn user_input_result() -> StepResultEnvelope {
         StepResultEnvelope::UserInputReceived(user_req())
+    }
+
+    #[test]
+    fn run_state_new_creates_empty_active_run() {
+        let state = RunState::new();
+        assert_eq!(state.status, RunStatus::Active);
+        assert_eq!(state.revision, 0);
+        assert!(state.iterations.is_empty());
+        assert!(state.updated_at >= state.created_at);
     }
 
     // ─── Module structure: types importable from documented paths ─────────────
@@ -398,6 +409,20 @@ pub struct RunState {
     pub updated_at: DateTime<Utc>,
     pub revision: u64,
     pub iterations: Vec<RunIteration>,
+}
+
+impl RunState {
+    pub fn new() -> Self {
+        let now = Utc::now();
+        Self {
+            run_id: RunId(Uuid::new_v4()),
+            status: RunStatus::Active,
+            created_at: now,
+            updated_at: now,
+            revision: 0,
+            iterations: vec![],
+        }
+    }
 }
 
 #[derive(

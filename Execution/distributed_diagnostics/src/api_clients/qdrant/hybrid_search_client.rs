@@ -249,6 +249,7 @@ fn percent_encode_path(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_clients::qdrant::QdrantPayloadValue;
     use crate::test_utils::{MockHttpServer, MockResponse};
     use crate::utils::retry::RetryBackoffKind;
 
@@ -419,16 +420,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unsupported_payload_shape_returns_invalid_response() {
+    async fn nested_payload_objects_are_ignored() {
         let resp = serde_json::json!({
-            "result": {"points": [{"score": 0.5, "payload": {"nested": {"a": "b"}}}]}
+            "result": {"points": [{"score": 0.5, "payload": {"x": "y", "nested": {"a": "b"}}}]}
         })
         .to_string();
         let server = MockHttpServer::new(vec![MockResponse::ok(resp)]).await;
         let c = client(&server.base_url());
-        assert!(matches!(
-            c.search(&simple_request()).await.unwrap_err(),
-            HybridSearchClientError::InvalidResponse(_)
-        ));
+        let response = c.search(&simple_request()).await.unwrap();
+        assert_eq!(response.hits.len(), 1);
+        assert_eq!(
+            response.hits[0].payload.fields.get("x"),
+            Some(&QdrantPayloadValue::String("y".to_string()))
+        );
+        assert!(!response.hits[0].payload.fields.contains_key("nested"));
     }
 }

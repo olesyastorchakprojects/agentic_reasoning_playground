@@ -10,7 +10,7 @@ kind = "hybrid"
 corpus_version = "v1"
 
 [qdrant.collections.cards.dense]
-name = "todo_cards_dense_collection"
+name = "incident_cards_qwen3"
 vector_name = "dense"
 
 [qdrant.collections.cards.hybrid]
@@ -30,15 +30,15 @@ lowercase = true
 min_token_length = 2
 
 [qdrant.collections.cards.hybrid.sparse.bag_of_words]
-name = "todo_cards_hybrid_bow_collection"
+name = "incident_cards_qwen3"
 query = "binary_presence"
-sparse_vocabulary_path = "Execution/artifacts/vocabularies/todo_cards__sparse_vocabulary.json"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/incident_cards_qwen3__sparse_vocabulary.json"
 
 [qdrant.collections.cards.hybrid.sparse.bm25_like]
-name = "todo_cards_hybrid_bm25_collection"
+name = "incident_cards_qwen3_bm25"
 query = "bm25_query_weight"
-sparse_vocabulary_path = "Execution/artifacts/vocabularies/todo_cards_bm25__sparse_vocabulary.json"
-bm25_term_stats_path = "Execution/artifacts/term_stats/todo_cards_bm25__term_stats.json"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/incident_cards_qwen3__sparse_vocabulary.json"
+bm25_term_stats_path = "Execution/artifacts/term_stats/incident_cards_qwen3_bm25__term_stats.json"
 k1 = 1.2
 b = 0.75
 idf_smoothing = 0.5
@@ -73,7 +73,7 @@ query = "binary_presence"
 sparse_vocabulary_path = "Execution/artifacts/vocabularies/todo_practice__sparse_vocabulary.json"
 
 [qdrant.collections.practice.hybrid.sparse.bm25_like]
-name = "practice_failure_cases_amazon_rds_pg_bm25"
+name = "practice_failure_cases_bm25"
 query = "bm25_query_weight"
 sparse_vocabulary_path = "Execution/artifacts/vocabularies/practice_failure_cases__sparse_vocabulary.json"
 bm25_term_stats_path = "Execution/artifacts/term_stats/practice_failure_cases_bm25__term_stats.json"
