@@ -68,9 +68,24 @@ impl RunRepository {
         step_sequence_no: u64,
         step_record: &StepRecord,
     ) -> Result<(), RunRepositoryError> {
+        let run_id_str = run.run_id.0.to_string();
+        let iter_id_str = iteration_id.0.to_string();
+        let (step_kind_str, record_id_str) = match step_record {
+            StepRecord::Pending(p) => (p.step.as_ref().to_string(), p.record_id.0.to_string()),
+            StepRecord::Finished(f) => (f.step.as_ref().to_string(), f.record_id.0.to_string()),
+        };
+        let span = crate::observability::append_pending_span(
+            &run_id_str,
+            &iter_id_str,
+            &step_kind_str,
+            &record_id_str,
+        );
+        let _entered = span.enter();
+
         let run = run.clone();
         let step_record = step_record.clone();
-        self.run_state_store
+        let result = self
+            .run_state_store
             .with_transaction(|tx: &mut PostgresRunStateStoreTx<'_>| {
                 Box::pin(async move {
                     tx.insert_step_record(iteration_id, step_sequence_no, &step_record)
@@ -81,7 +96,9 @@ impl RunRepository {
                 })
             })
             .await
-            .map_err(map_store_error)
+            .map_err(map_store_error);
+        span.record("status", if result.is_ok() { "ok" } else { "error" });
+        result
     }
 
     pub async fn finish_step_record(
@@ -90,7 +107,30 @@ impl RunRepository {
         record_id: StepRecordId,
         finished_record: &FinishedStepRecord,
     ) -> Result<(), RunRepositoryError> {
+        let run_id_str = run.run_id.0.to_string();
+        let iter_id_str = run
+            .iterations
+            .iter()
+            .find(|it| {
+                it.step_records.iter().any(|r| match r {
+                    StepRecord::Finished(f) => f.record_id == record_id,
+                    StepRecord::Pending(p) => p.record_id == record_id,
+                })
+            })
+            .map(|it| it.iteration_id.0.to_string())
+            .unwrap_or_default();
+        let step_kind_str = finished_record.step.as_ref().to_string();
+        let record_id_str = record_id.0.to_string();
+        let span = crate::observability::finish_step_span(
+            &run_id_str,
+            &iter_id_str,
+            &step_kind_str,
+            &record_id_str,
+        );
+        let _entered = span.enter();
+
         if finished_record.record_id != record_id {
+            span.record("status", "error");
             return Err(RunRepositoryError::InvalidRunState {
                 message: "finished_record.record_id must equal the supplied record_id".to_string(),
             });
@@ -98,7 +138,8 @@ impl RunRepository {
 
         let run = run.clone();
         let finished_record = finished_record.clone();
-        self.run_state_store
+        let result = self
+            .run_state_store
             .with_transaction(|tx: &mut PostgresRunStateStoreTx<'_>| {
                 Box::pin(async move {
                     tx.finish_step_record(record_id, &finished_record).await?;
@@ -108,7 +149,9 @@ impl RunRepository {
                 })
             })
             .await
-            .map_err(map_store_error)
+            .map_err(map_store_error);
+        span.record("status", if result.is_ok() { "ok" } else { "error" });
+        result
     }
 
     pub async fn update_run_header(&self, run: &RunState) -> Result<(), RunRepositoryError> {

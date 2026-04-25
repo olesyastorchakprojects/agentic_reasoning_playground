@@ -125,5 +125,5 @@ backoff = "exponential"
 [observability]
 tracing_enabled = true
 metrics_enabled = true
-trace_batch_scheduled_delay_ms = 5000
-metrics_export_interval_ms = 60000
+trace_batch_scheduled_delay_ms = 2000
+metrics_export_interval_ms = 1000

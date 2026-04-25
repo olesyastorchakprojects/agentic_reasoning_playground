@@ -27,7 +27,7 @@ The required local reference set is:
 Reference artifacts are:
 - templates;
 - local sources of truth for wiring patterns;
-- not runtime artifacts of `rag_runtime`.
+- not runtime artifacts of `distributed_diagnostics`.
 - references do not define the required runtime dashboard inventory or panel layout.
 
 Generated project artifacts belong under `Measurement/observability/`.

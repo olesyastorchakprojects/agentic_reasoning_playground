@@ -2,6 +2,7 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 
 use clap::Parser;
+use distributed_diagnostics::observability::ObservabilityRuntime;
 use distributed_diagnostics::orchestrator::orchestrator::RunOutcome;
 use distributed_diagnostics::shared_types::UserRequest;
 use distributed_diagnostics::{config, startup, RuntimeError};
@@ -22,6 +23,9 @@ struct Cli {
 async fn main() -> Result<(), RuntimeError> {
     let cli = Cli::parse();
     let settings = config::load(&cli.config, &cli.ingest_config).map_err(RuntimeError::Config)?;
+
+    let _observability =
+        ObservabilityRuntime::initialize(&settings.observability).map_err(RuntimeError::Observability)?;
 
     let orchestrator = startup::build_orchestrator(&settings).await?;
 
