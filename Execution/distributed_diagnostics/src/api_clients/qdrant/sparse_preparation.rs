@@ -65,7 +65,9 @@ pub fn build_sparse_vector(
     bm25_stats: Option<&Bm25TermStatsArtifact>,
     strategy: &SparseStrategyConfig,
 ) -> Result<SparseVector, &'static str> {
-    let raw_tokens = tokenizer.tokenize(text);
+    let raw_tokens = tokenizer
+        .tokenize(text)
+        .map_err(|_| "failed to tokenize sparse query")?;
     let tokens = apply_sparse_normalization(raw_tokens, vocab.lowercase, vocab.min_token_length);
 
     match strategy {
@@ -313,7 +315,7 @@ mod tests {
         assert!(loaded.bm25_term_stats.is_none());
         assert_eq!(
             loaded.tokenizer.tokenize("service down"),
-            vec!["service".to_string(), "down".to_string()]
+            Ok(vec!["service".to_string(), "down".to_string()])
         );
     }
 

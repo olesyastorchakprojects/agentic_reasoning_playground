@@ -8,6 +8,7 @@ use crate::shared_types::{
     PromptEvidenceRole, PromptIncidentEvidenceChunk, PromptTheoryEvidenceChunk,
     QueryStructuringOutput, StructuredUserQuery, TheoryEvidenceRetrievalOutput,
 };
+use tracing::{field, info_span};
 
 // ---------------------------------------------------------------------------
 // Error boundary
@@ -140,10 +141,78 @@ impl PromptContextAssembly {
         incident_evidence: &IncidentEvidenceRetrievalOutput,
         theory_evidence: &TheoryEvidenceRetrievalOutput,
     ) -> Result<PromptContextAssemblyOutput, PromptContextAssemblyError> {
+        let primary_card_present = cards.primary.is_some();
+        let primary_card_case_id = cards
+            .primary
+            .as_ref()
+            .map(|card| card.case_id.as_str())
+            .unwrap_or("");
+        let alternative_card_case_ids: Vec<&str> =
+            cards.alternatives.iter().map(|card| card.case_id.as_str()).collect();
+        let primary_incident_chunk_ids: Vec<&str> = incident_evidence
+            .primary_chunks
+            .iter()
+            .map(|chunk| chunk.chunk_id.as_str())
+            .collect();
+        let alternative_incident_chunk_ids: Vec<&str> = incident_evidence
+            .alternative_chunks
+            .iter()
+            .map(|chunk| chunk.chunk_id.as_str())
+            .collect();
+        let theory_chunk_ids: Vec<&str> = theory_evidence
+            .chunks
+            .iter()
+            .map(|chunk| chunk.chunk_id.as_str())
+            .collect();
+        let structured_query_json = serde_json::to_string(&query.structured_query)
+            .unwrap_or_else(|_| "{}".to_string());
+
+        let span = info_span!(
+            "request_pipeline.prompt_context_assembly",
+            module.name = "prompt_context_assembly",
+            query.normalized = %request.query,
+            structured_query.json = %structured_query_json,
+            prompt.asset.name = %self.prompt_asset.name,
+            prompt.asset.version = %self.prompt_asset.version,
+            prompt.asset.policy_constraints_count = self.prompt_asset.policy_constraints.len() as i64,
+            prompt.input.primary_card_present = primary_card_present,
+            prompt.input.primary_card.case_id = primary_card_case_id,
+            prompt.input.alternative_cards_count = cards.alternatives.len() as i64,
+            prompt.input.alternative_card.case_ids = %serde_json::to_string(&alternative_card_case_ids).unwrap_or_else(|_| "[]".to_string()),
+            prompt.input.primary_incident_chunks_count = incident_evidence.primary_chunks.len() as i64,
+            prompt.input.primary_incident_chunk_ids = %serde_json::to_string(&primary_incident_chunk_ids).unwrap_or_else(|_| "[]".to_string()),
+            prompt.input.alternative_incident_chunks_count = incident_evidence.alternative_chunks.len() as i64,
+            prompt.input.alternative_incident_chunk_ids = %serde_json::to_string(&alternative_incident_chunk_ids).unwrap_or_else(|_| "[]".to_string()),
+            prompt.input.theory_chunks_count = theory_evidence.chunks.len() as i64,
+            prompt.input.theory_chunk_ids = %serde_json::to_string(&theory_chunk_ids).unwrap_or_else(|_| "[]".to_string()),
+            prompt.selected.total_chunks_count = field::Empty,
+            prompt.selected.evidence_for_match.count = field::Empty,
+            prompt.selected.first_check_hint.count = field::Empty,
+            prompt.selected.supporting_explanation.count = field::Empty,
+            prompt.selected.alternative_context.count = field::Empty,
+            prompt.selected.mechanism_explanation.count = field::Empty,
+            prompt.rendered_chars = field::Empty,
+            prompt.context_json_chars = field::Empty,
+            prompt.has_competing_precedent_context = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        let _guard = span.enter();
+
         let primary_card = cards
             .primary
             .as_ref()
-            .ok_or(PromptContextAssemblyError::MissingPrimaryCard)?;
+            .ok_or_else(|| {
+                record_prompt_context_error(
+                    &span,
+                    "PromptContextAssembly.MissingPrimaryCard",
+                    "missing hydrated primary card",
+                );
+                PromptContextAssemblyError::MissingPrimaryCard
+            })?;
 
         let mut already_selected: HashSet<String> = HashSet::new();
 
@@ -153,7 +222,11 @@ impl PromptContextAssembly {
             &mut already_selected,
             PromptEvidenceRole::EvidenceForMatch,
             true,
-        )?;
+        )
+        .map_err(|e| {
+            record_prompt_context_error_for_err(&span, &e);
+            e
+        })?;
 
         let fch = select_primary_role(
             &incident_evidence.primary_chunks,
@@ -161,7 +234,11 @@ impl PromptContextAssembly {
             &mut already_selected,
             PromptEvidenceRole::FirstCheckHint,
             true,
-        )?;
+        )
+        .map_err(|e| {
+            record_prompt_context_error_for_err(&span, &e);
+            e
+        })?;
 
         let se = select_primary_role(
             &incident_evidence.primary_chunks,
@@ -169,7 +246,11 @@ impl PromptContextAssembly {
             &mut already_selected,
             PromptEvidenceRole::SupportingExplanation,
             false,
-        )?;
+        )
+        .map_err(|e| {
+            record_prompt_context_error_for_err(&span, &e);
+            e
+        })?;
 
         let ac = select_alternative_context(
             &incident_evidence.alternative_chunks,
@@ -195,10 +276,12 @@ impl PromptContextAssembly {
         let primary_case_id = &primary_card.case_id;
         for chunk in efm.iter().chain(fch.iter()).chain(se.iter()) {
             if chunk.case_id != *primary_case_id {
-                return Err(PromptContextAssemblyError::InconsistentEvidence(format!(
+                let err = PromptContextAssemblyError::InconsistentEvidence(format!(
                     "primary chunk '{}' case_id '{}' does not match primary card '{}'",
                     chunk.chunk_id, chunk.case_id, primary_case_id
-                )));
+                ));
+                record_prompt_context_error_for_err(&span, &err);
+                return Err(err);
             }
         }
 
@@ -208,14 +291,21 @@ impl PromptContextAssembly {
                 .iter()
                 .any(|c| c.case_id == chunk.case_id);
             if !found {
-                return Err(PromptContextAssemblyError::InconsistentEvidence(format!(
+                let err = PromptContextAssemblyError::InconsistentEvidence(format!(
                     "alternative chunk '{}' case_id '{}' has no hydrated alternative card",
                     chunk.chunk_id, chunk.case_id
-                )));
+                ));
+                record_prompt_context_error_for_err(&span, &err);
+                return Err(err);
             }
         }
 
         // Assemble incident chunks in role order
+        let efm_count = efm.len();
+        let fch_count = fch.len();
+        let se_count = se.len();
+        let ac_count = ac.len();
+        let theory_count = theory_chunks.len();
         let mut incident_chunks = Vec::new();
         incident_chunks.extend(efm);
         incident_chunks.extend(fch);
@@ -225,6 +315,7 @@ impl PromptContextAssembly {
         // Build competing_precedent_context
         let competing_precedent_context =
             build_competing_precedent(&incident_chunks, &cards.alternatives);
+        let has_competing_precedent_context = !competing_precedent_context.is_empty();
 
         // Build normalized incident query
         let normalized_incident_query = build_normalized_incident_query(&query.structured_query);
@@ -243,7 +334,11 @@ impl PromptContextAssembly {
         };
 
         let json_str = serde_json::to_string_pretty(&ctx).map_err(|e| {
-            PromptContextAssemblyError::PromptAsset(format!("JSON serialization failed: {e}"))
+            let err = PromptContextAssemblyError::PromptAsset(format!(
+                "JSON serialization failed: {e}"
+            ));
+            record_prompt_context_error_for_err(&span, &err);
+            err
         })?;
 
         let prompt = self.prompt_asset.template.replacen(
@@ -252,11 +347,76 @@ impl PromptContextAssembly {
             1,
         );
 
+        span.record("prompt.selected.evidence_for_match.count", efm_count as i64);
+        span.record("prompt.selected.first_check_hint.count", fch_count as i64);
+        span.record("prompt.selected.supporting_explanation.count", se_count as i64);
+        span.record("prompt.selected.alternative_context.count", ac_count as i64);
+        span.record("prompt.selected.mechanism_explanation.count", theory_count as i64);
+        span.record(
+            "prompt.selected.total_chunks_count",
+            (incident_chunks.len() + theory_chunks.len()) as i64,
+        );
+        span.record("prompt.rendered_chars", prompt.len() as i64);
+        span.record("prompt.context_json_chars", json_str.len() as i64);
+        span.record(
+            "prompt.has_competing_precedent_context",
+            has_competing_precedent_context,
+        );
+        span.record("module.outcome", "success");
+        span.record("status", "ok");
+
         Ok(PromptContextAssemblyOutput {
             prompt,
             incident_evidence_chunks: incident_chunks,
             theory_chunks,
         })
+    }
+}
+
+fn record_prompt_context_error(
+    span: &tracing::Span,
+    error_type: &'static str,
+    error_message: &str,
+) {
+    span.record("module.outcome", "failure");
+    span.record("status", "error");
+    span.record("error.type", error_type);
+    span.record("error.message", error_message);
+}
+
+fn record_prompt_context_error_for_err(
+    span: &tracing::Span,
+    err: &PromptContextAssemblyError,
+) {
+    match err {
+        PromptContextAssemblyError::InvalidSettings(message) => record_prompt_context_error(
+            span,
+            "PromptContextAssembly.InvalidSettings",
+            message,
+        ),
+        PromptContextAssemblyError::PromptAsset(message) => record_prompt_context_error(
+            span,
+            "PromptContextAssembly.PromptAsset",
+            message,
+        ),
+        PromptContextAssemblyError::MissingPrimaryCard => record_prompt_context_error(
+            span,
+            "PromptContextAssembly.MissingPrimaryCard",
+            "missing hydrated primary card",
+        ),
+        PromptContextAssemblyError::MissingRequiredEvidence { role } => {
+            let message = format!("missing required evidence for role: {:?}", role);
+            record_prompt_context_error(
+                span,
+                "PromptContextAssembly.MissingRequiredEvidence",
+                &message,
+            );
+        }
+        PromptContextAssemblyError::InconsistentEvidence(message) => record_prompt_context_error(
+            span,
+            "PromptContextAssembly.InconsistentEvidence",
+            message,
+        ),
     }
 }
 

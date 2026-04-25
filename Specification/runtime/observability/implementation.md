@@ -8,6 +8,8 @@ It defines:
 - required typed settings type;
 - required initialization order;
 - root span implementation pattern;
+- failure propagation pattern;
+- leaf-module event pattern;
 - trace exporter strategy;
 - metric exporter strategy;
 - provider lifecycle and graceful shutdown requirements;
@@ -97,6 +99,10 @@ The implementation defines internal observability methods and helpers for:
 - step orchestration span creation
 - repository persistence span creation
 - executor dispatch span creation
+- leaf request-pipeline span creation
+- leaf dependency span creation
+- leaf diagnostic event emission
+- stable error classification
 - graceful shutdown ownership
 
 The implementation keeps this internal observability API inside `src/observability/mod.rs`.
@@ -108,6 +114,12 @@ Tracing primitive rule:
 - orchestration spans are created with `tracing::span!`;
 - `tracing_opentelemetry` is the export bridge layer;
 - the internal observability API does not create orchestration spans through OpenTelemetry SDK APIs directly.
+- where UI readability benefits from it, the internal observability API may set `otel.name` on `tracing` spans before export.
+
+Leaf-module tracing rule:
+- leaf request-pipeline modules also create their spans with `tracing::span!` or `tracing::info_span!(...)`;
+- leaf modules may emit compact diagnostic events inside the active leaf span;
+- orchestrator lifecycle events remain forbidden even when leaf-module events are allowed.
 
 # 5) Initialization Pattern
 
@@ -295,6 +307,24 @@ Parentage propagation rule:
 - repository and executor code rely on the active entered parent `tracing` span for parent-child relationship formation;
 - explicit span-context plumbing between orchestrator, repository, executor, and request-pipeline layers is forbidden.
 
+Leaf visibility rule:
+- leaf modules may record raw user query, normalized user query, structured query JSON, and final structured output JSON as allowed by `Specification/runtime/observability/spans.md`;
+- leaf modules must not record full prompt text, raw retrieved chunk text, or large raw model output into spans or events;
+- when structured serialized payloads become too large, the implementation must omit, summarize, or explicitly truncate them.
+- leaf modules must not synthesize unavailable raw-input fields; for example, a module that receives only a normalized request records `query.normalized` and does not fabricate `query.raw`.
+
+Leaf identity propagation rule:
+- leaf modules inherit run, iteration, step, sequence, and record identity through span parentage from `step_executor.dispatch` and higher orchestration spans;
+- leaf modules do not duplicate those orchestration identity attributes on every leaf span unless an explicit querying requirement has been added to the contract.
+
+Sequence and policy-context rule:
+- the implementation records `step.sequence_no` on mandatory step-oriented spans when that step sequence is known;
+- the implementation records compact policy context through:
+  - `policy.finished_steps_count`
+  - `policy.pending_step_present`
+  - `policy.last_finished_step.kind` when present
+- the implementation must not dump full `RunState`, full finished-step lists, or full `StepRecord` payloads into policy spans.
+
 ========================
 13) Async Block Rules
 ========================
@@ -353,6 +383,12 @@ Method-entry events must not include:
 - raw request bodies;
 - raw response bodies.
 
+Failure-attribute rule:
+- use `error.type` for stable error classification;
+- use `error.message` for the human-readable failure text;
+- full error text is allowed in `error.message` for this demo project when it does not violate the explicit safety constraints in `Specification/runtime/observability/spans.md`;
+- do not introduce a parallel `error.kind` field.
+
 ========================
 15) Settings Usage Rules
 ========================
@@ -404,6 +440,43 @@ Required mandatory span attribute pattern:
 
 - `span.module`, `span.stage`, and `status` are declared explicitly when the mandatory span is created;
 - method input values are not encoded as mandatory span attributes.
+- when a step span becomes associated with a persisted step record, the implementation writes `record.id` onto the parent step span;
+- when a failed business-step result is successfully persisted, `repository.step.finish` records `persisted.step.outcome = "failure"` while keeping repository `status = "ok"`.
+
+Failure propagation pattern:
+- when `step_executor.dispatch` ends in failure, it records:
+  - `status = "error"`
+  - `step.outcome = "failure"`
+  - `error.type`
+  - `error.message`
+- the owning `orchestrator.step` records the same business-step failure outcome;
+- the active `diagnostics.iteration` records `status = "error"`;
+- the root `diagnostics.run` records:
+  - `status = "error"`
+  - `run.outcome = "failure"`
+  - `failed_step.kind` when the failed step is known
+- if the invocation ends normally through `FinishWithResult`, `diagnostics.run` records:
+  - `status = "ok"`
+  - `run.outcome = "success"`
+  - `terminal.transition = "FinishWithResult"`
+- if the invocation ends through `FinishWithError`, `diagnostics.run` records:
+  - `status = "error"`
+  - `run.outcome = "failure"`
+  - `terminal.transition = "FinishWithError"`
+
+OpenTelemetry status-code rule:
+- when the project stack supports it cleanly, failed spans should also emit the corresponding OpenTelemetry error status code;
+- this does not replace the required `status = "error"` attribute contract.
+
+Event suppression rule:
+- do not add duplicate step lifecycle events for pending-opened, pending-persisted, execution-started, execution-finished, or finished-persisted boundaries;
+- the contract uses explicit spans for those boundaries instead of duplicate lifecycle events.
+
+Leaf event rule:
+- leaf-module diagnostic events are allowed only for internal module decisions and observations;
+- leaf-module events must remain compact and must not duplicate orchestrator lifecycle boundaries that are already represented by spans;
+- application code must not emit a leaf event unless the event's required payload fields are explicitly defined in `Specification/runtime/observability/spans.md`;
+- generic `*_completed`, `*_received`, and `*_checked` events that only restate span status or existing span attributes should be omitted.
 
 ========================
 17) Log Filter Contract

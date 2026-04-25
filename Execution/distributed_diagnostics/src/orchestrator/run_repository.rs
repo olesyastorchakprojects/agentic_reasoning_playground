@@ -9,6 +9,17 @@ use crate::orchestrator::run_state::model::{
     StepRecordId,
 };
 
+fn repository_error_type(e: &RunRepositoryError) -> &'static str {
+    match e {
+        RunRepositoryError::DuplicateRun { .. } => "RunRepositoryError.DuplicateRun",
+        RunRepositoryError::InvalidRunState { .. } => "RunRepositoryError.InvalidRunState",
+        RunRepositoryError::MissingInitialUserQuery { .. } => {
+            "RunRepositoryError.MissingInitialUserQuery"
+        }
+        RunRepositoryError::Store(_) => "RunRepositoryError.Store",
+    }
+}
+
 #[derive(Debug)]
 pub struct RunRepository {
     run_state_store: PostgresRunStateStore,
@@ -79,6 +90,7 @@ impl RunRepository {
             &iter_id_str,
             &step_kind_str,
             &record_id_str,
+            step_sequence_no,
         );
         let _entered = span.enter();
 
@@ -97,7 +109,11 @@ impl RunRepository {
             })
             .await
             .map_err(map_store_error);
-        span.record("status", if result.is_ok() { "ok" } else { "error" });
+        if let Err(e) = &result {
+            crate::observability::record_error(&span, repository_error_type(e), &e.to_string());
+        } else {
+            span.record("status", "ok");
+        }
         result
     }
 
@@ -108,19 +124,24 @@ impl RunRepository {
         finished_record: &FinishedStepRecord,
     ) -> Result<(), RunRepositoryError> {
         let run_id_str = run.run_id.0.to_string();
-        let iter_id_str = run
+        let (iter_id_str, step_sequence_no) = run
             .iterations
             .iter()
-            .find(|it| {
-                it.step_records.iter().any(|r| match r {
-                    StepRecord::Finished(f) => f.record_id == record_id,
-                    StepRecord::Pending(p) => p.record_id == record_id,
+            .find_map(|it| {
+                it.step_records.iter().enumerate().find_map(|(idx, r)| match r {
+                    StepRecord::Finished(f) if f.record_id == record_id => {
+                        Some((it.iteration_id.0.to_string(), idx as u64))
+                    }
+                    StepRecord::Pending(p) if p.record_id == record_id => {
+                        Some((it.iteration_id.0.to_string(), idx as u64))
+                    }
+                    _ => None,
                 })
             })
-            .map(|it| it.iteration_id.0.to_string())
             .unwrap_or_default();
         let step_kind_str = finished_record.step.as_ref().to_string();
         let record_id_str = record_id.0.to_string();
+        let persisted_step_outcome = if finished_record.result.is_ok() { "success" } else { "failure" };
         let span = crate::observability::finish_step_span(
             &run_id_str,
             &iter_id_str,
@@ -128,6 +149,8 @@ impl RunRepository {
             &record_id_str,
         );
         let _entered = span.enter();
+        span.record("step.sequence_no", step_sequence_no);
+        span.record("persisted.step.outcome", persisted_step_outcome);
 
         if finished_record.record_id != record_id {
             span.record("status", "error");
@@ -150,7 +173,11 @@ impl RunRepository {
             })
             .await
             .map_err(map_store_error);
-        span.record("status", if result.is_ok() { "ok" } else { "error" });
+        if let Err(e) = &result {
+            crate::observability::record_error(&span, repository_error_type(e), &e.to_string());
+        } else {
+            span.record("status", "ok");
+        }
         result
     }
 

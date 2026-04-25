@@ -5,6 +5,7 @@ use crate::api_clients::qdrant::cards_collection::{
 };
 use crate::api_clients::qdrant::shared_types::NormalizedUserQuery;
 use crate::shared_types::{CandidateCard, CandidateCardRetrievalOutput, NormalizedUserRequest};
+use tracing::{info_span, field, Instrument};
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
@@ -87,20 +88,115 @@ impl CandidateCardRetrieval {
         &self,
         request: &NormalizedUserRequest,
     ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError> {
+        let query = request.query.clone();
+
+        let span = info_span!(
+            "request_pipeline.candidate_card_retrieval",
+            module.name = "candidate_card_retrieval",
+            query.normalized = %query,
+            retrieval.collection = "cards",
+            retrieval.top_k = self.top_k,
+            retrieval.score_threshold = self.score_threshold,
+            retrieval.max_alternatives = self.max_alternatives,
+            retrieval.request_limit = self.top_k,
+            retrieval.hits_count = field::Empty,
+            retrieval.selected_total_count = field::Empty,
+            retrieval.scores = field::Empty,
+            candidate.primary.present = field::Empty,
+            candidate.primary.case_id = field::Empty,
+            candidate.primary.score = field::Empty,
+            candidate.alternatives.count = field::Empty,
+            candidate.alternatives.case_ids = field::Empty,
+            candidate.output.total_count = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        self.retrieve_instrumented(request).instrument(span).await
+    }
+
+    async fn retrieve_instrumented(
+        &self,
+        request: &NormalizedUserRequest,
+    ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError> {
         let search_request = CardSearchRequest {
             user_query: NormalizedUserQuery(request.query.clone()),
             limit: self.top_k,
             score_threshold: self.score_threshold,
         };
 
-        let result = self.cards_collection.search(&search_request).await?;
+        let qdrant_span = info_span!(
+            "qdrant.cards.search",
+            qdrant.collection = "cards",
+            qdrant.operation = "search",
+            retrieval.limit = self.top_k,
+            retrieval.score_threshold = self.score_threshold,
+            retrieval.hits_count = field::Empty,
+            retrieval.scores = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        let result = {
+            async {
+                match self.cards_collection.search(&search_request).await {
+                    Ok(r) => {
+                        let scores: Vec<f32> = r.hits.iter().map(|h| h.score).collect();
+                        let hits_count = r.hits.len();
+                        tracing::Span::current().record("retrieval.hits_count", hits_count);
+                        tracing::Span::current().record("retrieval.scores", format!("{:?}", scores));
+                        tracing::Span::current().record("status", "ok");
+                        Ok(r)
+                    }
+                    Err(e) => {
+                        tracing::Span::current().record("status", "error");
+                        tracing::Span::current().record("error.type", "CandidateCardRetrieval.Collection");
+                        tracing::Span::current()
+                            .record("error.message", format!("Qdrant search failed: {}", e));
+                        Err(e)
+                    }
+                }
+            }
+            .instrument(qdrant_span)
+            .await
+        };
+
+        let result = match result {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::Span::current().record("module.outcome", "failure");
+                tracing::Span::current().record("status", "error");
+                tracing::Span::current().record("error.type", "CandidateCardRetrieval.Collection");
+                tracing::Span::current()
+                    .record("error.message", format!("Qdrant search failed: {}", e));
+                return Err(CandidateCardRetrievalError::Collection(e));
+            }
+        };
 
         if result.hits.is_empty() {
+            tracing::Span::current().record("retrieval.hits_count", 0);
+            tracing::Span::current().record("retrieval.scores", "[]");
+            tracing::Span::current().record("candidate.primary.present", false);
+            tracing::Span::current().record("candidate.alternatives.count", 0);
+            tracing::Span::current().record("candidate.alternatives.case_ids", "[]");
+            tracing::Span::current().record("candidate.output.total_count", 0);
+            tracing::Span::current().record("retrieval.selected_total_count", 0);
+            tracing::Span::current().record("module.outcome", "success");
+            tracing::Span::current().record("status", "ok");
+
             return Ok(CandidateCardRetrievalOutput {
                 primary: None,
                 alternatives: vec![],
             });
         }
+
+        let scores: Vec<f32> = result.hits.iter().map(|h| h.score).collect();
+        let hits_count = result.hits.len();
+        tracing::Span::current().record("retrieval.hits_count", hits_count);
+        tracing::Span::current().record("retrieval.scores", format!("{:?}", scores));
 
         let mut hits = result.hits.into_iter();
 
@@ -109,13 +205,32 @@ impl CandidateCardRetrieval {
             score: h.score,
         });
 
-        let alternatives = hits
+        let alternatives: Vec<CandidateCard> = hits
             .take(self.max_alternatives)
             .map(|h| CandidateCard {
                 case_id: h.case_id,
                 score: h.score,
             })
             .collect();
+
+        let primary_present = primary.is_some();
+        let primary_case_id = primary.as_ref().map(|p| p.case_id.as_str()).unwrap_or("");
+        let primary_score = primary.as_ref().map(|p| p.score).unwrap_or(0.0);
+        let alt_case_ids: Vec<&str> = alternatives.iter().map(|a| a.case_id.as_str()).collect();
+        let alt_count = alternatives.len();
+        let total_count = (if primary_present { 1 } else { 0 }) + alt_count;
+
+        tracing::Span::current().record("candidate.primary.present", primary_present);
+        if primary_present {
+            tracing::Span::current().record("candidate.primary.case_id", primary_case_id);
+            tracing::Span::current().record("candidate.primary.score", primary_score);
+        }
+        tracing::Span::current().record("candidate.alternatives.count", alt_count);
+        tracing::Span::current().record("candidate.alternatives.case_ids", format!("{:?}", alt_case_ids));
+        tracing::Span::current().record("candidate.output.total_count", total_count);
+        tracing::Span::current().record("retrieval.selected_total_count", total_count);
+        tracing::Span::current().record("module.outcome", "success");
+        tracing::Span::current().record("status", "ok");
 
         Ok(CandidateCardRetrievalOutput {
             primary,

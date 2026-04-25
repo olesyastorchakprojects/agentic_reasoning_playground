@@ -8,6 +8,7 @@ use crate::config::CollectionRetrievalSettings;
 use crate::shared_types::{
     NormalizedUserRequest, TheoryEvidenceChunk, TheoryEvidenceRetrievalOutput,
 };
+use tracing::{info_span, field, Instrument};
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
@@ -69,19 +70,104 @@ impl TheoryEvidenceRetrieval {
         &self,
         request: &NormalizedUserRequest,
     ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError> {
+        let query = request.query.clone();
+        let collection_name = match &self.settings.collection {
+            crate::config::CollectionSettings::Dense(dense) => dense.name.clone(),
+            crate::config::CollectionSettings::Hybrid(_) => "theory_chunks".to_string(),
+        };
+
+        let span = info_span!(
+            "request_pipeline.theory_evidence_retrieval",
+            module.name = "theory_evidence_retrieval",
+            query.normalized = %query,
+            theory_retrieval.collection = %collection_name,
+            theory_retrieval.top_k = self.settings.top_k,
+            theory_retrieval.score_threshold = self.settings.score_threshold,
+            theory_retrieval.search_executed = field::Empty,
+            theory_retrieval.hits_count = field::Empty,
+            theory_retrieval.chunk_ids = field::Empty,
+            theory_retrieval.scores = field::Empty,
+            theory_retrieval.empty_result = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        self.retrieve_instrumented(request).instrument(span).await
+    }
+
+    async fn retrieve_instrumented(
+        &self,
+        request: &NormalizedUserRequest,
+    ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError> {
+        let collection_name = match &self.settings.collection {
+            crate::config::CollectionSettings::Dense(dense) => dense.name.clone(),
+            crate::config::CollectionSettings::Hybrid(_) => "theory_chunks".to_string(),
+        };
+
+        tracing::Span::current().record("theory_retrieval.search_executed", true);
+
         let search_request = TheoryChunkSearchRequest {
             user_query: NormalizedUserQuery(request.query.clone()),
             limit: self.settings.top_k,
             score_threshold: self.settings.score_threshold,
         };
 
-        let result = self
-            .collection
-            .search(&search_request)
-            .await
-            .map_err(TheoryEvidenceRetrievalError::Collection)?;
+        let qdrant_span = info_span!(
+            "qdrant.theory_chunks.search",
+            retrieval.collection = %collection_name,
+            retrieval.limit = self.settings.top_k,
+            retrieval.score_threshold = self.settings.score_threshold,
+            retrieval.hits_count = field::Empty,
+            retrieval.hit_chunk_ids = field::Empty,
+            retrieval.hit_scores = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
 
-        let chunks = result
+        let result = {
+            async {
+                match self.collection.search(&search_request).await {
+                    Ok(r) => {
+                        let hit_count = r.hits.len();
+                        let chunk_ids: Vec<&str> = r.hits.iter().map(|h| h.chunk_id.as_str()).collect();
+                        let scores: Vec<f32> = r.hits.iter().map(|h| h.score).collect();
+
+                        tracing::Span::current().record("retrieval.hits_count", hit_count);
+                        tracing::Span::current().record("retrieval.hit_chunk_ids", format!("{:?}", chunk_ids));
+                        tracing::Span::current().record("retrieval.hit_scores", format!("{:?}", scores));
+                        tracing::Span::current().record("status", "ok");
+                        Ok(r)
+                    }
+                    Err(e) => {
+                        tracing::Span::current().record("status", "error");
+                        tracing::Span::current().record("error.type", "TheoryEvidenceRetrieval.Collection");
+                        tracing::Span::current()
+                            .record("error.message", format!("Theory chunks search failed: {}", e));
+                        Err(e)
+                    }
+                }
+            }
+            .instrument(qdrant_span)
+            .await
+        };
+
+        let result = match result {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::Span::current().record("module.outcome", "failure");
+                tracing::Span::current().record("status", "error");
+                tracing::Span::current().record("error.type", "TheoryEvidenceRetrieval.Collection");
+                tracing::Span::current()
+                    .record("error.message", format!("Theory chunks search failed: {}", e));
+                return Err(TheoryEvidenceRetrievalError::Collection(e));
+            }
+        };
+
+        let empty_result = result.hits.is_empty();
+        let chunks: Vec<TheoryEvidenceChunk> = result
             .hits
             .into_iter()
             .map(|h| TheoryEvidenceChunk {
@@ -90,6 +176,16 @@ impl TheoryEvidenceRetrieval {
                 text: h.text,
             })
             .collect();
+
+        let chunk_ids: Vec<&str> = chunks.iter().map(|c| c.chunk_id.as_str()).collect();
+        let scores: Vec<f32> = chunks.iter().map(|c| c.score).collect();
+
+        tracing::Span::current().record("theory_retrieval.hits_count", chunks.len());
+        tracing::Span::current().record("theory_retrieval.chunk_ids", format!("{:?}", chunk_ids));
+        tracing::Span::current().record("theory_retrieval.scores", format!("{:?}", scores));
+        tracing::Span::current().record("theory_retrieval.empty_result", empty_result);
+        tracing::Span::current().record("module.outcome", "success");
+        tracing::Span::current().record("status", "ok");
 
         Ok(TheoryEvidenceRetrievalOutput { chunks })
     }

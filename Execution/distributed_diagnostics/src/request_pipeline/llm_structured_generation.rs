@@ -8,6 +8,7 @@ use crate::config::LlmStructuredGenerationSettings;
 use crate::shared_types::{
     LlmStructuredGenerationOutput, ModelTokenUsage, PromptContextAssemblyOutput,
 };
+use tracing::{info_span, field, Instrument};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum LlmStructuredGenerationError {
@@ -58,7 +59,48 @@ impl LlmStructuredGeneration {
         &self,
         prompt_context: &PromptContextAssemblyOutput,
     ) -> Result<LlmStructuredGenerationOutput, LlmStructuredGenerationError> {
+        let prompt = &prompt_context.prompt;
+        let prompt_chars = prompt.len();
+        let prompt_empty = prompt.trim().is_empty();
+
+        let span = info_span!(
+            "request_pipeline.llm_structured_generation",
+            module.name = "llm_structured_generation",
+            llm.task = "diagnostic_response",
+            llm.prompt_chars = prompt_chars as i64,
+            llm.prompt_empty = prompt_empty,
+            llm.response_mode = field::Empty,
+            llm.temperature = field::Empty,
+            llm.max_output_tokens = field::Empty,
+            llm.finish_reason = field::Empty,
+            llm.prompt_tokens = field::Empty,
+            llm.completion_tokens = field::Empty,
+            llm.total_tokens = field::Empty,
+            llm.output.parse_success = field::Empty,
+            llm.output.top_level_type = field::Empty,
+            llm.output.object_field_count = field::Empty,
+            llm.output.has_markdown_fence = field::Empty,
+            llm.output.content_chars = field::Empty,
+            llm.output.parsed_json = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        self.generate_instrumented(prompt_context).instrument(span).await
+    }
+
+    async fn generate_instrumented(
+        &self,
+        prompt_context: &PromptContextAssemblyOutput,
+    ) -> Result<LlmStructuredGenerationOutput, LlmStructuredGenerationError> {
         if prompt_context.prompt.trim().is_empty() {
+            tracing::Span::current().record("module.outcome", "failure");
+            tracing::Span::current().record("status", "error");
+            tracing::Span::current().record("error.type", "LlmStructuredGeneration.InvalidInput");
+            tracing::Span::current()
+                .record("error.message", "prompt must be non-empty after trimming");
             return Err(LlmStructuredGenerationError::InvalidInput(
                 "prompt must be non-empty after trimming".to_string(),
             ));
@@ -74,21 +116,100 @@ impl LlmStructuredGeneration {
             max_output_tokens: Some(self.max_output_tokens),
         };
 
-        let response = self.model_client.generate(&request).await?;
+        let llm_span = info_span!(
+            "llm.call.diagnostic_response",
+            model.response_mode = field::Empty,
+            model.temperature = field::Empty,
+            model.max_output_tokens = field::Empty,
+            model.finish_reason = field::Empty,
+            model.prompt_tokens = field::Empty,
+            model.completion_tokens = field::Empty,
+            model.total_tokens = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
 
-        // Step 1: extract token_usage before inspecting finish_reason (spec §9)
+        let response = {
+            async {
+                match self.model_client.generate(&request).await {
+                    Ok(r) => {
+                        tracing::Span::current().record("model.response_mode", "JsonObject");
+                        tracing::Span::current().record("model.temperature", 0.0);
+                        tracing::Span::current().record("model.max_output_tokens", self.max_output_tokens as i64);
+                        if let Some(ref fr) = r.finish_reason {
+                            tracing::Span::current().record("model.finish_reason", format!("{:?}", fr));
+                        }
+                        if let Some(pt) = r.prompt_tokens {
+                            tracing::Span::current().record("model.prompt_tokens", pt as i64);
+                        }
+                        if let Some(ct) = r.completion_tokens {
+                            tracing::Span::current().record("model.completion_tokens", ct as i64);
+                        }
+                        if let Some(tt) = r.total_tokens {
+                            tracing::Span::current().record("model.total_tokens", tt as i64);
+                        }
+                        tracing::Span::current().record("status", "ok");
+                        Ok(r)
+                    }
+                    Err(e) => {
+                        tracing::Span::current().record("status", "error");
+                        tracing::Span::current().record("error.type", "LlmStructuredGeneration.Model");
+                        tracing::Span::current()
+                            .record("error.message", format!("Model client error: {}", e));
+                        Err(e)
+                    }
+                }
+            }
+            .instrument(llm_span)
+            .await
+        };
+
+        let response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::Span::current().record("module.outcome", "failure");
+                tracing::Span::current().record("status", "error");
+                tracing::Span::current().record("error.type", "LlmStructuredGeneration.Model");
+                tracing::Span::current()
+                    .record("error.message", format!("Model client error: {}", e));
+                return Err(LlmStructuredGenerationError::Model(e));
+            }
+        };
+
         let token_usage = ModelTokenUsage {
             prompt_tokens: response.prompt_tokens,
             completion_tokens: response.completion_tokens,
             total_tokens: response.total_tokens,
         };
-        let finish_reason = response.finish_reason;
-        let content = response.content;
+        let finish_reason = response.finish_reason.clone();
+        let content = response.content.clone();
+
+        tracing::Span::current().record("llm.response_mode", "JsonObject");
+        tracing::Span::current().record("llm.temperature", 0.0);
+        tracing::Span::current().record("llm.max_output_tokens", self.max_output_tokens as i64);
+        if let Some(ref fr) = finish_reason {
+            tracing::Span::current().record("llm.finish_reason", format!("{:?}", fr));
+        }
+        if let Some(pt) = response.prompt_tokens {
+            tracing::Span::current().record("llm.prompt_tokens", pt as i64);
+        }
+        if let Some(ct) = response.completion_tokens {
+            tracing::Span::current().record("llm.completion_tokens", ct as i64);
+        }
+        if let Some(tt) = response.total_tokens {
+            tracing::Span::current().record("llm.total_tokens", tt as i64);
+        }
 
         // Step 2: inspect finish_reason — only Stop or None is acceptable
         match &finish_reason {
             Some(ModelFinishReason::Stop) | None => {}
             Some(_) => {
+                tracing::Span::current().record("module.outcome", "failure");
+                tracing::Span::current().record("status", "error");
+                tracing::Span::current().record("error.type", "LlmStructuredGeneration.InvalidModelOutput");
+                tracing::Span::current()
+                    .record("error.message", "model stopped with a non-Stop finish reason");
                 return Err(LlmStructuredGenerationError::InvalidModelOutput {
                     reason: "model stopped with a non-Stop finish reason".to_string(),
                     token_usage,
@@ -97,8 +218,19 @@ impl LlmStructuredGeneration {
             }
         }
 
+        let content_chars = content.len();
+        let has_markdown_fence = content.contains("```");
+
         // Step 3: parse content as JSON
-        let parsed: serde_json::Value = serde_json::from_str(&content).map_err(|_| {
+        let parsed: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+            tracing::Span::current().record("llm.output.parse_success", false);
+            tracing::Span::current().record("llm.output.content_chars", content_chars as i64);
+            tracing::Span::current().record("llm.output.has_markdown_fence", has_markdown_fence);
+            tracing::Span::current().record("module.outcome", "failure");
+            tracing::Span::current().record("status", "error");
+            tracing::Span::current().record("error.type", "LlmStructuredGeneration.InvalidModelOutput");
+            tracing::Span::current()
+                .record("error.message", format!("Failed to parse JSON: {}", e));
             LlmStructuredGenerationError::InvalidModelOutput {
                 reason: "model response is not valid JSON".to_string(),
                 token_usage: token_usage.clone(),
@@ -107,12 +239,34 @@ impl LlmStructuredGeneration {
         })?;
 
         if !parsed.is_object() {
+            tracing::Span::current().record("llm.output.parse_success", false);
+            tracing::Span::current().record("llm.output.content_chars", content_chars as i64);
+            tracing::Span::current().record("llm.output.has_markdown_fence", has_markdown_fence);
+            tracing::Span::current().record("module.outcome", "failure");
+            tracing::Span::current().record("status", "error");
+            tracing::Span::current().record("error.type", "LlmStructuredGeneration.InvalidModelOutput");
+            tracing::Span::current()
+                .record("error.message", "model response is not a JSON object");
             return Err(LlmStructuredGenerationError::InvalidModelOutput {
                 reason: "model response is not a JSON object".to_string(),
                 token_usage,
                 finish_reason,
             });
         }
+
+        let parse_success = true;
+        let top_level_type = "object".to_string();
+        let object_field_count = parsed.as_object().map(|obj| obj.len()).unwrap_or(0);
+        let parsed_json = serde_json::to_string(&parsed).unwrap_or_else(|_| "{}".to_string());
+
+        tracing::Span::current().record("llm.output.parse_success", parse_success);
+        tracing::Span::current().record("llm.output.top_level_type", &top_level_type);
+        tracing::Span::current().record("llm.output.object_field_count", object_field_count as i64);
+        tracing::Span::current().record("llm.output.has_markdown_fence", has_markdown_fence);
+        tracing::Span::current().record("llm.output.content_chars", content_chars as i64);
+        tracing::Span::current().record("llm.output.parsed_json", &parsed_json);
+        tracing::Span::current().record("module.outcome", "success");
+        tracing::Span::current().record("status", "ok");
 
         Ok(LlmStructuredGenerationOutput {
             response_json: parsed,

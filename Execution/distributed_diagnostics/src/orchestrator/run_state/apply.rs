@@ -330,7 +330,7 @@ impl<'a> PendingStepWriter<'a> {
             record_id: record.record_id,
             step: record.step,
             started_at: record.started_at,
-            finished_at: Utc::now(),
+            finished_at: finished_at_not_before_started(record.started_at),
             result: Ok(result),
         };
         self.state.iterations[self.iteration_index].step_records[self.step_index] =
@@ -355,7 +355,7 @@ impl<'a> PendingStepWriter<'a> {
             record_id: record.record_id,
             step: record.step,
             started_at: record.started_at,
-            finished_at: Utc::now(),
+            finished_at: finished_at_not_before_started(record.started_at),
             result: Err(error),
         };
         self.state.iterations[self.iteration_index].step_records[self.step_index] =
@@ -997,4 +997,7 @@ mod tests {
             assert!(res.is_ok(), "record_failure failed for {kind:?}");
         }
     }
+}
+fn finished_at_not_before_started(started_at: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    std::cmp::max(Utc::now(), started_at)
 }

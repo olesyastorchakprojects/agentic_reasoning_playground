@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use tracing::{field, info_span};
 
 use crate::shared_types::{
     DiagnosticResponse, DiagnosticResultInterpretation, LlmStructuredGenerationOutput,
@@ -57,20 +58,123 @@ impl ResponseValidationAndNormalization {
         input: &LlmStructuredGenerationOutput,
     ) -> Result<ResponseValidationAndNormalizationOutput, ResponseValidationAndNormalizationError>
     {
-        check_required_keys_present(&input.response_json)?;
+        let span = info_span!(
+            "request_pipeline.response_validation_and_normalization",
+            "module.name" = "response_validation_and_normalization",
+            "module.outcome" = field::Empty,
+            "status" = field::Empty,
+            "error.type" = field::Empty,
+            "error.message" = field::Empty,
+            "validation.input.raw_json" = field::Empty,
+            "validation.input.top_level_type" = field::Empty,
+            "validation.input.top_level_field_count" = field::Empty,
+            "validation.required_fields.present_count" = field::Empty,
+            "validation.required_fields.missing_count" = field::Empty,
+            "validation.required_fields.missing" = field::Empty,
+            "validation.unknown_top_level_fields_count" = field::Empty,
+            "validation.unknown_top_level_fields" = field::Empty,
+            "validation.result_interpretation.present" = field::Empty,
+            "validation.active_hypotheses.count" = field::Empty,
+            "validation.active_hypotheses.valid_count_range" = field::Empty,
+            "validation.competing_interpretation.present" = field::Empty,
+            "validation.inconclusive_if.present" = field::Empty,
+            "validation.prohibited_final_diagnosis_language_found" = field::Empty,
+            "normalization.trimmed_fields_count" = field::Empty,
+            "normalization.success" = field::Empty,
+            "final_response.json" = field::Empty,
+        );
+
+        let _guard = span.enter();
+
+        // Extract metadata early to record validation attempt details
+        match extract_validation_metadata(&input.response_json) {
+            Ok(meta) => {
+                span.record("validation.input.raw_json", meta.input_raw_json.as_str());
+                span.record("validation.input.top_level_type", meta.input_type.as_str());
+                span.record("validation.input.top_level_field_count", meta.input_field_count);
+                span.record("validation.required_fields.present_count", meta.required_present_count);
+                span.record("validation.required_fields.missing_count", meta.required_missing_count);
+                span.record(
+                    "validation.required_fields.missing",
+                    serde_json::to_string(&meta.required_missing)
+                        .unwrap_or_else(|_| "[]".to_string())
+                        .as_str(),
+                );
+                span.record("validation.unknown_top_level_fields_count", meta.unknown_fields_count);
+                span.record(
+                    "validation.unknown_top_level_fields",
+                    serde_json::to_string(&meta.unknown_fields)
+                        .unwrap_or_else(|_| "[]".to_string())
+                        .as_str(),
+                );
+                span.record("validation.result_interpretation.present", meta.result_interpretation_present);
+            }
+            Err(e) => {
+                span.record("status", "error");
+                span.record("error.type", "ResponseValidation.InvalidResponseShape");
+                span.record("error.message", e.as_str());
+                span.record("module.outcome", "failure");
+                return Err(ResponseValidationAndNormalizationError::InvalidResponseShape(e));
+            }
+        }
+
+        check_required_keys_present(&input.response_json).map_err(|e| {
+            span.record("status", "error");
+            span.record("error.type", "ResponseValidation.InvalidResponseShape");
+            span.record("error.message", "response JSON does not match expected shape");
+            span.record("module.outcome", "failure");
+            e
+        })?;
 
         let raw = serde_json::from_value::<RawDiagnosticResponse>(input.response_json.clone())
             .map_err(|_| {
-                ResponseValidationAndNormalizationError::InvalidResponseShape(
-                    "response JSON does not match expected shape".to_string(),
-                )
+                let err_msg = "response JSON does not match expected shape";
+                span.record("status", "error");
+                span.record("error.type", "ResponseValidation.InvalidResponseShape");
+                span.record("error.message", err_msg);
+                span.record("module.outcome", "failure");
+                ResponseValidationAndNormalizationError::InvalidResponseShape(err_msg.to_string())
             })?;
 
-        apply_business_rules(&raw)?;
+        // Record hypothesis and optional field presence before business rule validation
+        let active_hyp_count = raw.active_hypotheses.len();
+        let active_hyp_valid = active_hyp_count >= 2 && active_hyp_count <= 3;
+        span.record("validation.active_hypotheses.count", active_hyp_count);
+        span.record("validation.active_hypotheses.valid_count_range", active_hyp_valid);
+        span.record("validation.competing_interpretation.present", raw.competing_interpretation.is_some());
+        span.record("validation.inconclusive_if.present", raw.result_interpretation.inconclusive_if.is_some());
 
-        Ok(ResponseValidationAndNormalizationOutput {
-            response: normalize(raw),
-        })
+        apply_business_rules(&raw).map_err(|e| {
+            let err_msg = match &e {
+                ResponseValidationAndNormalizationError::BusinessRuleViolation(msg) => msg.clone(),
+                _ => format!("{:?}", e),
+            };
+            let prohibited = check_prohibited_phrases_in_raw(&raw);
+            span.record("validation.prohibited_final_diagnosis_language_found", prohibited);
+            span.record("status", "error");
+            span.record("error.type", "ResponseValidation.BusinessRuleViolation");
+            span.record("error.message", err_msg.as_str());
+            span.record("module.outcome", "failure");
+            e
+        })?;
+
+        let prohibited = check_prohibited_phrases_in_raw(&raw);
+        span.record("validation.prohibited_final_diagnosis_language_found", prohibited);
+
+        let trim_count = count_trimmed_fields(&raw);
+        let response = normalize(raw);
+
+        span.record("normalization.trimmed_fields_count", trim_count);
+        span.record("normalization.success", true);
+
+        if let Ok(json_str) = serde_json::to_string(&response) {
+            span.record("final_response.json", json_str.as_str());
+        }
+
+        span.record("module.outcome", "success");
+        span.record("status", "ok");
+
+        Ok(ResponseValidationAndNormalizationOutput { response })
     }
 }
 
@@ -240,6 +344,152 @@ fn apply_business_rules(
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Observability helpers
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct ValidationMetadata {
+    input_raw_json: String,
+    input_type: String,
+    input_field_count: usize,
+    required_present_count: usize,
+    required_missing_count: usize,
+    required_missing: Vec<String>,
+    unknown_fields_count: usize,
+    unknown_fields: Vec<String>,
+    result_interpretation_present: bool,
+}
+
+fn extract_validation_metadata(json: &serde_json::Value) -> Result<ValidationMetadata, String> {
+    let input_raw_json = serde_json::to_string(json).unwrap_or_default();
+    let input_type = match json {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(_) => "boolean".to_string(),
+        serde_json::Value::Number(_) => "number".to_string(),
+        serde_json::Value::String(_) => "string".to_string(),
+        serde_json::Value::Array(_) => "array".to_string(),
+        serde_json::Value::Object(_) => "object".to_string(),
+    };
+
+    let Some(obj) = json.as_object() else {
+        return Ok(ValidationMetadata {
+            input_raw_json,
+            input_type,
+            input_field_count: 0,
+            required_present_count: 0,
+            required_missing_count: REQUIRED_TOP_LEVEL_KEYS.len(),
+            required_missing: REQUIRED_TOP_LEVEL_KEYS.iter().map(|k| (*k).to_string()).collect(),
+            unknown_fields_count: 0,
+            unknown_fields: vec![],
+            result_interpretation_present: false,
+        });
+    };
+
+    let input_field_count = obj.len();
+
+    let mut required_missing = Vec::new();
+    for key in REQUIRED_TOP_LEVEL_KEYS {
+        if !obj.contains_key(*key) {
+            required_missing.push(key.to_string());
+        }
+    }
+    let required_present_count = REQUIRED_TOP_LEVEL_KEYS.len() - required_missing.len();
+    let required_missing_count = required_missing.len();
+
+    let unknown_fields: Vec<String> = obj.keys()
+        .filter(|k| !REQUIRED_TOP_LEVEL_KEYS.contains(&k.as_str()))
+        .cloned()
+        .collect();
+    let unknown_fields_count = unknown_fields.len();
+
+    let result_interpretation_present = obj.get("result_interpretation")
+        .map(|v| v.is_object())
+        .unwrap_or(false);
+
+    Ok(ValidationMetadata {
+        input_raw_json,
+        input_type,
+        input_field_count,
+        required_present_count,
+        required_missing_count,
+        required_missing,
+        unknown_fields_count,
+        unknown_fields,
+        result_interpretation_present,
+    })
+}
+
+fn check_prohibited_phrases_in_raw(raw: &RawDiagnosticResponse) -> bool {
+    let values = [
+        &raw.problem_understanding,
+        &raw.similar_practical_context,
+        &raw.first_check,
+        &raw.result_interpretation.supports_primary_if,
+        &raw.result_interpretation.supports_competing_if,
+    ];
+
+    for value in &values {
+        if contains_prohibited_phrase(value) {
+            return true;
+        }
+    }
+
+    if let Some(s) = &raw.competing_interpretation {
+        if contains_prohibited_phrase(s) {
+            return true;
+        }
+    }
+
+    if let Some(s) = &raw.result_interpretation.inconclusive_if {
+        if contains_prohibited_phrase(s) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn count_trimmed_fields(raw: &RawDiagnosticResponse) -> usize {
+    let mut count = 0;
+
+    if raw.problem_understanding.as_str() != raw.problem_understanding.trim() {
+        count += 1;
+    }
+    if raw.similar_practical_context.as_str() != raw.similar_practical_context.trim() {
+        count += 1;
+    }
+    if raw.first_check.as_str() != raw.first_check.trim() {
+        count += 1;
+    }
+    if raw.result_interpretation.supports_primary_if.as_str() != raw.result_interpretation.supports_primary_if.trim() {
+        count += 1;
+    }
+    if raw.result_interpretation.supports_competing_if.as_str() != raw.result_interpretation.supports_competing_if.trim() {
+        count += 1;
+    }
+
+    for h in &raw.active_hypotheses {
+        if h.as_str() != h.trim() {
+            count += 1;
+        }
+    }
+
+    if let Some(s) = &raw.competing_interpretation {
+        if s.as_str() != s.trim() {
+            count += 1;
+        }
+    }
+
+    if let Some(s) = &raw.result_interpretation.inconclusive_if {
+        if s.as_str() != s.trim() {
+            count += 1;
+        }
+    }
+
+    count
 }
 
 // ---------------------------------------------------------------------------

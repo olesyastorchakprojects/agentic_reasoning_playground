@@ -31,6 +31,16 @@ pub enum IncidentCardStoreError {
     InvalidStoredRow(String),
 }
 
+// ── Trait ─────────────────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+pub trait IncidentCardStore: Send + Sync {
+    async fn get_cards_by_case_ids(
+        &self,
+        case_ids: &[String],
+    ) -> Result<Vec<crate::shared_types::IncidentCard>, IncidentCardStoreError>;
+}
+
 // ── Schema validator (lazy static) ───────────────────────────────────────────
 
 fn compiled_schema() -> &'static Validator {
@@ -432,6 +442,18 @@ fn validate_card(card: &IncidentCard) -> Result<(), IncidentCardStoreError> {
 
 fn is_unique_violation(e: &dyn sqlx::error::DatabaseError) -> bool {
     e.code().as_deref() == Some("23505")
+}
+
+// ── Trait impl ────────────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl IncidentCardStore for PostgresIncidentCardStore {
+    async fn get_cards_by_case_ids(
+        &self,
+        case_ids: &[String],
+    ) -> Result<Vec<crate::shared_types::IncidentCard>, IncidentCardStoreError> {
+        self.get_cards_by_case_ids(case_ids).await
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
