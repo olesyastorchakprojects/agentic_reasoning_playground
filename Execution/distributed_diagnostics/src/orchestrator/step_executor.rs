@@ -61,6 +61,24 @@ impl StepExecutor {
         step: StepKind,
         state: RunStateView<'_>,
     ) -> Result<StepResultEnvelope, StepError> {
+        let run_id_str = state.run_id().0.to_string();
+        let iter_id_str = state
+            .last_iteration()
+            .map(|it| it.iteration_id().0.to_string())
+            .unwrap_or_default();
+        let span =
+            crate::observability::dispatch_span(&run_id_str, &iter_id_str, step.as_ref());
+        let _entered = span.enter();
+        let result = self.execute_inner(step, state).await;
+        span.record("status", if result.is_ok() { "ok" } else { "error" });
+        result
+    }
+
+    async fn execute_inner(
+        &self,
+        step: StepKind,
+        state: RunStateView<'_>,
+    ) -> Result<StepResultEnvelope, StepError> {
         if state.status() == RunStatus::Archived {
             return Err(StepError::InvalidState {
                 message: "cannot execute a step on an archived run".to_string(),

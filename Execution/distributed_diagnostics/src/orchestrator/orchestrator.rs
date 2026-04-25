@@ -85,12 +85,22 @@ where
             .append_iteration(&state, iteration_sequence_no, iteration)
             .await?;
 
-        self.drive_to_outcome(&mut state).await
+        let run_id_str = state.run_id.0.to_string();
+        let root_span = crate::observability::run_span(&run_id_str, "run");
+        let _root_entered = root_span.enter();
+        let outcome = self.drive_to_outcome(&mut state).await;
+        root_span.record("status", if outcome.is_ok() { "ok" } else { "error" });
+        outcome
     }
 
     pub async fn resume(&self, run_id: RunId) -> Result<RunOutcome, OrchestratorError> {
         let mut state = self.load_existing_run(run_id).await?;
-        self.drive_to_outcome(&mut state).await
+        let run_id_str = state.run_id.0.to_string();
+        let root_span = crate::observability::run_span(&run_id_str, "resume");
+        let _root_entered = root_span.enter();
+        let outcome = self.drive_to_outcome(&mut state).await;
+        root_span.record("status", if outcome.is_ok() { "ok" } else { "error" });
+        outcome
     }
 
     pub async fn resume_with_input(
@@ -118,7 +128,12 @@ where
             .append_iteration(&state, iteration_sequence_no, iteration)
             .await?;
 
-        self.drive_to_outcome(&mut state).await
+        let run_id_str = state.run_id.0.to_string();
+        let root_span = crate::observability::run_span(&run_id_str, "resume_with_input");
+        let _root_entered = root_span.enter();
+        let outcome = self.drive_to_outcome(&mut state).await;
+        root_span.record("status", if outcome.is_ok() { "ok" } else { "error" });
+        outcome
     }
 
     async fn load_existing_run(&self, run_id: RunId) -> Result<RunState, OrchestratorError> {
@@ -332,11 +347,54 @@ where
     E: ExecutorLike + Sync,
     R: RepositoryLike + Sync,
 {
+    let run_id_str = state.run_id.0.to_string();
+    let (iter_span, iter_id_str) = match state.iterations.last() {
+        Some(it) => {
+            let iter_id = it.iteration_id.0.to_string();
+            let seq = (state.iterations.len() - 1) as u64;
+            let span = crate::observability::iteration_span(&run_id_str, &iter_id, seq);
+            (span, iter_id)
+        }
+        None => (tracing::Span::none(), String::new()),
+    };
+    let _iter_entered = iter_span.enter();
+
     loop {
-        let decision = policy.next_transition(RunStateView::new(state))?;
+        let policy_span =
+            crate::observability::policy_transition_span(&run_id_str, &iter_id_str);
+        let decision = {
+            let _policy_entered = policy_span.enter();
+            let decision = policy.next_transition(RunStateView::new(state));
+            match &decision {
+                Ok(PolicyTransition::ExecuteStep { step }) => {
+                    policy_span.record("status", "ok");
+                    policy_span.record("transition.kind", "ExecuteStep");
+                    policy_span.record("step.kind", step.as_ref());
+                }
+                Ok(PolicyTransition::FinishWithResult { .. }) => {
+                    policy_span.record("status", "ok");
+                    policy_span.record("transition.kind", "FinishWithResult");
+                }
+                Ok(PolicyTransition::FinishWithError { .. }) => {
+                    policy_span.record("status", "ok");
+                    policy_span.record("transition.kind", "FinishWithError");
+                }
+                Err(e) => {
+                    policy_span.record("status", "error");
+                    policy_span.record("error.type", "PolicyError");
+                    policy_span.record("error.message", &e.to_string() as &str);
+                }
+            }
+            decision
+        }?;
 
         match decision {
             PolicyTransition::ExecuteStep { step } => {
+                let step_kind_str = step.as_ref().to_string();
+                let step_span =
+                    crate::observability::step_span(&run_id_str, &iter_id_str, &step_kind_str);
+                let _step_entered = step_span.enter();
+
                 let (record_id, iteration_id) = {
                     let mut writer = RunStateWriter::new(state);
                     let mut iteration = writer.current_iteration()?;
@@ -384,14 +442,18 @@ where
                 run_repository
                     .finish_step_record(state, record_id, &finished_record)
                     .await?;
+
+                step_span.record("status", "ok");
             }
             PolicyTransition::FinishWithResult { result } => {
+                iter_span.record("status", "ok");
                 return Ok(RunOutcome::Finished {
                     run_id: state.run_id,
                     result,
                 });
             }
             PolicyTransition::FinishWithError { error } => {
+                iter_span.record("status", "ok");
                 return Ok(RunOutcome::Failed {
                     run_id: state.run_id,
                     error,

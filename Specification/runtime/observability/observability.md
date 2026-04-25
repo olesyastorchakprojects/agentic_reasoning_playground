@@ -17,8 +17,9 @@ This document does not define:
 
 # 2) Observability Objectives
 
-Observability in the current runtime stage exists for exactly one purpose:
-- initialize OTLP-based tracing and metrics pipelines at process startup.
+Observability in the current runtime stage exists for exactly two purposes:
+- initialize OTLP-based tracing and metrics pipelines at process startup;
+- define the required orchestration trace shape for run execution.
 
 # 3) Signal Architecture
 
@@ -35,7 +36,7 @@ Signal routing is fixed:
 - OTEL Collector routes metrics to Prometheus;
 - Grafana reads traces from Tempo and metrics from Prometheus.
 
-Direct export from `rag_runtime` to multiple backends is forbidden.
+Direct export from `distributed_diagnostics` to multiple backends is forbidden.
 
 # 4) Document Structure
 
@@ -43,13 +44,15 @@ The observability specification is split into the following documents:
 
 - `observability.md`
   - top-level observability model;
+- `spans.md`
+  - root span contract, span hierarchy, span ownership, span attributes, and root-span lifecycle rules;
 - `references.md`
   - local reference artifact contract;
 - `implementation.md`
   - validated Rust implementation pattern for startup-time observability initialization.
 
 Generation must follow this document split.
-Detailed span, metric, OpenInference, and dashboard contracts are intentionally out of scope for the current runtime stage.
+Detailed metric, OpenInference, and dashboard contracts are intentionally out of scope for the current runtime stage.
 `references.md` is limited to read-only local wiring/provisioning templates.
 
 # 5) Configuration Model
@@ -70,6 +73,9 @@ The following values must not be written to telemetry during the current stage:
 - API keys;
 - authorization headers;
 - environment variable values;
+- raw prompt text;
+- raw retrieved document text;
+- raw model output text;
 
 # 7) Troubleshooting Missing Telemetry
 

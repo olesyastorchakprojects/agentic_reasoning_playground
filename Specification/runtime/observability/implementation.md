@@ -1,12 +1,13 @@
 # 1) Purpose / Scope
 
-This document defines the required Rust implementation contract for runtime observability initialization.
+This document defines the required Rust implementation contract for runtime observability initialization and span wiring.
 
 It defines:
 - required crates and versions;
 - required runtime components;
 - required typed settings type;
 - required initialization order;
+- root span implementation pattern;
 - trace exporter strategy;
 - metric exporter strategy;
 - provider lifecycle and graceful shutdown requirements;
@@ -90,11 +91,23 @@ It is not part of the public crate API.
 The implementation defines internal observability methods and helpers for:
 
 - initialization from `&ObservabilitySettings`
+- root run span creation
+- iteration span creation
+- policy decision span creation
+- step orchestration span creation
+- repository persistence span creation
+- executor dispatch span creation
 - graceful shutdown ownership
 
 The implementation keeps this internal observability API inside `src/observability/mod.rs`.
 
 Business modules do not construct exporter stacks, provider objects, or global subscribers directly.
+Business modules create spans only through the internal observability API or their owning module-local wrappers.
+
+Tracing primitive rule:
+- orchestration spans are created with `tracing::span!`;
+- `tracing_opentelemetry` is the export bridge layer;
+- the internal observability API does not create orchestration spans through OpenTelemetry SDK APIs directly.
 
 # 5) Initialization Pattern
 
@@ -215,40 +228,72 @@ Rationale:
 
 The implementation must not rely on implicit drop order inside business modules.
 
-# 11) Root Request Instrumentation Pattern
+# 11) Root Run Instrumentation Pattern
 
-The request root span pattern is fixed:
+The root run span pattern is fixed.
 
-- create the root request span at the request entrypoint;
-- enter the root span before awaiting downstream request execution;
-- keep the root span active across the full request path;
-- close the request span after final success or terminal failure.
+The implementation must follow `Specification/runtime/observability/spans.md`.
+
+Required pattern:
+- create `diagnostics.run` in each of:
+  - `Orchestrator::run(...)`
+  - `Orchestrator::resume(...)`
+  - `Orchestrator::resume_with_input(...)`
+- set `run.entrypoint` to:
+  - `run`
+  - `resume`
+  - `resume_with_input`
+- create the root span before any downstream async orchestration work starts;
+- enter the root span before awaiting downstream orchestration execution;
+- keep the root span active across the full awaited orchestration path;
+- set final root-span `status` from the final invocation outcome;
+- close the root span only after the awaited orchestration future resolves.
+
+Iteration-span rule:
+- `diagnostics.iteration` is created when the invocation has a current iteration to operate on;
+- `resume(...)` creates `diagnostics.iteration` for the loaded current iteration when one exists;
+- `resume(...)` does not synthesize a new iteration span when no current iteration exists.
 
 Working example reference:
 
-- `Execution/otel_runtime_smoke/` is the confirmed working example in this repository for the required root-span organization pattern;
+- repository-owned OTEL initialization and smoke references are the working comparison target for exporter and subscriber wiring;
 - it is the operational reference for:
-  - creating the root span at request entrypoint
+  - creating the root span at the orchestrator entrypoint
   - entering the root span before downstream `await`
-  - keeping child stage spans under the active root span
-- generated `rag_runtime` code must follow the contract defined in this document, and `Execution/otel_runtime_smoke/` should be used as the working comparison target when validating root-span behavior.
+  - keeping child spans under the active root span
 
-# 12) Async Stage Instrumentation Pattern
+Implementation safety rules:
+- the root span must not be created inside `drive_to_outcome(...)`;
+- the root span must not be recreated inside policy, repository, executor, or request-pipeline layers;
+- lower layers must assume the root span already exists and is active;
+- if the root span is created in the entrypoint but awaited work happens outside the entered scope, that implementation is invalid even if spans are still emitted.
+- parentage must come from the active `tracing` scope, not from explicitly passing OpenTelemetry span context through function signatures.
 
-Stage instrumentation in async code follows these rules:
+Rationale:
+- this is the most fragile part of async trace wiring;
+- getting this wrong produces orphan child spans, broken parentage, or multiple traces for one run;
+- the implementation contract is intentionally strict to prevent those failure modes.
 
-- stage logic is implemented as explicit `async fn` boundaries;
-- mandatory stage spans are created explicitly at the async function boundary;
-- stage functions run under the active root request span;
-- nested dependency spans are created inside the owning stage.
+# 12) Async Orchestration Instrumentation Pattern
 
-Manual ad hoc instrumentation of nested `async move` blocks is forbidden as the stage instrumentation strategy.
+Orchestration instrumentation in async code follows these rules:
+
+- entrypoint logic is implemented as explicit async orchestrator boundaries;
+- mandatory orchestration spans are created explicitly in the module that owns them;
+- orchestration functions run under the active root run span;
+- nested pipeline and dependency spans are created inside the owning module.
+
+Manual ad hoc instrumentation of nested `async move` blocks is forbidden as the orchestration instrumentation strategy.
 
 The required pattern is:
-- root request span entered before `await`;
-- stage functions defined as separate async functions;
-- mandatory stage spans created explicitly at the async function boundary;
-- dependency spans created inside the owning stage function.
+- root run span entered before `await`;
+- orchestration helper functions defined as separate async functions when they own a mandatory span boundary;
+- mandatory spans created explicitly in the owning function or method;
+- dependency spans created inside the owning module function.
+
+Parentage propagation rule:
+- repository and executor code rely on the active entered parent `tracing` span for parent-child relationship formation;
+- explicit span-context plumbing between orchestrator, repository, executor, and request-pipeline layers is forbidden.
 
 ========================
 13) Async Block Rules
@@ -256,12 +301,11 @@ The required pattern is:
 
 Instrumentation of async blocks follows these rules:
 
-- an entered root request span remains active across `await`;
-- nested async stages are represented by separate instrumented async functions;
-- application code must not implement custom parent-child trace stitching for stage spans while the root request span is active;
+- an entered root run span remains active across `await`;
+- nested async orchestration work is represented by separate instrumented functions when that work owns a mandatory span;
+- application code must not implement custom parent-child trace stitching for orchestration spans while the root run span is active;
 - async block instrumentation does not rely on implicit argument capture.
-
-If an explicit OTEL parent context is created, child OTEL spans must be created with `start_with_context`.
+- application code must not create explicit OTEL parent contexts for normal orchestration span parenting.
 
 ========================
 14) `#[tracing::instrument]` Rules
@@ -280,17 +324,18 @@ Automatic capture of function parameters into span attributes is forbidden.
 Application code must not add span attributes through `#[tracing::instrument]`.
 
 The set of high-cardinality root-span fields is fixed by:
-- `Specification/codegen/rag_runtime/observability/spans.md`
+- `Specification/runtime/observability/spans.md`
 - `Measurement/observability/tempo/tempo.yaml`
 
 The only high-cardinality root-span field in the current contract is:
-- `request_id`
+- `run.id`
 
-`request_id` is written during root span creation.
+`run.id` is written during root span creation.
 
-Child spans must not duplicate `request_id`.
-
+Child spans may include `run.id` when required by `Specification/runtime/observability/spans.md`.
 Application code must not introduce additional high-cardinality root-span fields outside that fixed set.
+
+`run.entrypoint` is required on `diagnostics.run`, but it is not the high-cardinality identifier field.
 
 Selected high-cardinality values must not include:
 - raw prompt text;
@@ -341,28 +386,24 @@ Rules:
 
 Instrumentation ownership is fixed:
 
-- the root request span `rag.request` is created with manual `tracing::info_span!(...)`;
-- mandatory stage spans are created with manual `tracing::info_span!(...)` on the owning async stage function;
+- the root run span `diagnostics.run` is created with manual `tracing::span!(...)` or `tracing::info_span!(...)` in the orchestrator entrypoint;
+- mandatory orchestration spans are created with manual `tracing::span!(...)` or `tracing::info_span!(...)` in the owning orchestrator, repository, executor, or request-pipeline function;
 - internal method-entry spans are created with `#[tracing::instrument(name = \"...\", skip_all)]` for every internal method;
-- child stage spans do not duplicate `request_id`;
-- the explicit dependency spans are:
-  - `retrieval.embedding`
-  - `retrieval.vector_search`
-  - `generation.chat`
-- those dependency spans are created explicitly inside their owning stage;
-- OpenInference spans are created explicitly inside the owning stage;
+- the mandatory orchestration spans are the spans defined in `Specification/runtime/observability/spans.md`;
+- dependency spans such as `llm.call` and `qdrant.search` are created explicitly inside their owning module;
+- child spans follow the attribute contract defined in `Specification/runtime/observability/spans.md`;
 - application code must not use `#[tracing::instrument]` for dependency spans;
-- application code must not use `#[tracing::instrument]` for OpenInference spans.
+- application code must not use `#[tracing::instrument]` for mandatory orchestration spans.
 - one function boundary must not create both a `#[tracing::instrument]` span and a manual same-boundary span with the same semantic role;
 - one function boundary uses exactly one span-construction strategy for that semantic boundary:
-  - manual `tracing::info_span!(...)`; or
+  - manual `tracing::span!(...)` or `tracing::info_span!(...)`; or
   - `#[tracing::instrument(name = \"...\", skip_all)]`
 - application code must not combine `#[tracing::instrument]` with an explicit same-name manual child span for the same function boundary.
 
-Required stage span attribute pattern:
+Required mandatory span attribute pattern:
 
-- `span.module`, `span.stage`, and `status` are declared explicitly in `tracing::info_span!(...)` when the mandatory stage span is created;
-- method input values are not encoded as stage span attributes.
+- `span.module`, `span.stage`, and `status` are declared explicitly when the mandatory span is created;
+- method input values are not encoded as mandatory span attributes.
 
 ========================
 17) Log Filter Contract
@@ -373,19 +414,19 @@ Runtime log filtering is controlled through:
 
 Rules:
 - the process startup layer resolves `RUST_LOG` before observability initialization;
-- the validated default filter is `rag_runtime=debug,info`;
-- the default filter must keep `rag_runtime` business logs at `debug` while suppressing transport-level dependency noise below `info`;
+- the validated default filter is `distributed_diagnostics=debug,info`;
+- the default filter must keep `distributed_diagnostics` business logs at `debug` while suppressing transport-level dependency noise below `info`;
 - transport stack debug noise from dependencies such as HTTP clients, HTTP/2 internals, and OTEL transport internals must not be enabled by default.
 - when tracing initialization is enabled, the tracing subscriber must include `tracing_subscriber::EnvFilter`;
 - the tracing subscriber must resolve its filter from `RUST_LOG` through `tracing_subscriber::EnvFilter::from_default_env()`;
-- if `RUST_LOG` is unset, the tracing subscriber must use the exact fallback filter string `rag_runtime=debug,info`;
+- if `RUST_LOG` is unset, the tracing subscriber must use the exact fallback filter string `distributed_diagnostics=debug,info`;
 - the generated implementation must not install a tracing subscriber that ignores `RUST_LOG`;
 - the generated implementation must not replace `RUST_LOG` handling with a hardcoded filter when `RUST_LOG` is present;
 - the generated implementation must not construct the tracing subscriber without an explicit env-filter layer.
 
 Rationale:
 - unrestricted global `debug` produces low-signal output during validation and smoke runs;
-- `rag_runtime=debug,info` preserves application-level diagnostics while keeping telemetry validation readable.
+- `distributed_diagnostics=debug,info` preserves application-level diagnostics while keeping telemetry validation readable.
 
 ========================
 18) Reference Implementation Example
@@ -442,10 +483,10 @@ fn init_tracing(settings: &ObservabilitySettings) -> Result<TracingGuard, InitEr
         .with_span_processor(batch_processor)
         .build();
 
-    let tracer = tracer_provider.tracer("rag_runtime");
+    let tracer = tracer_provider.tracer("distributed_diagnostics");
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("rag_runtime=debug,info"));
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("distributed_diagnostics=debug,info"));
 
     let subscriber = tracing_subscriber::registry()
         .with(env_filter)
@@ -482,50 +523,49 @@ fn init_metrics(settings: &ObservabilitySettings) -> Result<MetricsGuard, InitEr
     })
 }
 
-async fn input_validation_stage(
-    settings: &InputValidationSettings,
-) -> Result<ValidatedUserRequest, RagRuntimeError> {
+async fn append_pending_step_record(
+    run_id: RunId,
+    iteration_id: RunIterationId,
+    step: StepKind,
+) -> Result<(), RuntimeError> {
     let span = tracing::info_span!(
-        "input_validation",
-        span.module = "input_validation",
-        span.stage = "input_validation",
+        "repository.step.append_pending",
+        run.id = %run_id,
+        iteration.id = %iteration_id,
+        step.kind = %step.as_ref(),
+        span.module = "run_repository",
+        span.stage = "append_pending",
         status = tracing::field::Empty,
     );
     let _enter = span.enter();
 
-    // stage-specific logic computes normalized_query
-
-    tracing::info!(
-        trim_whitespace = settings.trim_whitespace,
-        collapse_internal_whitespace = settings.collapse_internal_whitespace,
-        normalized_query_length = normalized_query_length,
-        "query_normalized"
-    );
-
-    // return stage result
+    // persist the pending step record
 }
 
-async fn handle_request(
-    request: UserRequest,
+async fn handle_run(
+    entrypoint: &'static str,
+    run_id: RunId,
     settings: &Settings,
-) -> Result<UserResponse, RagRuntimeError> {
-    let request_id = Uuid::new_v4().to_string();
-
+) -> Result<RunOutcome, RuntimeError> {
     let root_span = tracing::info_span!(
-        "rag.request",
-        request_id = %request_id,
-        span.module = "orchestration",
-        span.stage = "request",
+        "diagnostics.run",
+        run.id = %run_id,
+        run.entrypoint = entrypoint,
+        span.module = "orchestrator",
+        span.stage = "run",
         status = tracing::field::Empty,
     );
 
     let _enter = root_span.enter();
 
-    // create one UUID v4 request_id for this request before root span creation
-    // write request_id into the root span during root span creation
-    // call the instrumented async stage functions for input_validation, retrieval, and generation under the active root span
+    // write run.id and run.entrypoint during root span creation
+    // call orchestration work under the active root span
+    // create diagnostics.iteration when the invocation has a current iteration
+    // create orchestrator.policy.next_transition, orchestrator.step,
+    // repository.step.append_pending, step_executor.dispatch,
+    // and repository.step.finish in their owning modules
     // record final root span status as "ok" or "error"
-    // return the final request result
+    // return the final run outcome
 }
 
 async fn async_main(settings: Settings) -> Result<(), InitError> {
@@ -545,8 +585,8 @@ async fn async_main(settings: Settings) -> Result<(), InitError> {
 The example illustrates these required rules:
 - tracing initialization happens before request handling;
 - metrics initialization happens before request handling;
-- root request span is entered before awaiting stage execution;
-- mandatory stage spans are created explicitly;
+- root run span is entered before awaiting orchestration execution;
+- mandatory orchestration spans are created explicitly;
 - provider shutdown happens during the application shutdown sequence;
 - RAII guards own provider shutdown behavior.
 

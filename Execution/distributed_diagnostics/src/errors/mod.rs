@@ -2,12 +2,15 @@ use thiserror::Error;
 
 pub use crate::api_clients::ApiClientError;
 pub use crate::config::ConfigError;
+pub use crate::observability::ObservabilityError;
 pub use crate::startup::StartupError;
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("config: {0}")]
     Config(#[from] ConfigError),
+    #[error("observability: {0}")]
+    Observability(#[from] ObservabilityError),
     #[error("api clients: {0}")]
     ApiClients(#[from] ApiClientError),
     #[error("startup: {0}")]
