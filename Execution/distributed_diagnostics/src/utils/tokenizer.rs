@@ -48,17 +48,19 @@ impl HfTokenizer {
 
     /// Tokenize `text` and return token strings with subword markers stripped
     /// (GPT-2 `Ġ`, SentencePiece `▁`, WordPiece `##`).
-    pub fn tokenize(&self, text: &str) -> Vec<String> {
-        let encoding = match self.inner.encode(text, false) {
-            Ok(e) => e,
-            Err(_) => return Vec::new(),
-        };
+    pub fn tokenize(&self, text: &str) -> Result<Vec<String>, TokenizerError> {
+        let encoding = self
+            .inner
+            .encode(text, false)
+            .map_err(|e| TokenizerError::InvalidJson {
+                reason: format!("failed to encode input text: {e}"),
+            })?;
 
-        encoding
+        Ok(encoding
             .get_tokens()
             .iter()
             .map(|raw| strip_tokenizer_markers(raw).to_string())
-            .collect()
+            .collect())
     }
 }
 
@@ -235,7 +237,7 @@ mod tests {
         populate_tokenizer_cache("test/tok");
         let tokenizer = HfTokenizer::load("test/tok").await.unwrap();
         let tokens = tokenizer.tokenize("service down");
-        assert_eq!(tokens, vec!["service".to_string(), "down".to_string()]);
+        assert_eq!(tokens, Ok(vec!["service".to_string(), "down".to_string()]));
     }
 
     // ── validate_tokenizer_json ──────────────────────────────────────────────

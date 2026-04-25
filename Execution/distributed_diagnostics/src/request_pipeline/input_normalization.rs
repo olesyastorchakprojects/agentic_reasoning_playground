@@ -1,6 +1,7 @@
 use crate::config::InputNormalizationSettings;
 use crate::shared_types::{NormalizedUserRequest, UserRequest};
 use crate::utils::tokenizer::{HfTokenizer, TokenizerError};
+use tracing::{info_span, field};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum InputNormalizationError {
@@ -36,29 +37,112 @@ impl InputNormalization {
         &self,
         request: UserRequest,
     ) -> Result<NormalizedUserRequest, InputNormalizationError> {
-        let query: String = request
-            .query
+        let raw_query = request.query.clone();
+        let raw_chars = raw_query.len();
+
+        let span = info_span!(
+            "request_pipeline.input_normalization",
+            module.name = "input_normalization",
+            input.raw_query = %raw_query,
+            input.raw_chars = raw_chars,
+            input.normalized_query = field::Empty,
+            input.normalized_chars = field::Empty,
+            input.normalized_token_count = field::Empty,
+            input.max_tokens = self.max_input_tokens,
+            input.within_limit = field::Empty,
+            normalization.trimmed = field::Empty,
+            normalization.collapsed_whitespace = field::Empty,
+            normalization.changed = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        let _enter = span.enter();
+
+        tracing::info!(raw_query = %raw_query, "input_normalization.input_received");
+
+        // Detect if input had leading/trailing whitespace
+        let trimmed = raw_query != raw_query.trim();
+
+        // Normalize: trim and collapse whitespace
+        let query: String = raw_query
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
 
+        // Any difference in internal whitespace canonicalization counts as collapsed whitespace.
+        let collapsed_whitespace = raw_query.trim() != query && raw_query.split_whitespace().count() > 1;
+
+        let changed = raw_query != query;
+
+        span.record("normalization.trimmed", trimmed);
+        span.record("normalization.collapsed_whitespace", collapsed_whitespace);
+        span.record("normalization.changed", changed);
+
+        tracing::info!(normalized_query = %query, "input_normalization.normalized");
+
         if query.is_empty() {
+            span.record("module.outcome", "failure");
+            span.record("status", "error");
+            span.record("error.type", "InputNormalization.EmptyQuery");
+            span.record("error.message", "Query is empty after normalization");
             return Err(InputNormalizationError::EmptyQuery);
         }
 
-        let tokens = self.tokenizer.tokenize(&query);
+        let tokens = match self.tokenizer.tokenize(&query) {
+            Ok(tokens) => tokens,
+            Err(error) => {
+                span.record("module.outcome", "failure");
+                span.record("status", "error");
+                span.record("error.type", "InputNormalization.Tokenizer");
+                span.record("error.message", error.to_string());
+                return Err(InputNormalizationError::Tokenizer(error));
+            }
+        };
         let input_token_count = tokens.len();
 
+        tracing::info!(token_count = input_token_count, "input_normalization.token_counted");
+
         if input_token_count == 0 {
+            span.record("module.outcome", "failure");
+            span.record("status", "error");
+            span.record("error.type", "InputNormalization.EmptyQuery");
+            span.record("error.message", "Tokenizer produced zero tokens");
             return Err(InputNormalizationError::EmptyQuery);
         }
 
-        if input_token_count > self.max_input_tokens {
+        let within_limit = input_token_count <= self.max_input_tokens;
+
+        if !within_limit {
+            span.record("input.normalized_query", &query);
+            span.record("input.normalized_chars", query.len());
+            span.record("input.normalized_token_count", input_token_count);
+            span.record("input.within_limit", false);
+            span.record("module.outcome", "failure");
+            span.record("status", "error");
+            span.record("error.type", "InputNormalization.InputTooLong");
+            span.record(
+                "error.message",
+                format!(
+                    "Input too long: {} tokens exceeds limit of {}",
+                    input_token_count, self.max_input_tokens
+                ),
+            );
             return Err(InputNormalizationError::InputTooLong {
                 token_count: input_token_count,
                 max_input_tokens: self.max_input_tokens,
             });
         }
+
+        // Success path
+        span.record("input.normalized_query", &query);
+        span.record("input.normalized_chars", query.len());
+        span.record("input.normalized_token_count", input_token_count);
+        span.record("input.within_limit", true);
+        span.record("module.outcome", "success");
+        span.record("status", "ok");
 
         Ok(NormalizedUserRequest {
             query,
@@ -107,8 +191,7 @@ mod tests {
         let cache = tokenizer_cache_root().join(source).join("tokenizer.json");
         std::fs::create_dir_all(cache.parent().unwrap()).expect("create tokenizer cache dir");
 
-        // No unknown token is configured, so an out-of-vocabulary term causes encode() to fail,
-        // and HfTokenizer::tokenize() returns an empty vector.
+        // No unknown token is configured, so an out-of-vocabulary term causes encode() to fail.
         let model = WordLevel::builder()
             .vocab([("service".to_string(), 1u32)].into_iter().collect())
             .build()
@@ -169,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn zero_token_normalized_query_fails_with_empty_query() {
+    fn tokenizer_failure_is_reported_as_tokenizer_error() {
         const ZERO_TOKEN_SOURCE: &str = "test/input-norm-zero-token";
         populate_zero_token_cache(ZERO_TOKEN_SOURCE);
         let tokenizer = {
@@ -185,8 +268,8 @@ mod tests {
         };
         let result = norm.normalize(req("unknownterm"));
         assert!(
-            matches!(result, Err(InputNormalizationError::EmptyQuery)),
-            "expected EmptyQuery, got {result:?}"
+            matches!(result, Err(InputNormalizationError::Tokenizer(_))),
+            "expected Tokenizer error, got {result:?}"
         );
     }
 

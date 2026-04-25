@@ -8,6 +8,7 @@ It defines:
 - span ownership;
 - span scope boundaries;
 - required span attributes;
+- OpenTelemetry display-name rules;
 - root span implementation requirements.
 
 # 2) Root Span Contract
@@ -48,6 +49,12 @@ Enum string rules:
 - `step.kind` uses the canonical Rust enum variant name from `StepKind`;
 - `transition.kind` uses the canonical Rust enum variant name from `PolicyTransition`;
 - the required format is Rust variant casing, not snake_case and not kebab-case.
+
+Error field rules:
+- stable error classification uses `error.type`;
+- human-readable failure detail uses `error.message`;
+- full error text is allowed in `error.message` for this demo project when it does not violate the explicit safety constraints in this document;
+- `error.kind` is not used in this contract.
 
 # 4) Mandatory Span Hierarchy
 
@@ -108,6 +115,11 @@ Allowed `status` values are fixed:
 - `ok`;
 - `error`.
 
+Outcome field rules:
+- `step.outcome` is used only on step-oriented spans that represent business-step execution outcome;
+- `run.outcome` is used only on `diagnostics.run`;
+- repository persistence spans describe persistence outcome through `status`, and may additionally describe persisted business outcome through `persisted.step.outcome`.
+
 # 7) Detailed Span Contracts
 
 `diagnostics.run`
@@ -139,6 +151,21 @@ Allowed `status` values are fixed:
     - type: string
     - source: result-derived
     - value: `ok | error`
+- conditional attributes:
+  - `run.outcome`
+    - type: string
+    - source: result-derived
+    - value: `success | failure`
+  - `terminal.transition`
+    - type: string
+    - source: orchestrator-derived
+    - value format: canonical `PolicyTransition` variant name such as `FinishWithResult` or `FinishWithError`
+    - emitted when the invocation ends in a terminal policy transition
+  - `failed_step.kind`
+    - type: string
+    - source: orchestrator-derived
+    - value format: canonical `StepKind` variant name
+    - emitted only when the invocation fails because a step execution failed
 
 `diagnostics.run` rules:
 - `run.entrypoint` is required only on `diagnostics.run`;
@@ -146,6 +173,8 @@ Allowed `status` values are fixed:
 - `diagnostics.run` must still be emitted when the invocation ends in `PolicyTransition::FinishWithError`;
 - `diagnostics.run` must still be emitted when step execution or persistence returns an error;
 - the root span must remain the active parent while the orchestrator awaits downstream async work.
+- on invocation failure, `diagnostics.run` must record `status = "error"` and `run.outcome = "failure"`;
+- on invocation success, `diagnostics.run` must record `status = "ok"` and `run.outcome = "success"`.
 
 `diagnostics.iteration`
 
@@ -178,6 +207,10 @@ Allowed `status` values are fixed:
     - source: result-derived
     - value: `ok | error`
 
+`diagnostics.iteration` rules:
+- when step execution fails inside the current invocation, the active `diagnostics.iteration` span records `status = "error"`;
+- when iteration-scoped work completes without step failure, the active `diagnostics.iteration` span records `status = "ok"`.
+
 `orchestrator.policy.next_transition`
 
 - begins:
@@ -193,6 +226,10 @@ Allowed `status` values are fixed:
     - value: `next_transition`
   - `status`
 - conditional attributes:
+  - `step.sequence_no`
+    - type: integer
+    - source: orchestrator-derived
+    - emitted only when `transition.kind = "ExecuteStep"`
   - `transition.kind`
     - type: string
     - source: policy-derived
@@ -203,6 +240,17 @@ Allowed `status` values are fixed:
     - source: policy-derived
     - emitted only when `transition.kind = "ExecuteStep"`
     - value format: canonical `StepKind` variant name such as `InputNormalization`
+  - `policy.finished_steps_count`
+    - type: integer
+    - source: policy-input-derived
+  - `policy.pending_step_present`
+    - type: boolean
+    - source: policy-input-derived
+  - `policy.last_finished_step.kind`
+    - type: string
+    - source: policy-input-derived
+    - value format: canonical `StepKind` variant name
+    - omitted when there is no previously finished step
 
 `orchestrator.step`
 
@@ -222,6 +270,28 @@ Allowed `status` values are fixed:
   - `span.stage`
     - value: `step`
   - `status`
+- conditional attributes:
+  - `step.sequence_no`
+    - type: integer
+    - source: orchestrator-derived
+  - `record.id`
+    - type: string
+    - source: orchestrator-derived
+    - emitted after the pending step record exists
+  - `step.outcome`
+    - type: string
+    - source: result-derived
+    - value: `success | failure`
+  - `otel.name`
+    - type: string
+    - source: constant-derived from `step.kind`
+    - value format: `step.<StepKind>`
+
+`orchestrator.step` rules:
+- the tracing span name remains `orchestrator.step`;
+- for OpenTelemetry export, the implementation sets `otel.name = "step.<StepKind>"` to improve trace UI readability;
+- when step execution fails, `orchestrator.step` records `status = "error"` and `step.outcome = "failure"`;
+- when step execution succeeds, `orchestrator.step` records `status = "ok"` and `step.outcome = "success"`.
 
 `repository.step.append_pending`
 
@@ -239,6 +309,10 @@ Allowed `status` values are fixed:
   - `span.stage`
     - value: `append_pending`
   - `status`
+- conditional attributes:
+  - `step.sequence_no`
+    - type: integer
+    - source: orchestrator-derived
 
 `step_executor.dispatch`
 
@@ -255,6 +329,25 @@ Allowed `status` values are fixed:
   - `span.stage`
     - value: `dispatch`
   - `status`
+- conditional attributes:
+  - `step.sequence_no`
+    - type: integer
+    - source: orchestrator-derived
+  - `step.outcome`
+    - type: string
+    - source: result-derived
+    - value: `success | failure`
+  - `otel.name`
+    - type: string
+    - source: constant-derived from `step.kind`
+    - value format: `executor.<StepKind>`
+    - recommended but optional
+
+`step_executor.dispatch` rules:
+- the tracing span name remains `step_executor.dispatch`;
+- the implementation may set `otel.name = "executor.<StepKind>"` to improve trace UI readability;
+- when step execution fails, `step_executor.dispatch` records `status = "error"` and `step.outcome = "failure"`;
+- when step execution succeeds, `step_executor.dispatch` records `status = "ok"` and `step.outcome = "success"`.
 
 `repository.step.finish`
 
@@ -272,8 +365,35 @@ Allowed `status` values are fixed:
   - `span.stage`
     - value: `finish`
   - `status`
+- conditional attributes:
+  - `step.sequence_no`
+    - type: integer
+    - source: orchestrator-derived
+  - `persisted.step.outcome`
+    - type: string
+    - source: orchestrator-derived from the finished step record
+    - value: `success | failure`
 
-# 8) Root Span Implementation Requirements
+`repository.step.finish` rules:
+- `repository.step.finish` describes repository operation success or failure through `status`;
+- if it successfully persists a failed business-step result, it records `status = "ok"` and `persisted.step.outcome = "failure"`;
+- repository persistence spans must not be marked as failed solely because the business step they persisted failed.
+
+# 8) OpenTelemetry Display Name Rules
+
+The tracing span names in this contract remain stable:
+- `orchestrator.step`
+- `step_executor.dispatch`
+
+To improve trace UI readability, the implementation may set OpenTelemetry export names through `otel.name`.
+
+Rules:
+- `orchestrator.step` exports `otel.name = "step.<StepKind>"`;
+- `step_executor.dispatch` may export `otel.name = "executor.<StepKind>"`;
+- dynamic OpenTelemetry display names do not replace the contract-level tracing span names;
+- `step.kind` remains required as an attribute even when it is also visible through `otel.name`.
+
+# 9) Root Span Implementation Requirements
 
 The root span lifecycle is fixed.
 
@@ -309,11 +429,22 @@ Parentage propagation rules:
 - those child spans become descendants of the active parent span because the caller keeps the parent span entered while awaiting downstream work;
 - the internal observability API must not require explicit OpenTelemetry span-context passing between orchestrator, repository, executor, and pipeline layers.
 
+Failure propagation rules:
+- when step execution fails, the executor span records the failure;
+- the owning `orchestrator.step` span records the failure;
+- the active `diagnostics.iteration` span records the failure;
+- the root `diagnostics.run` span records the failure;
+- repository persistence spans describe persistence success or failure, not business-step success or failure.
+
+Event rules:
+- do not add step lifecycle events such as `step.pending_opened`, `step.pending_persisted`, `step.execution_started`, `step.execution_finished`, or `step.finished_persisted`;
+- the current contract uses spans, not duplicate lifecycle events, to represent those boundaries.
+
 Rationale:
 - root span parentage is fragile in async Rust when the root span is created in one place and the awaited work runs outside the entered scope;
 - the contract in this section exists to prevent orphan child spans, split traces, and accidental per-step root traces.
 
-# 9) Safety Constraints
+# 10) Safety Constraints
 
 The following values must not be written to spans:
 - secrets;
@@ -323,3 +454,497 @@ The following values must not be written to spans:
 - raw prompt text;
 - raw retrieved document text;
 - raw model output text.
+
+# 11) Leaf Request-Pipeline Spans
+
+This section defines the tracing contract for leaf request-pipeline modules in `distributed_diagnostics`.
+
+The orchestrator layer remains the parent trace structure:
+
+- `diagnostics.run`
+- `diagnostics.iteration`
+- `orchestrator.policy.next_transition`
+- `orchestrator.step`
+- `repository.step.append_pending`
+- `step_executor.dispatch`
+- `repository.step.finish`
+
+Leaf-module spans are nested under `step_executor.dispatch`.
+
+This section covers only:
+- `request_pipeline.*` spans;
+- leaf-module child dependency spans;
+- leaf-module diagnostic events.
+
+# 12) Leaf Goals
+
+Leaf-module tracing in this repository is intentionally diagnosis-oriented for a demo project.
+
+The leaf trace should help answer:
+- what each module received;
+- what policy or configuration it used;
+- what external calls it made;
+- what it selected, filtered, rejected, normalized, or validated;
+- what exactly failed, with a clear human-readable message.
+
+Visibility is preferred when it does not violate the explicit trace safety constraints in this document.
+
+# 13) Leaf Data Visibility Policy
+
+The following values may be written to leaf-module span attributes or events in this demo project:
+- raw user query;
+- normalized user query;
+- serialized structured query JSON;
+- serialized final structured output JSON;
+- case IDs;
+- chunk IDs;
+- chunk tags;
+- chunk scores;
+- selected chunk roles;
+- validation failure fields;
+- full model or client error text when it does not violate the explicit safety constraints in this document;
+- full human-readable diagnostic messages.
+
+The following values must still not be written to leaf-module span attributes or events:
+- large chunk text;
+- full rendered prompt text;
+- raw Qdrant transport payloads;
+- vectors or embeddings;
+- full PostgreSQL row dumps;
+- very large arrays;
+- very large raw model output.
+
+Rules:
+- full rendered prompt text is forbidden;
+- large retrieved text is forbidden;
+- raw model output is forbidden unless it is first normalized into a bounded structured representation;
+- serialized structured query JSON is allowed because it is central to diagnosing pipeline behavior;
+- serialized final structured output JSON and final trusted response JSON are allowed for this demo project;
+- if serialized structured payloads become too large, they must be omitted, summarized, or truncated explicitly.
+
+# 14) Global Leaf Attributes
+
+Every `request_pipeline.<module>` span contains:
+- `module.name`
+- `module.outcome`
+- `status`
+
+Allowed `module.outcome` values are:
+- `success`
+- `failure`
+
+On failure, a leaf-module span also contains:
+- `error.type`
+- `error.message`
+
+`error.message` is required for every leaf-module error path.
+
+The message must explain what happened in plain language.
+Full error text is allowed and preferred for this demo project when it does not violate the explicit safety constraints in this document.
+
+Examples:
+- `Response validation failed: required field first_check is missing.`
+- `Prompt context assembly failed: no chunk with role first_check_hint was available for the primary card.`
+- `LLM structured generation failed: model returned invalid JSON object.`
+
+Do not rely only on `error.type`.
+
+Leaf identity rules:
+- leaf-module spans inherit run, iteration, step, sequence, and record identity from their parent orchestration spans;
+- leaf-module spans do not duplicate `run.id`, `iteration.id`, `step.kind`, `step.sequence_no`, or `record.id` unless a specific querying use case explicitly requires that duplication;
+- the default leaf tracing contract keeps orchestration identity on the orchestrator and executor spans, not on every leaf span.
+
+Leaf input-availability rule:
+- a leaf module must not be required to emit an attribute that is not present in its natural runtime input;
+- `query.raw` is required only for modules that actually receive the raw user query;
+- downstream modules that operate on normalized requests record `query.normalized` and must not synthesize `query.raw`.
+
+# 15) Leaf Event Policy
+
+Leaf modules may emit diagnostic events more freely than orchestrator spans, but only when those events add information that is not already obvious from span attributes alone.
+
+Event rules:
+- leaf-module events must carry compact diagnostic facts, not large text blobs;
+- every allowed event in this contract must declare its required payload fields explicitly;
+- if an event does not have explicit required payload fields in this contract, that event must not be emitted;
+- orchestrator lifecycle events remain forbidden;
+- leaf-module events must not duplicate orchestrator lifecycle boundaries already represented by spans;
+- events are for internal module decisions, not for replacing required leaf spans.
+
+Good event use cases:
+- branch skipped with a concrete reason;
+- role-selection decisions;
+- parse or validation failures with a compact decision payload.
+
+Bad event use cases:
+- generic `*_completed` events that only restate span status;
+- generic `*_received` events that repeat existing span attributes;
+- generic `*_checked` events without a compact decision payload.
+
+# 16) Leaf Hierarchy And Ownership
+
+Leaf-module span ownership is fixed by module:
+- `request_pipeline.input_normalization`
+- `request_pipeline.query_structuring`
+- `request_pipeline.candidate_card_retrieval`
+- `request_pipeline.card_hydration`
+- `request_pipeline.incident_evidence_retrieval`
+- `request_pipeline.theory_evidence_retrieval`
+- `request_pipeline.prompt_context_assembly`
+- `request_pipeline.llm_structured_generation`
+- `request_pipeline.response_validation_and_normalization`
+
+Leaf child dependency spans are created by the owning module, for example:
+- `llm.call.query_structuring`
+- `qdrant.cards.search`
+- `postgres.incident_cards.get_by_case_ids`
+- `qdrant.practice_chunks.search.primary`
+- `qdrant.practice_chunks.search.alternatives`
+- `qdrant.theory_chunks.search`
+- `llm.call.diagnostic_response`
+
+Rules:
+- `request_pipeline.*` spans are children of `step_executor.dispatch`;
+- dependency spans are children of the leaf module that performs the dependency call;
+- a leaf module creates only its own leaf span and its own dependency spans;
+- leaf-module child events belong to the leaf span that emitted them.
+
+# 17) Leaf Span Contracts
+
+`request_pipeline.input_normalization`
+
+- child dependency spans:
+  - none required
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `input.raw_query`
+  - `input.raw_chars`
+  - `input.normalized_query`
+  - `input.normalized_chars`
+  - `input.normalized_token_count`
+  - `input.max_tokens`
+  - `input.within_limit`
+  - `normalization.trimmed`
+  - `normalization.collapsed_whitespace`
+  - `normalization.changed`
+- failure rules:
+  - stable error classification uses `error.type` values such as `InputNormalization.EmptyQuery`, `InputNormalization.InputTooLong`, or `InputNormalization.Tokenizer`
+
+`request_pipeline.query_structuring`
+
+- child dependency spans:
+  - `llm.call.query_structuring`
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `query.normalized`
+  - `query.input_token_count`
+  - `asset.prompt.name`
+  - `asset.prompt.version`
+  - `asset.prompt.template_placeholders_valid`
+  - `asset.vocabulary.name`
+  - `asset.vocabulary.version`
+  - `model.provider`
+  - `model.name`
+  - `model.response_mode`
+  - `model.temperature`
+  - `model.max_output_tokens`
+  - `model.finish_reason`
+  - `model.prompt_tokens`
+  - `model.completion_tokens`
+  - `model.total_tokens`
+  - `structured_query.json`
+  - `structured.intent_present`
+  - `structured.symptoms_count`
+  - `structured.affected_subsystems_count`
+  - `structured.failure_modes_count`
+  - `structured.constraints_count`
+  - `structured.confidence`
+- required attributes on `llm.call.query_structuring`:
+  - `llm.task = "query_structuring"`
+  - `model.provider`
+  - `model.name`
+  - `model.response_mode`
+  - `model.temperature`
+  - `model.max_output_tokens`
+  - `model.finish_reason`
+  - `model.prompt_tokens`
+  - `model.completion_tokens`
+  - `model.total_tokens`
+- allowed events:
+  - `query_structuring.output_parsed`
+- required fields on `query_structuring.output_parsed`:
+  - `structured.intent_present`
+  - `structured.symptoms_count`
+  - `structured.affected_subsystems_count`
+  - `structured.failure_modes_count`
+  - `structured.constraints_count`
+- failure rules:
+  - use `error.type` values such as `QueryStructuring.InvalidConfig`, `QueryStructuring.AssetRead`, `QueryStructuring.AssetParse`, `QueryStructuring.InvalidPromptAsset`, `QueryStructuring.InvalidControlledVocabulary`, `QueryStructuring.Model`, or `QueryStructuring.InvalidModelOutput`
+
+`request_pipeline.candidate_card_retrieval`
+
+- child dependency spans:
+  - `qdrant.cards.search`
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `query.normalized`
+  - `retrieval.collection`
+  - `retrieval.top_k`
+  - `retrieval.score_threshold`
+  - `retrieval.max_alternatives`
+  - `retrieval.request_limit`
+  - `retrieval.hits_count`
+  - `retrieval.selected_total_count`
+  - `candidate.primary.present`
+  - `candidate.primary.case_id`
+  - `candidate.primary.score`
+  - `candidate.alternatives.count`
+  - `candidate.alternatives.case_ids`
+  - `candidate.output.total_count`
+- required attributes on `qdrant.cards.search`:
+  - `qdrant.collection`
+  - `qdrant.operation = "search"`
+  - `retrieval.limit`
+  - `retrieval.score_threshold`
+  - `retrieval.hits_count`
+  - `retrieval.scores`
+- failure rules:
+  - use `error.type` values such as `CandidateCardRetrieval.Collection`, `CandidateCardRetrieval.InvalidHit`, or `CandidateCardRetrieval.Mapping`
+
+`request_pipeline.card_hydration`
+
+- child dependency spans:
+  - `postgres.incident_cards.get_by_case_ids`
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `hydration.input.primary_present`
+  - `hydration.input.primary_case_id`
+  - `hydration.input.alternatives_count`
+  - `hydration.input.alternative_case_ids`
+  - `hydration.requested_case_ids_count`
+  - `hydration.requested_case_ids`
+  - `hydration.postgres_call_executed`
+  - `hydration.cards_returned_count`
+  - `hydration.returned_case_ids`
+  - `hydration.missing_case_ids`
+  - `hydration.primary_hydrated`
+  - `hydration.alternatives_hydrated_count`
+  - `hydration.order_reconstructed`
+  - `hydration.partition_preserved`
+- required attributes on `postgres.incident_cards.get_by_case_ids`:
+  - `db.system = "postgresql"`
+  - `db.operation = "get_incident_cards_by_case_ids"`
+  - `db.requested_case_ids_count`
+  - `db.returned_rows_count`
+- failure rules:
+  - use `error.type` values such as `CardHydration.MissingCard` or `CardHydration.Store`
+
+`request_pipeline.incident_evidence_retrieval`
+
+- child dependency spans:
+  - `qdrant.practice_chunks.search.primary`
+  - `qdrant.practice_chunks.search.alternatives`
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `query.normalized`
+  - `structured_query.json`
+  - `incident_evidence.primary_search.executed`
+  - `incident_evidence.alternative_search.executed`
+  - `incident_evidence.primary.case_id`
+  - `incident_evidence.alternative.case_ids`
+  - `incident_evidence.top_k`
+  - `incident_evidence.score_threshold`
+  - `incident_evidence.primary_chunks.count`
+  - `incident_evidence.primary_chunks.ids`
+  - `incident_evidence.alternative_chunks.count`
+  - `incident_evidence.alternative_chunks.ids`
+  - `incident_evidence.total_chunks.count`
+  - `incident_evidence.primary_tag_set`
+  - `incident_evidence.alternative_tag_set`
+- required attributes on child search spans:
+  - `retrieval.branch`
+  - `retrieval.collection = "practice_chunks"`
+  - `retrieval.case_ids_count`
+  - `retrieval.case_ids`
+  - `retrieval.chunk_tags_filter.count`
+  - `retrieval.chunk_tags_filter`
+  - `retrieval.limit`
+  - `retrieval.score_threshold`
+  - `retrieval.hits_count`
+  - `retrieval.hit_chunk_ids`
+  - `retrieval.hit_scores`
+- allowed events:
+  - `incident_evidence.primary_search_skipped`
+  - `incident_evidence.alternative_search_skipped`
+- required fields on `incident_evidence.primary_search_skipped`:
+  - `skip.reason`
+  - `primary.case_id`
+- required fields on `incident_evidence.alternative_search_skipped`:
+  - `skip.reason`
+  - `alternative.case_ids`
+- failure rules:
+  - use `error.type` values such as `IncidentEvidenceRetrieval.Collection`, `IncidentEvidenceRetrieval.InvalidHit`, or `IncidentEvidenceRetrieval.Mapping`
+
+`request_pipeline.theory_evidence_retrieval`
+
+- child dependency spans:
+  - `qdrant.theory_chunks.search`
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `query.normalized`
+  - `structured_query.json`
+  - `theory_retrieval.collection`
+  - `theory_retrieval.top_k`
+  - `theory_retrieval.score_threshold`
+  - `theory_retrieval.search_executed`
+  - `theory_retrieval.hits_count`
+  - `theory_retrieval.chunk_ids`
+  - `theory_retrieval.scores`
+  - `theory_retrieval.empty_result`
+  - `theory_retrieval.order_preserved`
+- required attributes on `qdrant.theory_chunks.search`:
+  - `retrieval.collection = "theory_chunks"`
+  - `retrieval.limit`
+  - `retrieval.score_threshold`
+  - `retrieval.hits_count`
+  - `retrieval.hit_chunk_ids`
+  - `retrieval.hit_scores`
+- failure rules:
+  - use `error.type` values such as `TheoryEvidenceRetrieval.Collection`, `TheoryEvidenceRetrieval.InvalidHit`, or `TheoryEvidenceRetrieval.Mapping`
+
+Notes for Qdrant-backed retrieval:
+- record the full score list as the primary contract: `retrieval.scores`, `retrieval.hit_scores`, or module-local `*.scores`;
+- `top_score` / `min_score` may be emitted as optional convenience attributes, but they are not part of the required contract and must not replace the full score list.
+
+`request_pipeline.prompt_context_assembly`
+
+- child dependency spans:
+  - none required
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `query.normalized`
+  - `structured_query.json`
+  - `prompt.asset.name`
+  - `prompt.asset.version`
+  - `prompt.asset.policy_constraints_count`
+  - `prompt.input.primary_card_present`
+  - `prompt.input.primary_card.case_id`
+  - `prompt.input.alternative_cards_count`
+  - `prompt.input.alternative_card.case_ids`
+  - `prompt.input.primary_incident_chunks_count`
+  - `prompt.input.primary_incident_chunk_ids`
+  - `prompt.input.alternative_incident_chunks_count`
+  - `prompt.input.alternative_incident_chunk_ids`
+  - `prompt.input.theory_chunks_count`
+  - `prompt.input.theory_chunk_ids`
+  - `prompt.selected.total_chunks_count`
+  - `prompt.selected.evidence_for_match.count`
+  - `prompt.selected.first_check_hint.count`
+  - `prompt.selected.supporting_explanation.count`
+  - `prompt.selected.alternative_context.count`
+  - `prompt.selected.mechanism_explanation.count`
+  - `prompt.rendered_chars`
+  - `prompt.context_json_chars`
+  - `prompt.has_competing_precedent_context`
+- allowed events:
+  - `prompt_context.role_selection_completed`
+- required fields on `prompt_context.role_selection_completed`:
+  - `role.name`
+  - `role.eligible_chunk_ids`
+  - `role.selected_chunk_ids`
+  - `role.selected_count`
+- failure rules:
+  - use `error.type` values such as `PromptContextAssembly.InvalidSettings`, `PromptContextAssembly.PromptAsset`, `PromptContextAssembly.MissingPrimaryCard`, `PromptContextAssembly.MissingRequiredEvidence`, or `PromptContextAssembly.InconsistentEvidence`
+
+`request_pipeline.llm_structured_generation`
+
+- child dependency spans:
+  - `llm.call.diagnostic_response`
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `llm.task = "diagnostic_response"`
+  - `llm.prompt_chars`
+  - `llm.prompt_empty`
+  - `llm.response_mode`
+  - `llm.temperature`
+  - `llm.max_output_tokens`
+  - `llm.finish_reason`
+  - `llm.prompt_tokens`
+  - `llm.completion_tokens`
+  - `llm.total_tokens`
+  - `llm.output.parse_success`
+  - `llm.output.top_level_type`
+  - `llm.output.object_field_count`
+  - `llm.output.has_markdown_fence`
+  - `llm.output.content_chars`
+  - `llm.output.parsed_json`
+- allowed conditional attributes:
+  - `llm.output.truncated`
+  - `llm.output.truncation_limit_chars`
+- required attributes on `llm.call.diagnostic_response`:
+  - `model.provider`
+  - `model.name`
+  - `model.response_mode`
+  - `model.temperature`
+  - `model.max_output_tokens`
+  - `model.finish_reason`
+  - `model.prompt_tokens`
+  - `model.completion_tokens`
+  - `model.total_tokens`
+- allowed events:
+  - `llm_generation.json_parsed`
+- required fields on `llm_generation.json_parsed`:
+  - `llm.output.parse_success`
+  - `llm.output.top_level_type`
+  - `llm.output.object_field_count`
+  - `llm.output.has_markdown_fence`
+- failure rules:
+  - use `error.type` values such as `LlmStructuredGeneration.InvalidConfig`, `LlmStructuredGeneration.InvalidInput`, `LlmStructuredGeneration.Model`, or `LlmStructuredGeneration.InvalidModelOutput`
+
+`request_pipeline.response_validation_and_normalization`
+
+- child dependency spans:
+  - none required
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `validation.input.raw_json`
+  - `validation.input.top_level_type`
+  - `validation.input.top_level_field_count`
+  - `validation.required_fields.present_count`
+  - `validation.required_fields.missing_count`
+  - `validation.required_fields.missing`
+  - `validation.unknown_top_level_fields_count`
+  - `validation.unknown_top_level_fields`
+  - `validation.result_interpretation.present`
+  - `validation.active_hypotheses.count`
+  - `validation.active_hypotheses.valid_count_range`
+  - `validation.competing_interpretation.present`
+  - `validation.inconclusive_if.present`
+  - `validation.prohibited_final_diagnosis_language_found`
+  - `normalization.trimmed_fields_count`
+  - `normalization.success`
+  - `final_response.json`
+- allowed events:
+  - `response_validation.failed`
+- required fields on `response_validation.failed`:
+  - `validation.failure.reason`
+  - `validation.failure.path`
+  - `error.message`
+- failure rules:
+  - use `error.type` values such as `ResponseValidation.InvalidResponseShape` or `ResponseValidation.BusinessRuleViolation`
+
+# 18) Leaf Acceptance Criteria
+
+The leaf tracing contract is satisfied when:
+1. each implemented leaf module emits a `request_pipeline.<module>` span under `step_executor.dispatch`;
+2. each leaf span includes `module.outcome`, `status`, and clear error information on failure;
+3. every leaf error path includes `error.message` with a human-readable explanation;
+4. raw user query is visible only in leaf spans that naturally receive it, and normalized query is visible in downstream leaf spans that operate on normalized requests;
+5. structured query JSON is visible after `QueryStructuring` and in downstream leaf spans where useful;
+6. final structured output JSON or final trusted response JSON is visible only in the relevant downstream leaf spans;
+7. full rendered prompt text is not written to the trace;
+8. large chunk text is not written to the trace;
+9. chunk IDs, case IDs, tags, scores, and selected roles are visible where relevant for retrieval and prompt assembly diagnosis;
+10. prompt-context tracing shows eligible versus selected chunk decisions per role when that information is implemented;
+11. LLM generation tracing shows finish reason, token usage, JSON parse result, and parsed structured output when available;
+12. response validation tracing shows exact missing, unknown, or wrong fields together with a clear validation failure message.

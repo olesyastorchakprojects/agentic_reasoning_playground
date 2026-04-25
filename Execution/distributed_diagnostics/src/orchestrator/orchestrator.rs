@@ -65,41 +65,57 @@ where
 
     pub async fn run(&self, user_input: UserRequest) -> Result<RunOutcome, OrchestratorError> {
         let mut state = RunState::new();
-        self.run_repository.create_run(&state).await?;
-
-        {
-            let mut writer = RunStateWriter::new(&mut state);
-            writer.begin_iteration(user_input)?;
-        }
-
-        let iteration_sequence_no = RunStateView::new(&state).iteration_count() as u64 - 1;
-        let iteration_id = RunStateView::new(&state)
-            .last_iteration()
-            .expect("begin_iteration must create a current iteration")
-            .iteration_id();
-        let iteration = RunStateView::new(&state)
-            .iteration(iteration_id)
-            .expect("last_iteration view must reference a stored iteration");
-
-        self.run_repository
-            .append_iteration(&state, iteration_sequence_no, iteration)
-            .await?;
-
         let run_id_str = state.run_id.0.to_string();
         let root_span = crate::observability::run_span(&run_id_str, "run");
         let _root_entered = root_span.enter();
-        let outcome = self.drive_to_outcome(&mut state).await;
-        root_span.record("status", if outcome.is_ok() { "ok" } else { "error" });
+        let outcome = self.run_body(user_input, &mut state).await;
+        record_run_outcome(&root_span, &outcome, Some(&state));
         outcome
     }
 
+    async fn run_body(
+        &self,
+        user_input: UserRequest,
+        state: &mut RunState,
+    ) -> Result<RunOutcome, OrchestratorError> {
+        self.run_repository.create_run(state).await?;
+        {
+            let mut writer = RunStateWriter::new(state);
+            writer.begin_iteration(user_input)?;
+        }
+        let iteration_sequence_no = RunStateView::new(state).iteration_count() as u64 - 1;
+        let iteration_id = RunStateView::new(state)
+            .last_iteration()
+            .expect("begin_iteration must create a current iteration")
+            .iteration_id();
+        let iteration = RunStateView::new(state)
+            .iteration(iteration_id)
+            .expect("last_iteration view must reference a stored iteration");
+        self.run_repository
+            .append_iteration(state, iteration_sequence_no, iteration)
+            .await?;
+        self.drive_to_outcome(state).await
+    }
+
     pub async fn resume(&self, run_id: RunId) -> Result<RunOutcome, OrchestratorError> {
-        let mut state = self.load_existing_run(run_id).await?;
-        let run_id_str = state.run_id.0.to_string();
+        let run_id_str = run_id.0.to_string();
         let root_span = crate::observability::run_span(&run_id_str, "resume");
         let _root_entered = root_span.enter();
+        let mut state = match self.load_existing_run(run_id).await {
+            Err(e) => {
+                crate::observability::record_error(
+                    &root_span,
+                    orchestrator_error_type(&e),
+                    &e.to_string(),
+                );
+                root_span.record("status", "error");
+                root_span.record("run.outcome", "failure");
+                return Err(e);
+            }
+            Ok(s) => s,
+        };
         let outcome = self.drive_to_outcome(&mut state).await;
-        root_span.record("status", if outcome.is_ok() { "ok" } else { "error" });
+        record_run_outcome(&root_span, &outcome, Some(&state));
         outcome
     }
 
@@ -108,13 +124,29 @@ where
         run_id: RunId,
         user_input: UserRequest,
     ) -> Result<RunOutcome, OrchestratorError> {
-        let mut state = self.load_existing_run(run_id).await?;
+        let run_id_str = run_id.0.to_string();
+        let root_span = crate::observability::run_span(&run_id_str, "resume_with_input");
+        let _root_entered = root_span.enter();
+        let (outcome, state) = self.resume_with_input_body(run_id, user_input).await;
+        record_run_outcome(&root_span, &outcome, state.as_ref());
+        outcome
+    }
 
+    async fn resume_with_input_body(
+        &self,
+        run_id: RunId,
+        user_input: UserRequest,
+    ) -> (Result<RunOutcome, OrchestratorError>, Option<RunState>) {
+        let mut state = match self.load_existing_run(run_id).await {
+            Err(e) => return (Err(e), None),
+            Ok(s) => s,
+        };
         {
             let mut writer = RunStateWriter::new(&mut state);
-            writer.begin_iteration(user_input)?;
+            if let Err(e) = writer.begin_iteration(user_input) {
+                return (Err(OrchestratorError::from(e)), Some(state));
+            }
         }
-
         let iteration_sequence_no = RunStateView::new(&state).iteration_count() as u64 - 1;
         let iteration_id = RunStateView::new(&state)
             .last_iteration()
@@ -123,17 +155,15 @@ where
         let iteration = RunStateView::new(&state)
             .iteration(iteration_id)
             .expect("last_iteration view must reference a stored iteration");
-
-        self.run_repository
+        if let Err(e) = self
+            .run_repository
             .append_iteration(&state, iteration_sequence_no, iteration)
-            .await?;
-
-        let run_id_str = state.run_id.0.to_string();
-        let root_span = crate::observability::run_span(&run_id_str, "resume_with_input");
-        let _root_entered = root_span.enter();
+            .await
+        {
+            return (Err(OrchestratorError::from(e)), Some(state));
+        }
         let outcome = self.drive_to_outcome(&mut state).await;
-        root_span.record("status", if outcome.is_ok() { "ok" } else { "error" });
-        outcome
+        (outcome, Some(state))
     }
 
     async fn load_existing_run(&self, run_id: RunId) -> Result<RunState, OrchestratorError> {
@@ -359,17 +389,81 @@ where
     };
     let _iter_entered = iter_span.enter();
 
+    let outcome =
+        drive_to_outcome_loop(policy, executor, run_repository, state, &run_id_str, &iter_id_str)
+            .await;
+
+    match &outcome {
+        Ok(RunOutcome::Finished { .. }) => {
+            iter_span.record("status", "ok");
+        }
+        Ok(RunOutcome::Failed { error, .. }) => {
+            iter_span.record("status", "error");
+            crate::observability::record_error(
+                &iter_span,
+                step_error_type(error),
+                &error.to_string(),
+            );
+        }
+        Err(error) => {
+            iter_span.record("status", "error");
+            crate::observability::record_error(
+                &iter_span,
+                orchestrator_error_type(error),
+                &error.to_string(),
+            );
+        }
+    }
+
+    outcome
+}
+
+async fn drive_to_outcome_loop<P, E, R>(
+    policy: &P,
+    executor: &E,
+    run_repository: &R,
+    state: &mut RunState,
+    run_id_str: &str,
+    iter_id_str: &str,
+) -> Result<RunOutcome, OrchestratorError>
+where
+    P: TransitionPolicy,
+    E: ExecutorLike + Sync,
+    R: RepositoryLike + Sync,
+{
     loop {
-        let policy_span =
-            crate::observability::policy_transition_span(&run_id_str, &iter_id_str);
+        let (finished_steps_count, pending_step_present, last_finished_step_kind) = {
+            let iter = RunStateView::new(state).last_iteration();
+            let fsc = iter.map_or(0, |it| it.finished_steps().count() as u64);
+            let psp = iter.map_or(false, |it| it.pending_step().is_some());
+            let lfs = iter
+                .and_then(|it| it.finished_steps().next_back())
+                .map(|s| s.kind().as_ref().to_string());
+            (fsc, psp, lfs)
+        };
+
+        let policy_span = crate::observability::policy_transition_span(
+            run_id_str,
+            iter_id_str,
+            finished_steps_count,
+            pending_step_present,
+            last_finished_step_kind.as_deref(),
+        );
+
         let decision = {
             let _policy_entered = policy_span.enter();
             let decision = policy.next_transition(RunStateView::new(state));
             match &decision {
                 Ok(PolicyTransition::ExecuteStep { step }) => {
+                    let next_seq = state
+                        .iterations
+                        .last()
+                        .map(|it| it.step_records.len() as u64)
+                        .unwrap_or(0);
                     policy_span.record("status", "ok");
                     policy_span.record("transition.kind", "ExecuteStep");
                     policy_span.record("step.kind", step.as_ref());
+                    policy_span.record("step.sequence_no", next_seq);
                 }
                 Ok(PolicyTransition::FinishWithResult { .. }) => {
                     policy_span.record("status", "ok");
@@ -380,9 +474,11 @@ where
                     policy_span.record("transition.kind", "FinishWithError");
                 }
                 Err(e) => {
-                    policy_span.record("status", "error");
-                    policy_span.record("error.type", "PolicyError");
-                    policy_span.record("error.message", &e.to_string() as &str);
+                    crate::observability::record_error(
+                        &policy_span,
+                        "PolicyError",
+                        &e.to_string(),
+                    );
                 }
             }
             decision
@@ -392,7 +488,7 @@ where
             PolicyTransition::ExecuteStep { step } => {
                 let step_kind_str = step.as_ref().to_string();
                 let step_span =
-                    crate::observability::step_span(&run_id_str, &iter_id_str, &step_kind_str);
+                    crate::observability::step_span(run_id_str, iter_id_str, &step_kind_str);
                 let _step_entered = step_span.enter();
 
                 let (record_id, iteration_id) = {
@@ -411,11 +507,30 @@ where
                     None => return Err(OrchestratorError::MissingPendingStep { step }),
                 };
 
+                step_span.record("step.sequence_no", step_sequence_no);
+                let record_id_str = record_id.0.to_string();
+                step_span.record("record.id", &record_id_str as &str);
+
                 run_repository
                     .append_step_record(state, iteration_id, step_sequence_no, &step_record)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        let msg = e.to_string();
+                        crate::observability::record_error(
+                            &step_span,
+                            "OrchestratorError.Repository",
+                            &msg,
+                        );
+                        step_span.record("status", "error");
+                        OrchestratorError::from(e)
+                    })?;
 
                 let execution_result = executor.execute_step(step, RunStateView::new(state)).await;
+                let step_error_info = execution_result
+                    .as_ref()
+                    .err()
+                    .map(|e| (step_error_type(e), e.to_string()));
+                let step_execution_failed = execution_result.is_err();
 
                 {
                     let mut writer = RunStateWriter::new(state);
@@ -441,25 +556,128 @@ where
 
                 run_repository
                     .finish_step_record(state, record_id, &finished_record)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        let msg = e.to_string();
+                        crate::observability::record_error(
+                            &step_span,
+                            "OrchestratorError.Repository",
+                            &msg,
+                        );
+                        step_span.record("status", "error");
+                        if step_execution_failed {
+                            step_span.record("step.outcome", "failure");
+                        }
+                        OrchestratorError::from(e)
+                    })?;
 
-                step_span.record("status", "ok");
+                if step_execution_failed {
+                    if let Some((et, em)) = step_error_info {
+                        crate::observability::record_error(&step_span, et, &em);
+                    }
+                    step_span.record("step.outcome", "failure");
+                } else {
+                    step_span.record("step.outcome", "success");
+                    step_span.record("status", "ok");
+                }
             }
             PolicyTransition::FinishWithResult { result } => {
-                iter_span.record("status", "ok");
                 return Ok(RunOutcome::Finished {
                     run_id: state.run_id,
                     result,
                 });
             }
             PolicyTransition::FinishWithError { error } => {
-                iter_span.record("status", "ok");
                 return Ok(RunOutcome::Failed {
                     run_id: state.run_id,
                     error,
                 });
             }
         }
+    }
+}
+
+fn record_run_outcome(
+    span: &tracing::Span,
+    outcome: &Result<RunOutcome, OrchestratorError>,
+    state: Option<&RunState>,
+) {
+    match outcome {
+        Ok(RunOutcome::Finished { .. }) => {
+            span.record("status", "ok");
+            span.record("run.outcome", "success");
+            span.record("terminal.transition", "FinishWithResult");
+        }
+        Ok(RunOutcome::Failed { error, .. }) => {
+            span.record("status", "error");
+            span.record("run.outcome", "failure");
+            span.record("terminal.transition", "FinishWithError");
+            if let Some(s) = state {
+                record_failed_step_kind(span, s);
+            }
+            crate::observability::record_error(span, step_error_type(error), &error.to_string());
+        }
+        Err(e) => {
+            span.record("status", "error");
+            span.record("run.outcome", "failure");
+            if let Some(s) = state {
+                record_failed_step_kind(span, s);
+            }
+            crate::observability::record_error(span, orchestrator_error_type(e), &e.to_string());
+        }
+    }
+}
+
+fn record_failed_step_kind(span: &tracing::Span, state: &RunState) {
+    let kind = state.iterations.last().and_then(|it| {
+        it.step_records
+            .iter()
+            .rev()
+            .find_map(|r| match r {
+                StepRecord::Finished(f) if f.result.is_err() => {
+                    Some(f.step.as_ref().to_string())
+                }
+                _ => None,
+            })
+            .or_else(|| {
+                it.step_records.iter().find_map(|r| match r {
+                    StepRecord::Pending(p) => Some(p.step.as_ref().to_string()),
+                    _ => None,
+                })
+            })
+    });
+    if let Some(k) = kind {
+        span.record("failed_step.kind", &k as &str);
+    }
+}
+
+fn step_error_type(e: &StepError) -> &'static str {
+    match e {
+        StepError::MissingRequiredInput { .. } => "StepError.MissingRequiredInput",
+        StepError::InvalidState { .. } => "StepError.InvalidState",
+        StepError::InputNormalization(_) => "StepError.InputNormalization",
+        StepError::QueryStructuring(_) => "StepError.QueryStructuring",
+        StepError::CandidateCardRetrieval(_) => "StepError.CandidateCardRetrieval",
+        StepError::CardHydration(_) => "StepError.CardHydration",
+        StepError::IncidentEvidenceRetrieval(_) => "StepError.IncidentEvidenceRetrieval",
+        StepError::TheoryEvidenceRetrieval(_) => "StepError.TheoryEvidenceRetrieval",
+        StepError::PromptContextAssembly(_) => "StepError.PromptContextAssembly",
+        StepError::LlmStructuredGeneration(_) => "StepError.LlmStructuredGeneration",
+        StepError::ResponseValidationAndNormalization(_) => {
+            "StepError.ResponseValidationAndNormalization"
+        }
+        StepError::ExternalDependency { .. } => "StepError.ExternalDependency",
+        StepError::Unexpected { .. } => "StepError.Unexpected",
+    }
+}
+
+fn orchestrator_error_type(e: &OrchestratorError) -> &'static str {
+    match e {
+        OrchestratorError::RunNotFound { .. } => "OrchestratorError.RunNotFound",
+        OrchestratorError::Policy(_) => "OrchestratorError.Policy",
+        OrchestratorError::StateApply(_) => "OrchestratorError.StateApply",
+        OrchestratorError::Repository(_) => "OrchestratorError.Repository",
+        OrchestratorError::MissingPendingStep { .. } => "OrchestratorError.MissingPendingStep",
     }
 }
 
@@ -1250,5 +1468,115 @@ mod tests {
             executed_steps,
             vec![StepKind::InputNormalization, StepKind::QueryStructuring]
         );
+    }
+
+    // ─── Error classification ─────────────────────────────────────────────────
+
+    #[test]
+    fn orchestrator_error_type_run_not_found() {
+        use uuid::Uuid;
+        let e = OrchestratorError::RunNotFound { run_id: RunId(Uuid::new_v4()) };
+        assert_eq!(orchestrator_error_type(&e), "OrchestratorError.RunNotFound");
+    }
+
+    #[test]
+    fn orchestrator_error_type_policy() {
+        use crate::orchestrator::transition_policy::PolicyError;
+        let e = OrchestratorError::Policy(PolicyError::MissingUserInput);
+        assert_eq!(orchestrator_error_type(&e), "OrchestratorError.Policy");
+    }
+
+    #[test]
+    fn orchestrator_error_type_repository() {
+        let e = OrchestratorError::Repository(RunRepositoryError::InvalidRunState {
+            message: "test".to_string(),
+        });
+        assert_eq!(orchestrator_error_type(&e), "OrchestratorError.Repository");
+    }
+
+    #[test]
+    fn step_error_type_missing_required_input() {
+        let e = StepError::MissingRequiredInput { message: "no input".to_string() };
+        assert_eq!(step_error_type(&e), "StepError.MissingRequiredInput");
+    }
+
+    #[test]
+    fn step_error_type_unexpected() {
+        let e = StepError::Unexpected { message: "boom".to_string() };
+        assert_eq!(step_error_type(&e), "StepError.Unexpected");
+    }
+
+    #[test]
+    fn step_error_type_response_validation() {
+        use crate::request_pipeline::response_validation_and_normalization::ResponseValidationAndNormalizationError;
+        let e = StepError::ResponseValidationAndNormalization(
+            ResponseValidationAndNormalizationError::InvalidResponseShape("bad".to_string()),
+        );
+        assert_eq!(step_error_type(&e), "StepError.ResponseValidationAndNormalization");
+    }
+
+    // ─── record_failed_step_kind ──────────────────────────────────────────────
+
+    #[test]
+    fn record_failed_step_kind_finds_last_failed_finished_step() {
+        let mut state = run_with_single_iteration("q");
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            let mut it = writer.current_iteration().expect("iteration");
+            let pending = it.begin_step(StepKind::InputNormalization).expect("begin_step");
+            pending
+                .record_failure(StepError::Unexpected { message: "fail".to_string() })
+                .expect("record_failure");
+        }
+        let span = tracing::Span::none();
+        record_failed_step_kind(&span, &state);
+    }
+
+    #[test]
+    fn record_failed_step_kind_is_noop_when_no_failed_step() {
+        let state = run_with_single_iteration("q");
+        let span = tracing::Span::none();
+        record_failed_step_kind(&span, &state);
+    }
+
+    // ─── RunOutcome mapping ───────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn drive_to_outcome_failed_step_returns_run_outcome_failed() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut state = run_with_single_iteration("persisted");
+        let step_error = StepError::Unexpected { message: "executor failed".to_string() };
+        let policy = FakePolicy::from_decisions(vec![
+            Ok(PolicyTransition::ExecuteStep { step: StepKind::InputNormalization }),
+            Ok(PolicyTransition::FinishWithError { error: step_error.clone() }),
+        ]);
+        let executor = FakeExecutor::new(vec![Err(step_error)], Arc::clone(&events));
+        let repo = FakeRepository::new(None, Arc::clone(&events));
+
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+            .await
+            .expect("must not return OrchestratorError");
+
+        assert!(
+            matches!(outcome, RunOutcome::Failed { .. }),
+            "failed step must produce RunOutcome::Failed, not Finished"
+        );
+    }
+
+    #[tokio::test]
+    async fn drive_to_outcome_finish_with_result_returns_run_outcome_finished() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut state = run_with_single_iteration("persisted");
+        let policy = FakePolicy::from_decisions(vec![Ok(PolicyTransition::FinishWithResult {
+            result: final_output("done"),
+        })]);
+        let executor = FakeExecutor::new(vec![], Arc::clone(&events));
+        let repo = FakeRepository::new(None, Arc::clone(&events));
+
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+            .await
+            .expect("must succeed");
+
+        assert!(matches!(outcome, RunOutcome::Finished { .. }));
     }
 }

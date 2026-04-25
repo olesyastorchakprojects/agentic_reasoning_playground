@@ -4,7 +4,8 @@ use thiserror::Error;
 
 use crate::api_clients::model::{ModelClientError, OllamaModelClient, TogetherModelClient};
 use crate::api_clients::postgres::incident_card_store::{
-    IncidentCardStoreError, PostgresIncidentCardStore, PostgresIncidentCardStoreConfig,
+    IncidentCardStore, IncidentCardStoreError, PostgresIncidentCardStore,
+    PostgresIncidentCardStoreConfig,
 };
 use crate::api_clients::postgres::run_state_store::{
     PostgresRunStateStore, PostgresRunStateStoreConfig, RunStateStoreError,
@@ -99,7 +100,7 @@ pub async fn build_orchestrator(
             }
         };
 
-    let incident_card_store = Arc::new(
+    let incident_card_store: Arc<dyn IncidentCardStore> = Arc::new(
         PostgresIncidentCardStore::new(PostgresIncidentCardStoreConfig {
             postgres_url: settings.postgres.url.clone(),
         })

@@ -10,6 +10,7 @@ use crate::config::QueryStructuringSettings;
 use crate::shared_types::{
     ModelTokenUsage, NormalizedUserRequest, QueryStructuringOutput, StructuredUserQuery,
 };
+use tracing::{info_span, field, Instrument};
 
 const QUERY_PLACEHOLDER: &str = "{{normalized_query}}";
 const VOCAB_PLACEHOLDER: &str = "{{controlled_vocabulary_json}}";
@@ -68,6 +69,8 @@ pub struct QueryStructuring {
     controlled_vocabulary: QueryStructuringControlledVocabulary,
     prompt_asset: QueryStructuringPromptAsset,
     max_output_tokens: u32,
+    prompt_asset_path: String,
+    controlled_vocabulary_path: String,
 }
 
 impl std::fmt::Debug for QueryStructuring {
@@ -131,10 +134,61 @@ impl QueryStructuring {
             controlled_vocabulary,
             prompt_asset,
             max_output_tokens: settings.max_output_tokens,
+            prompt_asset_path: settings.prompt_asset_path,
+            controlled_vocabulary_path: settings.controlled_vocabulary_path,
         })
     }
 
     pub async fn structure(
+        &self,
+        request: &NormalizedUserRequest,
+    ) -> Result<QueryStructuringOutput, QueryStructuringError> {
+        let prompt_name = std::path::Path::new(&self.prompt_asset_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let vocab_name = std::path::Path::new(&self.controlled_vocabulary_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let span = info_span!(
+            "request_pipeline.query_structuring",
+            module.name = "query_structuring",
+            query.normalized = %request.query,
+            query.input_token_count = request.input_token_count,
+            asset.prompt.name = %prompt_name,
+            asset.prompt.version = %self.prompt_asset.version,
+            asset.prompt.template_placeholders_valid = true,
+            asset.vocabulary.name = %vocab_name,
+            model.provider = field::Empty,
+            model.name = field::Empty,
+            model.response_mode = field::Empty,
+            model.temperature = field::Empty,
+            model.max_output_tokens = field::Empty,
+            model.finish_reason = field::Empty,
+            model.prompt_tokens = field::Empty,
+            model.completion_tokens = field::Empty,
+            model.total_tokens = field::Empty,
+            structured_query.json = field::Empty,
+            structured.intent_present = field::Empty,
+            structured.symptoms_count = field::Empty,
+            structured.affected_subsystems_count = field::Empty,
+            structured.failure_modes_count = field::Empty,
+            structured.constraints_count = field::Empty,
+            structured.confidence = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        self.structure_instrumented(request).instrument(span).await
+    }
+
+    async fn structure_instrumented(
         &self,
         request: &NormalizedUserRequest,
     ) -> Result<QueryStructuringOutput, QueryStructuringError> {
@@ -145,6 +199,23 @@ impl QueryStructuring {
             &self.prompt_asset.user_template,
             &request.query,
             &vocab_json,
+        );
+
+        let llm_span = info_span!(
+            "llm.call.query_structuring",
+            llm.task = "query_structuring",
+            model.provider = field::Empty,
+            model.name = field::Empty,
+            model.response_mode = field::Empty,
+            model.temperature = field::Empty,
+            model.max_output_tokens = field::Empty,
+            model.finish_reason = field::Empty,
+            model.prompt_tokens = field::Empty,
+            model.completion_tokens = field::Empty,
+            model.total_tokens = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
         );
 
         let model_request = ModelGenerationRequest {
@@ -163,15 +234,80 @@ impl QueryStructuring {
             response_mode: ModelResponseMode::JsonObject,
         };
 
-        let response = self.model_client.generate(&model_request).await?;
+        let response = {
+            async {
+                match self.model_client.generate(&model_request).await {
+                    Ok(r) => {
+                        tracing::Span::current().record("model.provider", "unknown");
+                        tracing::Span::current().record("model.name", "unknown");
+                        tracing::Span::current().record("model.response_mode", "JsonObject");
+                        tracing::Span::current().record("model.temperature", 0.0);
+                        tracing::Span::current().record("model.max_output_tokens", self.max_output_tokens as i64);
+                        if let Some(ref fr) = r.finish_reason {
+                            tracing::Span::current().record("model.finish_reason", format!("{:?}", fr));
+                        }
+                        if let Some(pt) = r.prompt_tokens {
+                            tracing::Span::current().record("model.prompt_tokens", pt as i64);
+                        }
+                        if let Some(ct) = r.completion_tokens {
+                            tracing::Span::current().record("model.completion_tokens", ct as i64);
+                        }
+                        if let Some(tt) = r.total_tokens {
+                            tracing::Span::current().record("model.total_tokens", tt as i64);
+                        }
+                        tracing::Span::current().record("status", "ok");
+                        Ok(r)
+                    }
+                    Err(e) => {
+                        tracing::Span::current().record("status", "error");
+                        tracing::Span::current().record("error.type", "QueryStructuring.Model");
+                        tracing::Span::current()
+                            .record("error.message", format!("Model client error: {}", e));
+                        Err(e)
+                    }
+                }
+            }
+            .instrument(llm_span)
+            .await
+        };
+
+        let response = match response {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::Span::current().record("module.outcome", "failure");
+                tracing::Span::current().record("status", "error");
+                tracing::Span::current().record("error.type", "QueryStructuring.Model");
+                tracing::Span::current()
+                    .record("error.message", format!("Model client error: {}", e));
+                return Err(QueryStructuringError::Model(e));
+            }
+        };
 
         let token_usage = ModelTokenUsage {
             prompt_tokens: response.prompt_tokens,
             completion_tokens: response.completion_tokens,
             total_tokens: response.total_tokens,
         };
-        let finish_reason = response.finish_reason;
-        let content = response.content;
+        let finish_reason = response.finish_reason.clone();
+        let content = response.content.clone();
+
+        tracing::Span::current().record("model.provider", "unknown");
+        tracing::Span::current().record("model.name", "unknown");
+        tracing::Span::current().record("model.response_mode", "JsonObject");
+        tracing::Span::current().record("model.temperature", 0.0);
+        tracing::Span::current().record("model.max_output_tokens", self.max_output_tokens as i64);
+        if let Some(ref fr) = finish_reason {
+            tracing::Span::current().record("model.finish_reason", format!("{:?}", fr));
+        }
+        if let Some(pt) = response.prompt_tokens {
+            tracing::Span::current().record("model.prompt_tokens", pt as i64);
+        }
+        if let Some(ct) = response.completion_tokens {
+            tracing::Span::current().record("model.completion_tokens", ct as i64);
+        }
+        if let Some(tt) = response.total_tokens {
+            tracing::Span::current().record("model.total_tokens", tt as i64);
+        }
 
         let is_acceptable_finish = matches!(&finish_reason, Some(ModelFinishReason::Stop) | None);
         if !is_acceptable_finish {
@@ -180,6 +316,10 @@ impl QueryStructuring {
             } else {
                 "model returned unusable finish reason"
             };
+            tracing::Span::current().record("module.outcome", "failure");
+            tracing::Span::current().record("status", "error");
+            tracing::Span::current().record("error.type", "QueryStructuring.InvalidModelOutput");
+            tracing::Span::current().record("error.message", reason);
             return Err(QueryStructuringError::InvalidModelOutput {
                 reason: reason.to_string(),
                 token_usage,
@@ -190,7 +330,12 @@ impl QueryStructuring {
         let parse_token_usage = token_usage.clone();
         let parse_finish_reason = finish_reason.clone();
         let structured_query: StructuredUserQuery =
-            serde_json::from_str(&content).map_err(|_| {
+            serde_json::from_str(&content).map_err(|e| {
+                tracing::Span::current().record("module.outcome", "failure");
+                tracing::Span::current().record("status", "error");
+                tracing::Span::current().record("error.type", "QueryStructuring.InvalidModelOutput");
+                tracing::Span::current()
+                    .record("error.message", format!("Failed to parse model output: {}", e));
                 QueryStructuringError::InvalidModelOutput {
                     reason: "failed to parse model output as StructuredUserQuery".to_string(),
                     token_usage: parse_token_usage,
@@ -199,12 +344,36 @@ impl QueryStructuring {
             })?;
 
         if structured_query.failure_modes.len() > 1 {
+            tracing::Span::current().record("module.outcome", "failure");
+            tracing::Span::current().record("status", "error");
+            tracing::Span::current().record("error.type", "QueryStructuring.InvalidModelOutput");
+            tracing::Span::current()
+                .record("error.message", "failure_modes must contain at most one item");
             return Err(QueryStructuringError::InvalidModelOutput {
                 reason: "failure_modes must contain at most one item".to_string(),
                 token_usage,
                 finish_reason,
             });
         }
+
+        let structured_query_json = serde_json::to_string(&structured_query)
+            .unwrap_or_else(|_| "{}".to_string());
+        let intent_present = !structured_query.intent.is_empty();
+        let symptoms_count = structured_query.symptoms.len();
+        let affected_subsystems_count = structured_query.affected_subsystems.len();
+        let failure_modes_count = structured_query.failure_modes.len();
+        let constraints_count = structured_query.constraints.len();
+        let confidence_str = format!("{:?}", structured_query.confidence);
+
+        tracing::Span::current().record("structured_query.json", &structured_query_json);
+        tracing::Span::current().record("structured.intent_present", intent_present);
+        tracing::Span::current().record("structured.symptoms_count", symptoms_count as i64);
+        tracing::Span::current().record("structured.affected_subsystems_count", affected_subsystems_count as i64);
+        tracing::Span::current().record("structured.failure_modes_count", failure_modes_count as i64);
+        tracing::Span::current().record("structured.constraints_count", constraints_count as i64);
+        tracing::Span::current().record("structured.confidence", &confidence_str);
+        tracing::Span::current().record("module.outcome", "success");
+        tracing::Span::current().record("status", "ok");
 
         Ok(QueryStructuringOutput {
             structured_query,
@@ -378,6 +547,7 @@ mod tests {
     // ── Fixtures ──────────────────────────────────────────────────────────────
 
     const VOCAB_JSON: &str = r#"{
+        "version": "v1",
         "canonical_symptoms": ["high_latency"],
         "affected_components": ["api_gateway"],
         "failure_mode_candidates": ["overload"],
@@ -930,7 +1100,7 @@ mod tests {
         let bad_vocab = dir
             .write_json(
                 "empty_vocab.json",
-                r#"{"canonical_symptoms":[],"affected_components":["x"],"failure_mode_candidates":["x"],"violated_properties":["x"]}"#,
+                r#"{"version":"v1","canonical_symptoms":[],"affected_components":["x"],"failure_mode_candidates":["x"],"violated_properties":["x"]}"#,
             )
             .to_str()
             .unwrap()

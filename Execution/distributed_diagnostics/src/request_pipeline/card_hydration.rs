@@ -1,13 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::api_clients::postgres::incident_card_store::IncidentCardStoreError;
+use crate::api_clients::postgres::incident_card_store::{
+    IncidentCardStore, IncidentCardStoreError,
+};
 use crate::shared_types::{CandidateCardRetrievalOutput, CardHydrationOutput, IncidentCard};
-
-#[cfg(not(test))]
-use crate::api_clients::postgres::incident_card_store::PostgresIncidentCardStore;
-#[cfg(test)]
-use crate::test_utils::postgres_store::MockPostgresIncidentCardStore as PostgresIncidentCardStore;
+use tracing::{info_span, field, Instrument};
 
 // ─── Error ────────────────────────────────────────────────────────────────────
 
@@ -21,13 +19,18 @@ pub enum CardHydrationError {
 
 // ─── Public struct ────────────────────────────────────────────────────────────
 
-#[derive(Debug)]
 pub struct CardHydration {
-    incident_card_store: Arc<PostgresIncidentCardStore>,
+    incident_card_store: Arc<dyn IncidentCardStore>,
+}
+
+impl std::fmt::Debug for CardHydration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CardHydration").finish_non_exhaustive()
+    }
 }
 
 impl CardHydration {
-    pub fn new(incident_card_store: Arc<PostgresIncidentCardStore>) -> Self {
+    pub fn new(incident_card_store: Arc<dyn IncidentCardStore>) -> Self {
         Self {
             incident_card_store,
         }
@@ -37,7 +40,63 @@ impl CardHydration {
         &self,
         candidates: &CandidateCardRetrievalOutput,
     ) -> Result<CardHydrationOutput, CardHydrationError> {
+        let primary_present = candidates.primary.is_some();
+        let primary_case_id = candidates
+            .primary
+            .as_ref()
+            .map(|p| p.case_id.as_str())
+            .unwrap_or("");
+        let alternatives_count = candidates.alternatives.len();
+        let alternative_case_ids: Vec<&str> = candidates
+            .alternatives
+            .iter()
+            .map(|a| a.case_id.as_str())
+            .collect();
+
+        let span = info_span!(
+            "request_pipeline.card_hydration",
+            module.name = "card_hydration",
+            hydration.input.primary_present = primary_present,
+            hydration.input.primary_case_id = primary_case_id,
+            hydration.input.alternatives_count = alternatives_count,
+            hydration.input.alternative_case_ids = format!("{:?}", alternative_case_ids),
+            hydration.requested_case_ids_count = field::Empty,
+            hydration.requested_case_ids = field::Empty,
+            hydration.postgres_call_executed = field::Empty,
+            hydration.cards_returned_count = field::Empty,
+            hydration.returned_case_ids = field::Empty,
+            hydration.missing_case_ids = field::Empty,
+            hydration.primary_hydrated = field::Empty,
+            hydration.alternatives_hydrated_count = field::Empty,
+            hydration.order_reconstructed = field::Empty,
+            hydration.partition_preserved = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        self.hydrate_instrumented(candidates).instrument(span).await
+    }
+
+    async fn hydrate_instrumented(
+        &self,
+        candidates: &CandidateCardRetrievalOutput,
+    ) -> Result<CardHydrationOutput, CardHydrationError> {
         if candidates.primary.is_none() && candidates.alternatives.is_empty() {
+            tracing::Span::current().record("hydration.postgres_call_executed", false);
+            tracing::Span::current().record("hydration.requested_case_ids_count", 0);
+            tracing::Span::current().record("hydration.requested_case_ids", "[]");
+            tracing::Span::current().record("hydration.cards_returned_count", 0);
+            tracing::Span::current().record("hydration.returned_case_ids", "[]");
+            tracing::Span::current().record("hydration.missing_case_ids", "[]");
+            tracing::Span::current().record("hydration.primary_hydrated", false);
+            tracing::Span::current().record("hydration.alternatives_hydrated_count", 0);
+            tracing::Span::current().record("hydration.order_reconstructed", true);
+            tracing::Span::current().record("hydration.partition_preserved", true);
+            tracing::Span::current().record("module.outcome", "success");
+            tracing::Span::current().record("status", "ok");
+
             return Ok(CardHydrationOutput {
                 primary: None,
                 alternatives: vec![],
@@ -52,14 +111,71 @@ impl CardHydration {
             case_ids.push(alt.case_id.clone());
         }
 
-        let cards = self
-            .incident_card_store
-            .get_cards_by_case_ids(&case_ids)
+        tracing::Span::current().record("hydration.requested_case_ids_count", case_ids.len());
+        let case_ids_str: Vec<&str> = case_ids.iter().map(|s| s.as_str()).collect();
+        tracing::Span::current().record("hydration.requested_case_ids", format!("{:?}", case_ids_str));
+        tracing::Span::current().record("hydration.postgres_call_executed", true);
+
+        let postgres_span = info_span!(
+            "postgres.incident_cards.get_by_case_ids",
+            db.system = "postgresql",
+            db.operation = "get_incident_cards_by_case_ids",
+            db.requested_case_ids_count = case_ids.len(),
+            db.returned_rows_count = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        let cards = {
+            async {
+                match self.incident_card_store.get_cards_by_case_ids(&case_ids).await {
+                    Ok(c) => {
+                        tracing::Span::current().record("db.returned_rows_count", c.len());
+                        tracing::Span::current().record("status", "ok");
+                        Ok(c)
+                    }
+                    Err(e) => {
+                        tracing::Span::current().record("status", "error");
+                        tracing::Span::current()
+                            .record("error.type", "CardHydration.Store");
+                        tracing::Span::current()
+                            .record("error.message", format!("Store query failed: {}", e));
+                        Err(e)
+                    }
+                }
+            }
+            .instrument(postgres_span)
             .await
-            .map_err(CardHydrationError::Store)?;
+        };
+
+        let cards = match cards {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::Span::current().record("module.outcome", "failure");
+                tracing::Span::current().record("status", "error");
+                tracing::Span::current().record("error.type", "CardHydration.Store");
+                tracing::Span::current()
+                    .record("error.message", format!("Store query failed: {}", e));
+                return Err(CardHydrationError::Store(e));
+            }
+        };
+
+        let returned_case_ids: Vec<&str> = cards.iter().map(|c| c.case_id.as_str()).collect();
+        tracing::Span::current().record("hydration.cards_returned_count", cards.len());
+        tracing::Span::current().record("hydration.returned_case_ids", format!("{:?}", returned_case_ids));
 
         let lookup: HashMap<String, IncidentCard> =
             cards.into_iter().map(|c| (c.case_id.clone(), c)).collect();
+
+        // Check for missing case_ids
+        let mut missing_ids: Vec<&str> = Vec::new();
+        for id in &case_ids {
+            if !lookup.contains_key(id) {
+                missing_ids.push(id.as_str());
+            }
+        }
+        tracing::Span::current().record("hydration.missing_case_ids", format!("{:?}", missing_ids));
 
         let primary = candidates
             .primary
@@ -72,7 +188,22 @@ impl CardHydration {
                         case_id: p.case_id.clone(),
                     })
             })
-            .transpose()?;
+            .transpose()
+            .map_err(|e| {
+                tracing::Span::current().record("module.outcome", "failure");
+                tracing::Span::current().record("status", "error");
+                tracing::Span::current().record("error.type", "CardHydration.MissingCard");
+                let case_id = match &e {
+                    CardHydrationError::MissingCard { case_id } => case_id.clone(),
+                    _ => String::new(),
+                };
+                tracing::Span::current()
+                    .record("error.message", format!("Missing primary card: {}", case_id));
+                e
+            })?;
+
+        let primary_hydrated = primary.is_some();
+        tracing::Span::current().record("hydration.primary_hydrated", primary_hydrated);
 
         let alternatives = candidates
             .alternatives
@@ -85,7 +216,46 @@ impl CardHydration {
                         case_id: alt.case_id.clone(),
                     })
             })
-            .collect::<Result<Vec<IncidentCard>, _>>()?;
+            .collect::<Result<Vec<IncidentCard>, _>>()
+            .map_err(|e| {
+                tracing::Span::current().record("module.outcome", "failure");
+                tracing::Span::current().record("status", "error");
+                tracing::Span::current().record("error.type", "CardHydration.MissingCard");
+                let case_id = match &e {
+                    CardHydrationError::MissingCard { case_id } => case_id.clone(),
+                    _ => String::new(),
+                };
+                tracing::Span::current()
+                    .record("error.message", format!("Missing alternative card: {}", case_id));
+                e
+            })?;
+
+        let alternatives_hydrated_count = alternatives.len();
+        tracing::Span::current().record("hydration.alternatives_hydrated_count", alternatives_hydrated_count);
+
+        // Check order preservation: alternatives should be in same order as input
+        let order_reconstructed = candidates
+            .alternatives
+            .iter()
+            .zip(alternatives.iter())
+            .all(|(input_alt, hydrated_card)| input_alt.case_id == hydrated_card.case_id);
+        tracing::Span::current().record("hydration.order_reconstructed", order_reconstructed);
+
+        // Check partition preservation: primary should be separate from alternatives
+        let partition_preserved = if alternatives_hydrated_count == 0 {
+            // No alternatives, so partition is trivially preserved
+            true
+        } else if let Some(ref prim) = primary {
+            // Check that no alternative is the same as primary
+            alternatives.iter().all(|alt| alt.case_id != prim.case_id)
+        } else {
+            // We have alternatives but no primary, partition is preserved
+            true
+        };
+        tracing::Span::current().record("hydration.partition_preserved", partition_preserved);
+
+        tracing::Span::current().record("module.outcome", "success");
+        tracing::Span::current().record("status", "ok");
 
         Ok(CardHydrationOutput {
             primary,

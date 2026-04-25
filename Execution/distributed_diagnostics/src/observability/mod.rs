@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use opentelemetry::global;
-use opentelemetry::trace::TracerProvider;
+use opentelemetry::trace::{Status, TracerProvider};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::trace::{
@@ -108,7 +108,10 @@ fn init_tracing(settings: &ObservabilitySettings) -> Result<TracingGuard, Observ
     let tracer = provider.tracer("distributed_diagnostics");
     let telemetry_layer = tracing_opentelemetry::OpenTelemetryLayer::new(tracer);
     let subscriber = Registry::default()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("distributed_diagnostics=debug,info")))
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("distributed_diagnostics=debug,info")),
+        )
         .with(telemetry_layer);
 
     tracing::subscriber::set_global_default(subscriber).map_err(|error| {
@@ -145,6 +148,15 @@ fn init_metrics(settings: &ObservabilitySettings) -> Result<MetricsGuard, Observ
     Ok(MetricsGuard { provider })
 }
 
+pub(crate) fn record_error(span: &tracing::Span, error_type: &str, error_message: &str) {
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+    span.record("error.type", error_type);
+    span.record("error.message", error_message);
+    span.set_status(Status::Error {
+        description: error_message.to_string().into(),
+    });
+}
+
 pub(crate) fn run_span(run_id: &str, entrypoint: &'static str) -> tracing::Span {
     tracing::info_span!(
         "diagnostics.run",
@@ -153,6 +165,11 @@ pub(crate) fn run_span(run_id: &str, entrypoint: &'static str) -> tracing::Span 
         span.module = "orchestrator",
         span.stage = "run",
         status = tracing::field::Empty,
+        run.outcome = tracing::field::Empty,
+        terminal.transition = tracing::field::Empty,
+        failed_step.kind = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+        error.message = tracing::field::Empty,
     )
 }
 
@@ -168,28 +185,51 @@ pub(crate) fn iteration_span(run_id: &str, iteration_id: &str, sequence_no: u64)
     )
 }
 
-pub(crate) fn policy_transition_span(run_id: &str, iteration_id: &str) -> tracing::Span {
-    tracing::info_span!(
+pub(crate) fn policy_transition_span(
+    run_id: &str,
+    iteration_id: &str,
+    finished_steps_count: u64,
+    pending_step_present: bool,
+    last_finished_step_kind: Option<&str>,
+) -> tracing::Span {
+    let span = tracing::info_span!(
         "orchestrator.policy.next_transition",
         run.id = run_id,
         iteration.id = iteration_id,
         span.module = "transition_policy",
         span.stage = "next_transition",
+        policy.finished_steps_count = finished_steps_count,
+        policy.pending_step_present = pending_step_present,
+        policy.last_finished_step.kind = tracing::field::Empty,
         status = tracing::field::Empty,
         transition.kind = tracing::field::Empty,
         step.kind = tracing::field::Empty,
-    )
+        step.sequence_no = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+        error.message = tracing::field::Empty,
+    );
+    if let Some(kind) = last_finished_step_kind {
+        span.record("policy.last_finished_step.kind", kind);
+    }
+    span
 }
 
 pub(crate) fn step_span(run_id: &str, iteration_id: &str, step_kind: &str) -> tracing::Span {
+    let otel_name = format!("step.{step_kind}");
     tracing::info_span!(
         "orchestrator.step",
         run.id = run_id,
         iteration.id = iteration_id,
         step.kind = step_kind,
+        otel.name = otel_name.as_str(),
         span.module = "orchestrator",
         span.stage = "step",
         status = tracing::field::Empty,
+        step.sequence_no = tracing::field::Empty,
+        record.id = tracing::field::Empty,
+        step.outcome = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+        error.message = tracing::field::Empty,
     )
 }
 
@@ -198,6 +238,7 @@ pub(crate) fn append_pending_span(
     iteration_id: &str,
     step_kind: &str,
     record_id: &str,
+    step_sequence_no: u64,
 ) -> tracing::Span {
     tracing::info_span!(
         "repository.step.append_pending",
@@ -205,21 +246,35 @@ pub(crate) fn append_pending_span(
         iteration.id = iteration_id,
         step.kind = step_kind,
         record.id = record_id,
+        step.sequence_no = step_sequence_no,
         span.module = "run_repository",
         span.stage = "append_pending",
         status = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+        error.message = tracing::field::Empty,
     )
 }
 
-pub(crate) fn dispatch_span(run_id: &str, iteration_id: &str, step_kind: &str) -> tracing::Span {
+pub(crate) fn dispatch_span(
+    run_id: &str,
+    iteration_id: &str,
+    step_kind: &str,
+    step_sequence_no: u64,
+) -> tracing::Span {
+    let otel_name = format!("executor.{step_kind}");
     tracing::info_span!(
         "step_executor.dispatch",
         run.id = run_id,
         iteration.id = iteration_id,
         step.kind = step_kind,
+        otel.name = otel_name.as_str(),
+        step.sequence_no = step_sequence_no,
         span.module = "step_executor",
         span.stage = "dispatch",
         status = tracing::field::Empty,
+        step.outcome = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+        error.message = tracing::field::Empty,
     )
 }
 
@@ -235,8 +290,12 @@ pub(crate) fn finish_step_span(
         iteration.id = iteration_id,
         step.kind = step_kind,
         record.id = record_id,
+        step.sequence_no = tracing::field::Empty,
+        persisted.step.outcome = tracing::field::Empty,
         span.module = "run_repository",
         span.stage = "finish",
         status = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+        error.message = tracing::field::Empty,
     )
 }

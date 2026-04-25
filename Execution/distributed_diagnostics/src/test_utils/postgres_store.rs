@@ -1,6 +1,8 @@
 use std::sync::Mutex;
 
-use crate::api_clients::postgres::incident_card_store::IncidentCardStoreError;
+use crate::api_clients::postgres::incident_card_store::{
+    IncidentCardStore, IncidentCardStoreError,
+};
 use crate::shared_types::IncidentCard;
 
 #[derive(Debug)]
@@ -26,5 +28,15 @@ impl MockPostgresIncidentCardStore {
             .unwrap()
             .push(case_ids.to_vec());
         self.responses.lock().unwrap().remove(0)
+    }
+}
+
+#[async_trait::async_trait]
+impl IncidentCardStore for MockPostgresIncidentCardStore {
+    async fn get_cards_by_case_ids(
+        &self,
+        case_ids: &[String],
+    ) -> Result<Vec<IncidentCard>, IncidentCardStoreError> {
+        self.get_cards_by_case_ids(case_ids).await
     }
 }

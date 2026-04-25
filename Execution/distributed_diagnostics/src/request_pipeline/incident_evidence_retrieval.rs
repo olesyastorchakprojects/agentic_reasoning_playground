@@ -10,6 +10,7 @@ use crate::shared_types::{
     CandidateCardRetrievalOutput, IncidentEvidenceChunk, IncidentEvidenceRetrievalOutput,
     NormalizedUserRequest,
 };
+use tracing::{info_span, field, Instrument};
 
 // ─── Tag sets ─────────────────────────────────────────────────────────────────
 
@@ -78,31 +79,233 @@ impl IncidentEvidenceRetrieval {
         request: &NormalizedUserRequest,
         candidates: &CandidateCardRetrievalOutput,
     ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError> {
+        let query = request.query.clone();
+        let primary_case_id = candidates.primary.as_ref().map(|p| p.case_id.as_str()).unwrap_or("");
+        let alternative_case_ids: Vec<&str> = candidates
+            .alternatives
+            .iter()
+            .map(|c| c.case_id.as_str())
+            .collect();
+        let primary_tag_set = format!("{:?}", PRIMARY_TAGS);
+        let alternative_tag_set = format!("{:?}", ALTERNATIVE_TAGS);
+
+        let span = info_span!(
+            "request_pipeline.incident_evidence_retrieval",
+            module.name = "incident_evidence_retrieval",
+            query.normalized = %query,
+            incident_evidence.primary.case_id = primary_case_id,
+            incident_evidence.alternative.case_ids = format!("{:?}", alternative_case_ids),
+            incident_evidence.top_k = self.settings.top_k,
+            incident_evidence.score_threshold = self.settings.score_threshold,
+            incident_evidence.primary_tag_set = %primary_tag_set,
+            incident_evidence.alternative_tag_set = %alternative_tag_set,
+            incident_evidence.primary_search.executed = field::Empty,
+            incident_evidence.alternative_search.executed = field::Empty,
+            incident_evidence.primary_chunks.count = field::Empty,
+            incident_evidence.primary_chunks.ids = field::Empty,
+            incident_evidence.alternative_chunks.count = field::Empty,
+            incident_evidence.alternative_chunks.ids = field::Empty,
+            incident_evidence.total_chunks.count = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+
+        self.retrieve_instrumented(request, candidates).instrument(span).await
+    }
+
+    async fn retrieve_instrumented(
+        &self,
+        request: &NormalizedUserRequest,
+        candidates: &CandidateCardRetrievalOutput,
+    ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError> {
+        // Primary search
         let primary_chunks = if let Some(primary) = &candidates.primary {
+            tracing::Span::current().record("incident_evidence.primary_search.executed", true);
+
+            let primary_span = info_span!(
+                "qdrant.practice_chunks.search.primary",
+                retrieval.branch = "primary",
+                retrieval.collection = "practice_chunks",
+                retrieval.case_ids_count = 1usize,
+                retrieval.case_ids = format!("{:?}", vec![&primary.case_id]),
+                retrieval.chunk_tags_filter.count = PRIMARY_TAGS.len(),
+                retrieval.chunk_tags_filter = format!("{:?}", PRIMARY_TAGS),
+                retrieval.limit = self.settings.top_k,
+                retrieval.score_threshold = self.settings.score_threshold,
+                retrieval.hits_count = field::Empty,
+                retrieval.hit_chunk_ids = field::Empty,
+                retrieval.hit_scores = field::Empty,
+                retrieval.top_score = field::Empty,
+                retrieval.min_score = field::Empty,
+                status = field::Empty,
+                error.type = field::Empty,
+                error.message = field::Empty,
+            );
+
             let req = build_request(
                 &request.query,
                 vec![primary.case_id.clone()],
                 PRIMARY_TAGS,
                 &self.settings,
             );
-            let result = self.collection.search(&req).await?;
-            map_hits(result.hits)
+
+            let result = {
+                async {
+                    match self.collection.search(&req).await {
+                        Ok(r) => {
+                            let hit_count = r.hits.len();
+                            let chunk_ids: Vec<&str> = r.hits.iter().map(|h| h.chunk_id.as_str()).collect();
+                            let scores: Vec<f32> = r.hits.iter().map(|h| h.score).collect();
+
+                            tracing::Span::current().record("retrieval.hits_count", hit_count);
+                            tracing::Span::current().record("retrieval.hit_chunk_ids", format!("{:?}", chunk_ids));
+                            tracing::Span::current().record("retrieval.hit_scores", format!("{:?}", scores));
+
+                            if !scores.is_empty() {
+                                let top_score = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                                let min_score = scores.iter().copied().fold(f32::INFINITY, f32::min);
+                                tracing::Span::current().record("retrieval.top_score", top_score);
+                                tracing::Span::current().record("retrieval.min_score", min_score);
+                            }
+
+                            tracing::Span::current().record("status", "ok");
+                            Ok(r)
+                        }
+                        Err(e) => {
+                            tracing::Span::current().record("status", "error");
+                            tracing::Span::current().record("error.type", "IncidentEvidenceRetrieval.Collection");
+                            tracing::Span::current()
+                                .record("error.message", format!("Primary search failed: {}", e));
+                            Err(e)
+                        }
+                    }
+                }
+                .instrument(primary_span)
+                .await
+            };
+
+            let result = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::Span::current().record("module.outcome", "failure");
+                    tracing::Span::current().record("status", "error");
+                    tracing::Span::current().record("error.type", "IncidentEvidenceRetrieval.Collection");
+                    tracing::Span::current()
+                        .record("error.message", format!("Primary search failed: {}", e));
+                    return Err(IncidentEvidenceRetrievalError::Collection(e));
+                }
+            };
+
+            let chunks = map_hits(result.hits);
+            let chunk_ids: Vec<&str> = chunks.iter().map(|c| c.chunk_id.as_str()).collect();
+            tracing::Span::current().record("incident_evidence.primary_chunks.count", chunks.len());
+            tracing::Span::current().record("incident_evidence.primary_chunks.ids", format!("{:?}", chunk_ids));
+            chunks
         } else {
+            tracing::Span::current().record("incident_evidence.primary_search.executed", false);
+            tracing::Span::current().record("incident_evidence.primary_chunks.count", 0);
+            tracing::Span::current().record("incident_evidence.primary_chunks.ids", format!("{:?}", Vec::<&str>::new()));
             vec![]
         };
 
+        // Alternative search
         let alternative_chunks = if !candidates.alternatives.is_empty() {
-            let case_ids = candidates
+            tracing::Span::current().record("incident_evidence.alternative_search.executed", true);
+
+            let case_ids: Vec<String> = candidates
                 .alternatives
                 .iter()
                 .map(|c| c.case_id.clone())
                 .collect();
+            let case_ids_str: Vec<&str> = case_ids.iter().map(|s| s.as_str()).collect();
+
+            let alternative_span = info_span!(
+                "qdrant.practice_chunks.search.alternatives",
+                retrieval.branch = "alternatives",
+                retrieval.collection = "practice_chunks",
+                retrieval.case_ids_count = case_ids.len(),
+                retrieval.case_ids = format!("{:?}", case_ids_str),
+                retrieval.chunk_tags_filter.count = ALTERNATIVE_TAGS.len(),
+                retrieval.chunk_tags_filter = format!("{:?}", ALTERNATIVE_TAGS),
+                retrieval.limit = self.settings.top_k,
+                retrieval.score_threshold = self.settings.score_threshold,
+                retrieval.hits_count = field::Empty,
+                retrieval.hit_chunk_ids = field::Empty,
+                retrieval.hit_scores = field::Empty,
+                retrieval.top_score = field::Empty,
+                retrieval.min_score = field::Empty,
+                status = field::Empty,
+                error.type = field::Empty,
+                error.message = field::Empty,
+            );
+
             let req = build_request(&request.query, case_ids, ALTERNATIVE_TAGS, &self.settings);
-            let result = self.collection.search(&req).await?;
-            map_hits(result.hits)
+
+            let result = {
+                async {
+                    match self.collection.search(&req).await {
+                        Ok(r) => {
+                            let hit_count = r.hits.len();
+                            let chunk_ids: Vec<&str> = r.hits.iter().map(|h| h.chunk_id.as_str()).collect();
+                            let scores: Vec<f32> = r.hits.iter().map(|h| h.score).collect();
+
+                            tracing::Span::current().record("retrieval.hits_count", hit_count);
+                            tracing::Span::current().record("retrieval.hit_chunk_ids", format!("{:?}", chunk_ids));
+                            tracing::Span::current().record("retrieval.hit_scores", format!("{:?}", scores));
+
+                            if !scores.is_empty() {
+                                let top_score = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                                let min_score = scores.iter().copied().fold(f32::INFINITY, f32::min);
+                                tracing::Span::current().record("retrieval.top_score", top_score);
+                                tracing::Span::current().record("retrieval.min_score", min_score);
+                            }
+
+                            tracing::Span::current().record("status", "ok");
+                            Ok(r)
+                        }
+                        Err(e) => {
+                            tracing::Span::current().record("status", "error");
+                            tracing::Span::current().record("error.type", "IncidentEvidenceRetrieval.Collection");
+                            tracing::Span::current()
+                                .record("error.message", format!("Alternative search failed: {}", e));
+                            Err(e)
+                        }
+                    }
+                }
+                .instrument(alternative_span)
+                .await
+            };
+
+            let result = match result {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::Span::current().record("module.outcome", "failure");
+                    tracing::Span::current().record("status", "error");
+                    tracing::Span::current().record("error.type", "IncidentEvidenceRetrieval.Collection");
+                    tracing::Span::current()
+                        .record("error.message", format!("Alternative search failed: {}", e));
+                    return Err(IncidentEvidenceRetrievalError::Collection(e));
+                }
+            };
+
+            let chunks = map_hits(result.hits);
+            let chunk_ids: Vec<&str> = chunks.iter().map(|c| c.chunk_id.as_str()).collect();
+            tracing::Span::current().record("incident_evidence.alternative_chunks.count", chunks.len());
+            tracing::Span::current().record("incident_evidence.alternative_chunks.ids", format!("{:?}", chunk_ids));
+            chunks
         } else {
+            tracing::Span::current().record("incident_evidence.alternative_search.executed", false);
+            tracing::Span::current().record("incident_evidence.alternative_chunks.count", 0);
+            tracing::Span::current().record("incident_evidence.alternative_chunks.ids", format!("{:?}", Vec::<&str>::new()));
             vec![]
         };
+
+        let total_count = primary_chunks.len() + alternative_chunks.len();
+        tracing::Span::current().record("incident_evidence.total_chunks.count", total_count);
+        tracing::Span::current().record("module.outcome", "success");
+        tracing::Span::current().record("status", "ok");
 
         Ok(IncidentEvidenceRetrievalOutput {
             primary_chunks,

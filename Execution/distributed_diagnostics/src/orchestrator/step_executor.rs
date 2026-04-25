@@ -41,6 +41,26 @@ pub struct StepExecutorModules {
     pub response_validation_and_normalization: ResponseValidationAndNormalization,
 }
 
+fn step_error_type(e: &StepError) -> &'static str {
+    match e {
+        StepError::MissingRequiredInput { .. } => "StepError.MissingRequiredInput",
+        StepError::InvalidState { .. } => "StepError.InvalidState",
+        StepError::InputNormalization(_) => "StepError.InputNormalization",
+        StepError::QueryStructuring(_) => "StepError.QueryStructuring",
+        StepError::CandidateCardRetrieval(_) => "StepError.CandidateCardRetrieval",
+        StepError::CardHydration(_) => "StepError.CardHydration",
+        StepError::IncidentEvidenceRetrieval(_) => "StepError.IncidentEvidenceRetrieval",
+        StepError::TheoryEvidenceRetrieval(_) => "StepError.TheoryEvidenceRetrieval",
+        StepError::PromptContextAssembly(_) => "StepError.PromptContextAssembly",
+        StepError::LlmStructuredGeneration(_) => "StepError.LlmStructuredGeneration",
+        StepError::ResponseValidationAndNormalization(_) => {
+            "StepError.ResponseValidationAndNormalization"
+        }
+        StepError::ExternalDependency { .. } => "StepError.ExternalDependency",
+        StepError::Unexpected { .. } => "StepError.Unexpected",
+    }
+}
+
 impl StepExecutor {
     pub fn new(modules: StepExecutorModules) -> Self {
         Self {
@@ -66,11 +86,28 @@ impl StepExecutor {
             .last_iteration()
             .map(|it| it.iteration_id().0.to_string())
             .unwrap_or_default();
-        let span =
-            crate::observability::dispatch_span(&run_id_str, &iter_id_str, step.as_ref());
+        let step_sequence_no = state
+            .last_iteration()
+            .map(|it| it.step_count().saturating_sub(1) as u64)
+            .unwrap_or(0);
+        let span = crate::observability::dispatch_span(
+            &run_id_str,
+            &iter_id_str,
+            step.as_ref(),
+            step_sequence_no,
+        );
         let _entered = span.enter();
         let result = self.execute_inner(step, state).await;
-        span.record("status", if result.is_ok() { "ok" } else { "error" });
+        match &result {
+            Ok(_) => {
+                span.record("step.outcome", "success");
+                span.record("status", "ok");
+            }
+            Err(e) => {
+                span.record("step.outcome", "failure");
+                crate::observability::record_error(&span, step_error_type(e), &e.to_string());
+            }
+        }
         result
     }
 
@@ -432,6 +469,7 @@ mod tests {
     const TOKENIZER_SOURCE: &str = "step-executor-tests/tok";
 
     const VOCAB_JSON: &str = r#"{
+        "version": "v1",
         "canonical_symptoms": ["high_latency"],
         "affected_components": ["api_gateway"],
         "failure_mode_candidates": ["overload"],
