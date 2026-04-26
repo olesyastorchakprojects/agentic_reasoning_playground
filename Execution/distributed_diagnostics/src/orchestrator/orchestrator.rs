@@ -12,6 +12,7 @@ use crate::orchestrator::step_executor::StepExecutor;
 use crate::orchestrator::transition_policy::{
     PolicyError, PolicyTransition, TransitionPolicy,
 };
+use crate::request_pipeline::context::{Context, OpenInferenceContext};
 use crate::shared_types::{ResponseValidationAndNormalizationOutput, UserRequest};
 
 #[derive(Debug)]
@@ -184,6 +185,7 @@ trait ExecutorLike {
         &self,
         step: StepKind,
         state: RunStateView<'_>,
+        context: &Context,
     ) -> Result<StepResultEnvelope, StepError>;
 }
 
@@ -220,8 +222,9 @@ impl ExecutorLike for StepExecutor {
         &self,
         step: StepKind,
         state: RunStateView<'_>,
+        context: &Context,
     ) -> Result<StepResultEnvelope, StepError> {
-        self.execute(step, state).await
+        self.execute_with_context(step, state, context).await
     }
 }
 
@@ -388,27 +391,67 @@ where
         None => (tracing::Span::none(), String::new()),
     };
     let _iter_entered = iter_span.enter();
+    let iteration_sequence_no = state.iterations.len().saturating_sub(1) as u64;
+    let context = Context::new(OpenInferenceContext {
+        root_span: crate::observability::oi_iteration_chain_span(
+            &iter_span,
+            &run_id_str,
+            &iter_id_str,
+            iteration_sequence_no,
+        ),
+    });
 
-    let outcome =
-        drive_to_outcome_loop(policy, executor, run_repository, state, &run_id_str, &iter_id_str)
-            .await;
+    let outcome = drive_to_outcome_loop(
+        policy,
+        executor,
+        run_repository,
+        state,
+        &run_id_str,
+        &iter_id_str,
+        &context,
+    )
+    .await;
 
     match &outcome {
-        Ok(RunOutcome::Finished { .. }) => {
+        Ok(RunOutcome::Finished { result, .. }) => {
             iter_span.record("status", "ok");
+            context.open_inference.root_span.record("status", "ok");
+            context.open_inference.root_span.record("run.outcome", "success");
+            if let Ok(output_json) = serde_json::to_string(result) {
+                context
+                    .open_inference
+                    .root_span
+                    .record("output.value", output_json.as_str());
+                context
+                    .open_inference
+                    .root_span
+                    .record("output.mime_type", "application/json");
+            }
         }
         Ok(RunOutcome::Failed { error, .. }) => {
             iter_span.record("status", "error");
+            context.open_inference.root_span.record("run.outcome", "failure");
             crate::observability::record_error(
                 &iter_span,
+                step_error_type(error),
+                &error.to_string(),
+            );
+            crate::observability::record_error(
+                &context.open_inference.root_span,
                 step_error_type(error),
                 &error.to_string(),
             );
         }
         Err(error) => {
             iter_span.record("status", "error");
+            context.open_inference.root_span.record("run.outcome", "failure");
             crate::observability::record_error(
                 &iter_span,
+                orchestrator_error_type(error),
+                &error.to_string(),
+            );
+            crate::observability::record_error(
+                &context.open_inference.root_span,
                 orchestrator_error_type(error),
                 &error.to_string(),
             );
@@ -425,6 +468,7 @@ async fn drive_to_outcome_loop<P, E, R>(
     state: &mut RunState,
     run_id_str: &str,
     iter_id_str: &str,
+    context: &Context,
 ) -> Result<RunOutcome, OrchestratorError>
 where
     P: TransitionPolicy,
@@ -525,7 +569,9 @@ where
                         OrchestratorError::from(e)
                     })?;
 
-                let execution_result = executor.execute_step(step, RunStateView::new(state)).await;
+                let execution_result = executor
+                    .execute_step(step, RunStateView::new(state), context)
+                    .await;
                 let step_error_info = execution_result
                     .as_ref()
                     .err()
@@ -754,6 +800,7 @@ mod tests {
             &self,
             step: StepKind,
             _state: RunStateView<'_>,
+            _context: &Context,
         ) -> Result<StepResultEnvelope, StepError> {
             self.events
                 .lock()

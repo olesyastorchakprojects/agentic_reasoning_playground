@@ -271,7 +271,8 @@ They use the role:
 - `mechanism_explanation`
 
 Theory chunks do not expose incident chunk tags in the current version, so they
-are selected in retrieval order up to the configured limit.
+are selected in retrieval order, with the current runtime contract allowing at
+most one theory chunk.
 
 They are used to explain general mechanisms behind the incident, such as
 transaction isolation anomalies, lost updates, or distributed consistency

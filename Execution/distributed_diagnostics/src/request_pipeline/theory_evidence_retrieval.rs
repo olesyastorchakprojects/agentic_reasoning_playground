@@ -5,6 +5,7 @@ use crate::api_clients::qdrant::theory_chunks_collection::{
     TheoryChunkSearchRequest, TheoryChunksCollection, TheoryChunksCollectionError,
 };
 use crate::config::CollectionRetrievalSettings;
+use crate::request_pipeline::context::Context;
 use crate::shared_types::{
     NormalizedUserRequest, TheoryEvidenceChunk, TheoryEvidenceRetrievalOutput,
 };
@@ -70,11 +71,30 @@ impl TheoryEvidenceRetrieval {
         &self,
         request: &NormalizedUserRequest,
     ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError> {
+        self.retrieve_with_context(request, &Context::noop()).await
+    }
+
+    pub async fn retrieve_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        context: &Context,
+    ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError> {
         let query = request.query.clone();
         let collection_name = match &self.settings.collection {
             crate::config::CollectionSettings::Dense(dense) => dense.name.clone(),
             crate::config::CollectionSettings::Hybrid(_) => "theory_chunks".to_string(),
         };
+        let oi_span =
+            crate::observability::oi_retriever_theory_span(&context.open_inference.root_span);
+        let oi_input_json = serde_json::json!({
+            "normalized_query": request.query,
+            "collection": collection_name,
+            "top_k": self.settings.top_k,
+            "score_threshold": self.settings.score_threshold
+        })
+        .to_string();
+        oi_span.record("input.value", oi_input_json.as_str());
+        oi_span.record("input.mime_type", "application/json");
 
         let span = info_span!(
             "request_pipeline.theory_evidence_retrieval",
@@ -85,7 +105,6 @@ impl TheoryEvidenceRetrieval {
             theory_retrieval.score_threshold = self.settings.score_threshold,
             theory_retrieval.search_executed = field::Empty,
             theory_retrieval.hits_count = field::Empty,
-            theory_retrieval.chunk_ids = field::Empty,
             theory_retrieval.scores = field::Empty,
             theory_retrieval.empty_result = field::Empty,
             module.outcome = field::Empty,
@@ -94,12 +113,15 @@ impl TheoryEvidenceRetrieval {
             error.message = field::Empty,
         );
 
-        self.retrieve_instrumented(request).instrument(span).await
+        self.retrieve_instrumented(request, &oi_span)
+            .instrument(span)
+            .await
     }
 
     async fn retrieve_instrumented(
         &self,
         request: &NormalizedUserRequest,
+        oi_span: &tracing::Span,
     ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError> {
         let collection_name = match &self.settings.collection {
             crate::config::CollectionSettings::Dense(dense) => dense.name.clone(),
@@ -120,7 +142,6 @@ impl TheoryEvidenceRetrieval {
             retrieval.limit = self.settings.top_k,
             retrieval.score_threshold = self.settings.score_threshold,
             retrieval.hits_count = field::Empty,
-            retrieval.hit_chunk_ids = field::Empty,
             retrieval.hit_scores = field::Empty,
             status = field::Empty,
             error.type = field::Empty,
@@ -136,12 +157,22 @@ impl TheoryEvidenceRetrieval {
                         let scores: Vec<f32> = r.hits.iter().map(|h| h.score).collect();
 
                         tracing::Span::current().record("retrieval.hits_count", hit_count);
-                        tracing::Span::current().record("retrieval.hit_chunk_ids", format!("{:?}", chunk_ids));
                         tracing::Span::current().record("retrieval.hit_scores", format!("{:?}", scores));
+                        tracing::event!(
+                            tracing::Level::INFO,
+                            event.name = "theory_retrieval_hit_ids",
+                            retrieval.hit_chunk_ids = %serde_json::to_string(&chunk_ids)
+                                .unwrap_or_else(|_| "[]".to_string())
+                        );
                         tracing::Span::current().record("status", "ok");
                         Ok(r)
                     }
                     Err(e) => {
+                        crate::observability::record_error(
+                            oi_span,
+                            "TheoryEvidenceRetrieval.Collection",
+                            &format!("Theory chunks search failed: {}", e),
+                        );
                         tracing::Span::current().record("status", "error");
                         tracing::Span::current().record("error.type", "TheoryEvidenceRetrieval.Collection");
                         tracing::Span::current()
@@ -157,6 +188,11 @@ impl TheoryEvidenceRetrieval {
         let result = match result {
             Ok(r) => r,
             Err(e) => {
+                crate::observability::record_error(
+                    oi_span,
+                    "TheoryEvidenceRetrieval.Collection",
+                    &format!("Theory chunks search failed: {}", e),
+                );
                 tracing::Span::current().record("module.outcome", "failure");
                 tracing::Span::current().record("status", "error");
                 tracing::Span::current().record("error.type", "TheoryEvidenceRetrieval.Collection");
@@ -181,8 +217,25 @@ impl TheoryEvidenceRetrieval {
         let scores: Vec<f32> = chunks.iter().map(|c| c.score).collect();
 
         tracing::Span::current().record("theory_retrieval.hits_count", chunks.len());
-        tracing::Span::current().record("theory_retrieval.chunk_ids", format!("{:?}", chunk_ids));
         tracing::Span::current().record("theory_retrieval.scores", format!("{:?}", scores));
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "theory_retrieval_output_ids",
+            theory_retrieval.chunk_ids = %serde_json::to_string(&chunk_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
+        let oi_output_json = serde_json::json!({
+            "documents": chunks.iter().map(|c| {
+                serde_json::json!({
+                    "document.id": c.chunk_id,
+                    "document.score": c.score
+                })
+            }).collect::<Vec<_>>()
+        })
+        .to_string();
+        oi_span.record("output.value", oi_output_json.as_str());
+        oi_span.record("output.mime_type", "application/json");
+        oi_span.record("status", "ok");
         tracing::Span::current().record("theory_retrieval.empty_result", empty_result);
         tracing::Span::current().record("module.outcome", "success");
         tracing::Span::current().record("status", "ok");

@@ -96,7 +96,7 @@ tag_priority = [
 
 [prompt_context.chunk_packing.mechanism_explanation]
 source = "theory"
-limit = 2
+limit = 1
 fallback_to_any_chunk = false
 tag_priority = []
 

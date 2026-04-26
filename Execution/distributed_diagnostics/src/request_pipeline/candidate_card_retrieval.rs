@@ -4,6 +4,7 @@ use crate::api_clients::qdrant::cards_collection::{
     CardSearchRequest, CardsCollection, CardsCollectionError,
 };
 use crate::api_clients::qdrant::shared_types::NormalizedUserQuery;
+use crate::request_pipeline::context::Context;
 use crate::shared_types::{CandidateCard, CandidateCardRetrievalOutput, NormalizedUserRequest};
 use tracing::{info_span, field, Instrument};
 
@@ -88,7 +89,26 @@ impl CandidateCardRetrieval {
         &self,
         request: &NormalizedUserRequest,
     ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError> {
+        self.retrieve_with_context(request, &Context::noop()).await
+    }
+
+    pub async fn retrieve_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        context: &Context,
+    ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError> {
         let query = request.query.clone();
+        let oi_span =
+            crate::observability::oi_retriever_candidate_cards_span(&context.open_inference.root_span);
+        let oi_input_json = serde_json::json!({
+            "normalized_query": request.query,
+            "top_k": self.top_k,
+            "score_threshold": self.score_threshold,
+            "max_alternatives": self.max_alternatives
+        })
+        .to_string();
+        oi_span.record("input.value", oi_input_json.as_str());
+        oi_span.record("input.mime_type", "application/json");
 
         let span = info_span!(
             "request_pipeline.candidate_card_retrieval",
@@ -106,7 +126,6 @@ impl CandidateCardRetrieval {
             candidate.primary.case_id = field::Empty,
             candidate.primary.score = field::Empty,
             candidate.alternatives.count = field::Empty,
-            candidate.alternatives.case_ids = field::Empty,
             candidate.output.total_count = field::Empty,
             module.outcome = field::Empty,
             status = field::Empty,
@@ -114,12 +133,15 @@ impl CandidateCardRetrieval {
             error.message = field::Empty,
         );
 
-        self.retrieve_instrumented(request).instrument(span).await
+        self.retrieve_instrumented(request, &oi_span)
+            .instrument(span)
+            .await
     }
 
     async fn retrieve_instrumented(
         &self,
         request: &NormalizedUserRequest,
+        oi_span: &tracing::Span,
     ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError> {
         let search_request = CardSearchRequest {
             user_query: NormalizedUserQuery(request.query.clone()),
@@ -152,6 +174,11 @@ impl CandidateCardRetrieval {
                         Ok(r)
                     }
                     Err(e) => {
+                        crate::observability::record_error(
+                            oi_span,
+                            "CandidateCardRetrieval.Collection",
+                            &format!("Qdrant search failed: {}", e),
+                        );
                         tracing::Span::current().record("status", "error");
                         tracing::Span::current().record("error.type", "CandidateCardRetrieval.Collection");
                         tracing::Span::current()
@@ -167,6 +194,11 @@ impl CandidateCardRetrieval {
         let result = match result {
             Ok(r) => r,
             Err(e) => {
+                crate::observability::record_error(
+                    oi_span,
+                    "CandidateCardRetrieval.Collection",
+                    &format!("Qdrant search failed: {}", e),
+                );
                 tracing::Span::current().record("module.outcome", "failure");
                 tracing::Span::current().record("status", "error");
                 tracing::Span::current().record("error.type", "CandidateCardRetrieval.Collection");
@@ -181,9 +213,16 @@ impl CandidateCardRetrieval {
             tracing::Span::current().record("retrieval.scores", "[]");
             tracing::Span::current().record("candidate.primary.present", false);
             tracing::Span::current().record("candidate.alternatives.count", 0);
-            tracing::Span::current().record("candidate.alternatives.case_ids", "[]");
             tracing::Span::current().record("candidate.output.total_count", 0);
             tracing::Span::current().record("retrieval.selected_total_count", 0);
+            tracing::event!(
+                tracing::Level::INFO,
+                event.name = "candidate_alternative_case_ids",
+                candidate.alternatives.case_ids = "[]"
+            );
+            oi_span.record("output.value", r#"{"primary":null,"alternatives":[]}"#);
+            oi_span.record("output.mime_type", "application/json");
+            oi_span.record("status", "ok");
             tracing::Span::current().record("module.outcome", "success");
             tracing::Span::current().record("status", "ok");
 
@@ -226,9 +265,34 @@ impl CandidateCardRetrieval {
             tracing::Span::current().record("candidate.primary.score", primary_score);
         }
         tracing::Span::current().record("candidate.alternatives.count", alt_count);
-        tracing::Span::current().record("candidate.alternatives.case_ids", format!("{:?}", alt_case_ids));
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "candidate_alternative_case_ids",
+            candidate.alternatives.case_ids = %serde_json::to_string(&alt_case_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
         tracing::Span::current().record("candidate.output.total_count", total_count);
         tracing::Span::current().record("retrieval.selected_total_count", total_count);
+        let oi_output_json = serde_json::json!({
+            "primary": primary.as_ref().map(|p| {
+                serde_json::json!({
+                    "document.id": p.case_id,
+                    "document.score": p.score,
+                    "role": "primary"
+                })
+            }),
+            "alternatives": alternatives.iter().map(|a| {
+                serde_json::json!({
+                    "document.id": a.case_id,
+                    "document.score": a.score,
+                    "role": "alternative"
+                })
+            }).collect::<Vec<_>>()
+        })
+        .to_string();
+        oi_span.record("output.value", oi_output_json.as_str());
+        oi_span.record("output.mime_type", "application/json");
+        oi_span.record("status", "ok");
         tracing::Span::current().record("module.outcome", "success");
         tracing::Span::current().record("status", "ok");
 
