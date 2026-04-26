@@ -652,7 +652,6 @@ Rules:
   - `model.prompt_tokens`
   - `model.completion_tokens`
   - `model.total_tokens`
-  - `structured_query.json`
   - `structured.intent_present`
   - `structured.symptoms_count`
   - `structured.affected_subsystems_count`
@@ -671,7 +670,11 @@ Rules:
   - `model.completion_tokens`
   - `model.total_tokens`
 - allowed events:
+  - `structured_query_payload`
   - `query_structuring.output_parsed`
+- required fields on `structured_query_payload`:
+  - `structured_query.json`
+  - `event.name = "structured_query_payload"`
 - required fields on `query_structuring.output_parsed`:
   - `structured.intent_present`
   - `structured.symptoms_count`
@@ -699,7 +702,6 @@ Rules:
   - `candidate.primary.case_id`
   - `candidate.primary.score`
   - `candidate.alternatives.count`
-  - `candidate.alternatives.case_ids`
   - `candidate.output.total_count`
 - required attributes on `qdrant.cards.search`:
   - `qdrant.collection`
@@ -711,6 +713,12 @@ Rules:
 - failure rules:
   - use `error.type` values such as `CandidateCardRetrieval.Collection`, `CandidateCardRetrieval.InvalidHit`, or `CandidateCardRetrieval.Mapping`
 
+- allowed events:
+  - `candidate_alternative_case_ids`
+- required fields on `candidate_alternative_case_ids`:
+  - `candidate.alternatives.case_ids`
+  - `event.name = "candidate_alternative_case_ids"`
+
 `request_pipeline.card_hydration`
 
 - child dependency spans:
@@ -720,13 +728,9 @@ Rules:
   - `hydration.input.primary_present`
   - `hydration.input.primary_case_id`
   - `hydration.input.alternatives_count`
-  - `hydration.input.alternative_case_ids`
   - `hydration.requested_case_ids_count`
-  - `hydration.requested_case_ids`
   - `hydration.postgres_call_executed`
   - `hydration.cards_returned_count`
-  - `hydration.returned_case_ids`
-  - `hydration.missing_case_ids`
   - `hydration.primary_hydrated`
   - `hydration.alternatives_hydrated_count`
   - `hydration.order_reconstructed`
@@ -738,6 +742,23 @@ Rules:
   - `db.returned_rows_count`
 - failure rules:
   - use `error.type` values such as `CardHydration.MissingCard` or `CardHydration.Store`
+- allowed events:
+  - `hydration_input_alternative_case_ids`
+  - `hydration_requested_case_ids`
+  - `hydration_returned_case_ids`
+  - `hydration_missing_case_ids`
+- required fields on `hydration_input_alternative_case_ids`:
+  - `hydration.input.alternative_case_ids`
+  - `event.name = "hydration_input_alternative_case_ids"`
+- required fields on `hydration_requested_case_ids`:
+  - `hydration.requested_case_ids`
+  - `event.name = "hydration_requested_case_ids"`
+- required fields on `hydration_returned_case_ids`:
+  - `hydration.returned_case_ids`
+  - `event.name = "hydration_returned_case_ids"`
+- required fields on `hydration_missing_case_ids`:
+  - `hydration.missing_case_ids`
+  - `event.name = "hydration_missing_case_ids"`
 
 `request_pipeline.incident_evidence_retrieval`
 
@@ -747,17 +768,13 @@ Rules:
 - required attributes:
   - global leaf attributes from section `14)`
   - `query.normalized`
-  - `structured_query.json`
   - `incident_evidence.primary_search.executed`
   - `incident_evidence.alternative_search.executed`
   - `incident_evidence.primary.case_id`
-  - `incident_evidence.alternative.case_ids`
   - `incident_evidence.top_k`
   - `incident_evidence.score_threshold`
   - `incident_evidence.primary_chunks.count`
-  - `incident_evidence.primary_chunks.ids`
   - `incident_evidence.alternative_chunks.count`
-  - `incident_evidence.alternative_chunks.ids`
   - `incident_evidence.total_chunks.count`
   - `incident_evidence.primary_tag_set`
   - `incident_evidence.alternative_tag_set`
@@ -765,17 +782,35 @@ Rules:
   - `retrieval.branch`
   - `retrieval.collection = "practice_chunks"`
   - `retrieval.case_ids_count`
-  - `retrieval.case_ids`
   - `retrieval.chunk_tags_filter.count`
   - `retrieval.chunk_tags_filter`
   - `retrieval.limit`
   - `retrieval.score_threshold`
   - `retrieval.hits_count`
-  - `retrieval.hit_chunk_ids`
   - `retrieval.hit_scores`
 - allowed events:
   - `incident_evidence.primary_search_skipped`
   - `incident_evidence.alternative_search_skipped`
+  - `incident_primary_hit_ids`
+  - `incident_primary_chunk_ids`
+  - `incident_alternative_hit_ids`
+  - `incident_alternative_chunk_ids`
+  - `incident_alternative_case_ids`
+- required fields on `incident_primary_hit_ids`:
+  - `retrieval.hit_chunk_ids`
+  - `event.name = "incident_primary_hit_ids"`
+- required fields on `incident_primary_chunk_ids`:
+  - `incident_evidence.primary_chunks.ids`
+  - `event.name = "incident_primary_chunk_ids"`
+- required fields on `incident_alternative_hit_ids`:
+  - `retrieval.hit_chunk_ids`
+  - `event.name = "incident_alternative_hit_ids"`
+- required fields on `incident_alternative_chunk_ids`:
+  - `incident_evidence.alternative_chunks.ids`
+  - `event.name = "incident_alternative_chunk_ids"`
+- required fields on `incident_alternative_case_ids`:
+  - `incident_evidence.alternative.case_ids`
+  - `event.name = "incident_alternative_case_ids"`
 - required fields on `incident_evidence.primary_search_skipped`:
   - `skip.reason`
   - `primary.case_id`
@@ -792,13 +827,11 @@ Rules:
 - required attributes:
   - global leaf attributes from section `14)`
   - `query.normalized`
-  - `structured_query.json`
   - `theory_retrieval.collection`
   - `theory_retrieval.top_k`
   - `theory_retrieval.score_threshold`
   - `theory_retrieval.search_executed`
   - `theory_retrieval.hits_count`
-  - `theory_retrieval.chunk_ids`
   - `theory_retrieval.scores`
   - `theory_retrieval.empty_result`
   - `theory_retrieval.order_preserved`
@@ -807,8 +840,16 @@ Rules:
   - `retrieval.limit`
   - `retrieval.score_threshold`
   - `retrieval.hits_count`
-  - `retrieval.hit_chunk_ids`
   - `retrieval.hit_scores`
+- allowed events:
+  - `theory_retrieval_hit_ids`
+  - `theory_retrieval_output_ids`
+- required fields on `theory_retrieval_hit_ids`:
+  - `retrieval.hit_chunk_ids`
+  - `event.name = "theory_retrieval_hit_ids"`
+- required fields on `theory_retrieval_output_ids`:
+  - `theory_retrieval.chunk_ids`
+  - `event.name = "theory_retrieval_output_ids"`
 - failure rules:
   - use `error.type` values such as `TheoryEvidenceRetrieval.Collection`, `TheoryEvidenceRetrieval.InvalidHit`, or `TheoryEvidenceRetrieval.Mapping`
 
@@ -823,20 +864,15 @@ Notes for Qdrant-backed retrieval:
 - required attributes:
   - global leaf attributes from section `14)`
   - `query.normalized`
-  - `structured_query.json`
   - `prompt.asset.name`
   - `prompt.asset.version`
   - `prompt.asset.policy_constraints_count`
   - `prompt.input.primary_card_present`
   - `prompt.input.primary_card.case_id`
   - `prompt.input.alternative_cards_count`
-  - `prompt.input.alternative_card.case_ids`
   - `prompt.input.primary_incident_chunks_count`
-  - `prompt.input.primary_incident_chunk_ids`
   - `prompt.input.alternative_incident_chunks_count`
-  - `prompt.input.alternative_incident_chunk_ids`
   - `prompt.input.theory_chunks_count`
-  - `prompt.input.theory_chunk_ids`
   - `prompt.selected.total_chunks_count`
   - `prompt.selected.evidence_for_match.count`
   - `prompt.selected.first_check_hint.count`
@@ -845,9 +881,28 @@ Notes for Qdrant-backed retrieval:
   - `prompt.selected.mechanism_explanation.count`
   - `prompt.rendered_chars`
   - `prompt.context_json_chars`
-  - `prompt.has_competing_precedent_context`
 - allowed events:
+  - `prompt_structured_query_payload`
+  - `prompt_input_alternative_card_case_ids`
+  - `prompt_input_primary_incident_chunk_ids`
+  - `prompt_input_alternative_incident_chunk_ids`
+  - `prompt_input_theory_chunk_ids`
   - `prompt_context.role_selection_completed`
+- required fields on `prompt_structured_query_payload`:
+  - `structured_query.json`
+  - `event.name = "prompt_structured_query_payload"`
+- required fields on `prompt_input_alternative_card_case_ids`:
+  - `prompt.input.alternative_card.case_ids`
+  - `event.name = "prompt_input_alternative_card_case_ids"`
+- required fields on `prompt_input_primary_incident_chunk_ids`:
+  - `prompt.input.primary_incident_chunk_ids`
+  - `event.name = "prompt_input_primary_incident_chunk_ids"`
+- required fields on `prompt_input_alternative_incident_chunk_ids`:
+  - `prompt.input.alternative_incident_chunk_ids`
+  - `event.name = "prompt_input_alternative_incident_chunk_ids"`
+- required fields on `prompt_input_theory_chunk_ids`:
+  - `prompt.input.theory_chunk_ids`
+  - `event.name = "prompt_input_theory_chunk_ids"`
 - required fields on `prompt_context.role_selection_completed`:
   - `role.name`
   - `role.eligible_chunk_ids`
@@ -877,7 +932,6 @@ Notes for Qdrant-backed retrieval:
   - `llm.output.object_field_count`
   - `llm.output.has_markdown_fence`
   - `llm.output.content_chars`
-  - `llm.output.parsed_json`
 - allowed conditional attributes:
   - `llm.output.truncated`
   - `llm.output.truncation_limit_chars`
@@ -892,7 +946,11 @@ Notes for Qdrant-backed retrieval:
   - `model.completion_tokens`
   - `model.total_tokens`
 - allowed events:
+  - `llm_output_payload`
   - `llm_generation.json_parsed`
+- required fields on `llm_output_payload`:
+  - `llm.output.parsed_json`
+  - `event.name = "llm_output_payload"`
 - required fields on `llm_generation.json_parsed`:
   - `llm.output.parse_success`
   - `llm.output.top_level_type`
@@ -907,7 +965,6 @@ Notes for Qdrant-backed retrieval:
   - none required
 - required attributes:
   - global leaf attributes from section `14)`
-  - `validation.input.raw_json`
   - `validation.input.top_level_type`
   - `validation.input.top_level_field_count`
   - `validation.required_fields.present_count`
@@ -923,9 +980,16 @@ Notes for Qdrant-backed retrieval:
   - `validation.prohibited_final_diagnosis_language_found`
   - `normalization.trimmed_fields_count`
   - `normalization.success`
-  - `final_response.json`
 - allowed events:
+  - `validation_input_payload`
+  - `final_response_payload`
   - `response_validation.failed`
+- required fields on `validation_input_payload`:
+  - `validation.input.raw_json`
+  - `event.name = "validation_input_payload"`
+- required fields on `final_response_payload`:
+  - `final_response.json`
+  - `event.name = "final_response_payload"`
 - required fields on `response_validation.failed`:
   - `validation.failure.reason`
   - `validation.failure.path`

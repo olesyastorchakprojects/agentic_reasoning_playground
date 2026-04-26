@@ -277,7 +277,7 @@ Generated unit tests for the `prompt_context_assembly` runtime module must inclu
 - constructor accepts any `alternative_context.per_case_limit = Some(n)` value when `alternative_context.limit = 0`;
 - constructor rejection when `mechanism_explanation.tag_priority` is non-empty;
 - missing hydrated primary card fails with `PromptContextAssemblyError::MissingPrimaryCard`;
-- output includes the hydrated primary card as `matched_incident_card`;
+- output includes a compact prompt-facing primary-card summary as `matched_incident_card`;
 - output excludes full alternative cards;
 - output copies `NormalizedUserRequest.query` into `user_problem`;
 - output builds `normalized_incident_query.recognized_canonical_symptoms` from `QueryStructuringOutput.structured_query.symptoms[*].term`;
@@ -297,10 +297,7 @@ Generated unit tests for the `prompt_context_assembly` runtime module must inclu
 - rendered prompt embeds selected supporting explanation chunks with role `supporting_explanation`;
 - rendered prompt serializes all prompt evidence roles through the exact snake-case mapping: `evidence_for_match`, `first_check_hint`, `supporting_explanation`, `alternative_context`, and `mechanism_explanation`;
 - prompt rendering uses module-private DTOs or helper mapping for `PromptEvidenceRole` serialization rather than deriving `serde::Serialize` on `PromptEvidenceRole`;
-- rendered prompt embeds `competing_precedent_context` derived from selected `alternative_context` chunks and hydrated alternative cards;
-- `competing_precedent_context` entries include `case_id`, `title`, `source_name`, and one-line `competing_signal`;
-- multiple selected `alternative_context` chunks with the same `case_id` produce multiple `competing_precedent_context` entries in selected chunk order;
-- `competing_precedent_context.competing_signal` is built from selected alternative chunk text without model summarization;
+- rendered prompt does not embed `competing_precedent_context`;
 - rendered prompt embeds selected theory chunks with roles;
 - rendered prompt preserves uncertainty instructions when alternative context chunks are selected;
 - output returns selected incident chunks separately from the prompt for history;
@@ -325,12 +322,16 @@ Generated unit tests for the `prompt_context_assembly` runtime module must inclu
 - alternative context is optional when no alternative chunks exist;
 - selected primary incident chunks whose `case_id` differs from the hydrated primary card fail with `PromptContextAssemblyError::InconsistentEvidence`;
 - selected alternative incident chunks whose `case_id` has no hydrated alternative card fail with `PromptContextAssemblyError::InconsistentEvidence`;
-- theory chunk selection respects `mechanism_explanation.limit`;
+- theory chunk selection is capped at one item when `mechanism_explanation.limit = 1`;
+- constructor rejects `mechanism_explanation.limit > 1`;
 - `mechanism_explanation.limit = 0` selects no theory chunks;
 - empty theory evidence is not an error;
 - selected incident chunks preserve raw `chunk_id`, `case_id`, `score`, and `text`;
 - selected incident chunks return recognized `chunk_tags` as typed `IncidentChunkTag` values and omit unknown raw source tags;
 - selected theory chunks preserve raw `chunk_id`, `score`, and `text`;
+- rendered prompt uses compact model-facing incident chunk DTOs with only `role`, `source_document_id`, `chunk_tags`, and `text`;
+- rendered prompt uses compact model-facing theory chunk DTOs with only `role`, `source_document_id`, and `text`;
+- `matched_incident_card` omits `case_id`, `title`, and `source_name`;
 - selected incident chunks are emitted in role order: `EvidenceForMatch`, `FirstCheckHint`, `SupportingExplanation`, then `AlternativeContext`;
 - no unselected chunks are included in output.
 

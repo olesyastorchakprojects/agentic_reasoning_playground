@@ -47,11 +47,6 @@ impl CardHydration {
             .map(|p| p.case_id.as_str())
             .unwrap_or("");
         let alternatives_count = candidates.alternatives.len();
-        let alternative_case_ids: Vec<&str> = candidates
-            .alternatives
-            .iter()
-            .map(|a| a.case_id.as_str())
-            .collect();
 
         let span = info_span!(
             "request_pipeline.card_hydration",
@@ -59,13 +54,9 @@ impl CardHydration {
             hydration.input.primary_present = primary_present,
             hydration.input.primary_case_id = primary_case_id,
             hydration.input.alternatives_count = alternatives_count,
-            hydration.input.alternative_case_ids = format!("{:?}", alternative_case_ids),
             hydration.requested_case_ids_count = field::Empty,
-            hydration.requested_case_ids = field::Empty,
             hydration.postgres_call_executed = field::Empty,
             hydration.cards_returned_count = field::Empty,
-            hydration.returned_case_ids = field::Empty,
-            hydration.missing_case_ids = field::Empty,
             hydration.primary_hydrated = field::Empty,
             hydration.alternatives_hydrated_count = field::Empty,
             hydration.order_reconstructed = field::Empty,
@@ -83,13 +74,37 @@ impl CardHydration {
         &self,
         candidates: &CandidateCardRetrievalOutput,
     ) -> Result<CardHydrationOutput, CardHydrationError> {
+        let alternative_case_ids: Vec<&str> = candidates
+            .alternatives
+            .iter()
+            .map(|a| a.case_id.as_str())
+            .collect();
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "hydration_input_alternative_case_ids",
+            hydration.input.alternative_case_ids = %serde_json::to_string(&alternative_case_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
+
         if candidates.primary.is_none() && candidates.alternatives.is_empty() {
             tracing::Span::current().record("hydration.postgres_call_executed", false);
             tracing::Span::current().record("hydration.requested_case_ids_count", 0);
-            tracing::Span::current().record("hydration.requested_case_ids", "[]");
             tracing::Span::current().record("hydration.cards_returned_count", 0);
-            tracing::Span::current().record("hydration.returned_case_ids", "[]");
-            tracing::Span::current().record("hydration.missing_case_ids", "[]");
+            tracing::event!(
+                tracing::Level::INFO,
+                event.name = "hydration_requested_case_ids",
+                hydration.requested_case_ids = "[]"
+            );
+            tracing::event!(
+                tracing::Level::INFO,
+                event.name = "hydration_returned_case_ids",
+                hydration.returned_case_ids = "[]"
+            );
+            tracing::event!(
+                tracing::Level::INFO,
+                event.name = "hydration_missing_case_ids",
+                hydration.missing_case_ids = "[]"
+            );
             tracing::Span::current().record("hydration.primary_hydrated", false);
             tracing::Span::current().record("hydration.alternatives_hydrated_count", 0);
             tracing::Span::current().record("hydration.order_reconstructed", true);
@@ -113,7 +128,12 @@ impl CardHydration {
 
         tracing::Span::current().record("hydration.requested_case_ids_count", case_ids.len());
         let case_ids_str: Vec<&str> = case_ids.iter().map(|s| s.as_str()).collect();
-        tracing::Span::current().record("hydration.requested_case_ids", format!("{:?}", case_ids_str));
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "hydration_requested_case_ids",
+            hydration.requested_case_ids = %serde_json::to_string(&case_ids_str)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
         tracing::Span::current().record("hydration.postgres_call_executed", true);
 
         let postgres_span = info_span!(
@@ -163,7 +183,12 @@ impl CardHydration {
 
         let returned_case_ids: Vec<&str> = cards.iter().map(|c| c.case_id.as_str()).collect();
         tracing::Span::current().record("hydration.cards_returned_count", cards.len());
-        tracing::Span::current().record("hydration.returned_case_ids", format!("{:?}", returned_case_ids));
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "hydration_returned_case_ids",
+            hydration.returned_case_ids = %serde_json::to_string(&returned_case_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
 
         let lookup: HashMap<String, IncidentCard> =
             cards.into_iter().map(|c| (c.case_id.clone(), c)).collect();
@@ -175,7 +200,12 @@ impl CardHydration {
                 missing_ids.push(id.as_str());
             }
         }
-        tracing::Span::current().record("hydration.missing_case_ids", format!("{:?}", missing_ids));
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "hydration_missing_case_ids",
+            hydration.missing_case_ids = %serde_json::to_string(&missing_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
 
         let primary = candidates
             .primary

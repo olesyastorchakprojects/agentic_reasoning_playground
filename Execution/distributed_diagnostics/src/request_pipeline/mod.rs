@@ -1,5 +1,6 @@
 pub mod candidate_card_retrieval;
 pub mod card_hydration;
+pub mod context;
 pub mod incident_evidence_retrieval;
 pub mod input_normalization;
 pub mod llm_structured_generation;

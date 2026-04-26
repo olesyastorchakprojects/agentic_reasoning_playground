@@ -652,7 +652,7 @@ tag_priority = ["chunk_role:failure_mode"]
 
 [prompt_context.chunk_packing.mechanism_explanation]
 source = "theory"
-limit = 2
+limit = 1
 fallback_to_any_chunk = false
 tag_priority = []
 
@@ -1225,7 +1225,7 @@ vector_name = "dense"
         assert_eq!(cp.alternative_context.per_case_limit, Some(1));
 
         assert_eq!(cp.mechanism_explanation.source, ChunkPackingSource::Theory);
-        assert_eq!(cp.mechanism_explanation.limit, 2);
+        assert_eq!(cp.mechanism_explanation.limit, 1);
         assert!(cp.mechanism_explanation.tag_priority.is_empty());
     }
 

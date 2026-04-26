@@ -6,6 +6,7 @@ use crate::api_clients::qdrant::practice_chunks_collection::{
 };
 use crate::api_clients::qdrant::shared_types::NormalizedUserQuery;
 use crate::config::CollectionRetrievalSettings;
+use crate::request_pipeline::context::Context;
 use crate::shared_types::{
     CandidateCardRetrievalOutput, IncidentEvidenceChunk, IncidentEvidenceRetrievalOutput,
     NormalizedUserRequest,
@@ -79,22 +80,52 @@ impl IncidentEvidenceRetrieval {
         request: &NormalizedUserRequest,
         candidates: &CandidateCardRetrievalOutput,
     ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError> {
+        self.retrieve_with_context(request, candidates, &Context::noop())
+            .await
+    }
+
+    pub async fn retrieve_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        candidates: &CandidateCardRetrievalOutput,
+        context: &Context,
+    ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError> {
         let query = request.query.clone();
         let primary_case_id = candidates.primary.as_ref().map(|p| p.case_id.as_str()).unwrap_or("");
-        let alternative_case_ids: Vec<&str> = candidates
-            .alternatives
-            .iter()
-            .map(|c| c.case_id.as_str())
-            .collect();
         let primary_tag_set = format!("{:?}", PRIMARY_TAGS);
         let alternative_tag_set = format!("{:?}", ALTERNATIVE_TAGS);
+        let oi_primary_span = crate::observability::oi_retriever_incident_primary_span(
+            &context.open_inference.root_span,
+        );
+        let oi_alternatives_span = crate::observability::oi_retriever_incident_alternatives_span(
+            &context.open_inference.root_span,
+        );
+        let oi_primary_input_json = serde_json::json!({
+            "normalized_query": request.query,
+            "case_id": primary_case_id,
+            "top_k": self.settings.top_k,
+            "score_threshold": self.settings.score_threshold,
+            "tags": PRIMARY_TAGS
+        })
+        .to_string();
+        oi_primary_span.record("input.value", oi_primary_input_json.as_str());
+        oi_primary_span.record("input.mime_type", "application/json");
+        let oi_alternative_input_json = serde_json::json!({
+            "normalized_query": request.query,
+            "case_ids": candidates.alternatives.iter().map(|c| c.case_id.as_str()).collect::<Vec<_>>(),
+            "top_k": self.settings.top_k,
+            "score_threshold": self.settings.score_threshold,
+            "tags": ALTERNATIVE_TAGS
+        })
+        .to_string();
+        oi_alternatives_span.record("input.value", oi_alternative_input_json.as_str());
+        oi_alternatives_span.record("input.mime_type", "application/json");
 
         let span = info_span!(
             "request_pipeline.incident_evidence_retrieval",
             module.name = "incident_evidence_retrieval",
             query.normalized = %query,
             incident_evidence.primary.case_id = primary_case_id,
-            incident_evidence.alternative.case_ids = format!("{:?}", alternative_case_ids),
             incident_evidence.top_k = self.settings.top_k,
             incident_evidence.score_threshold = self.settings.score_threshold,
             incident_evidence.primary_tag_set = %primary_tag_set,
@@ -102,9 +133,7 @@ impl IncidentEvidenceRetrieval {
             incident_evidence.primary_search.executed = field::Empty,
             incident_evidence.alternative_search.executed = field::Empty,
             incident_evidence.primary_chunks.count = field::Empty,
-            incident_evidence.primary_chunks.ids = field::Empty,
             incident_evidence.alternative_chunks.count = field::Empty,
-            incident_evidence.alternative_chunks.ids = field::Empty,
             incident_evidence.total_chunks.count = field::Empty,
             module.outcome = field::Empty,
             status = field::Empty,
@@ -112,14 +141,24 @@ impl IncidentEvidenceRetrieval {
             error.message = field::Empty,
         );
 
-        self.retrieve_instrumented(request, candidates).instrument(span).await
+        self.retrieve_instrumented(request, candidates, &oi_primary_span, &oi_alternatives_span)
+            .instrument(span)
+            .await
     }
 
     async fn retrieve_instrumented(
         &self,
         request: &NormalizedUserRequest,
         candidates: &CandidateCardRetrievalOutput,
+        oi_primary_span: &tracing::Span,
+        oi_alternatives_span: &tracing::Span,
     ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError> {
+        let alternative_case_ids: Vec<&str> = candidates
+            .alternatives
+            .iter()
+            .map(|c| c.case_id.as_str())
+            .collect();
+
         // Primary search
         let primary_chunks = if let Some(primary) = &candidates.primary {
             tracing::Span::current().record("incident_evidence.primary_search.executed", true);
@@ -129,13 +168,11 @@ impl IncidentEvidenceRetrieval {
                 retrieval.branch = "primary",
                 retrieval.collection = "practice_chunks",
                 retrieval.case_ids_count = 1usize,
-                retrieval.case_ids = format!("{:?}", vec![&primary.case_id]),
                 retrieval.chunk_tags_filter.count = PRIMARY_TAGS.len(),
                 retrieval.chunk_tags_filter = format!("{:?}", PRIMARY_TAGS),
                 retrieval.limit = self.settings.top_k,
                 retrieval.score_threshold = self.settings.score_threshold,
                 retrieval.hits_count = field::Empty,
-                retrieval.hit_chunk_ids = field::Empty,
                 retrieval.hit_scores = field::Empty,
                 retrieval.top_score = field::Empty,
                 retrieval.min_score = field::Empty,
@@ -157,13 +194,18 @@ impl IncidentEvidenceRetrieval {
                         Ok(r) => {
                             let hit_count = r.hits.len();
                             let chunk_ids: Vec<&str> = r.hits.iter().map(|h| h.chunk_id.as_str()).collect();
-                            let scores: Vec<f32> = r.hits.iter().map(|h| h.score).collect();
+                        let scores: Vec<f32> = r.hits.iter().map(|h| h.score).collect();
 
-                            tracing::Span::current().record("retrieval.hits_count", hit_count);
-                            tracing::Span::current().record("retrieval.hit_chunk_ids", format!("{:?}", chunk_ids));
-                            tracing::Span::current().record("retrieval.hit_scores", format!("{:?}", scores));
+                        tracing::Span::current().record("retrieval.hits_count", hit_count);
+                        tracing::Span::current().record("retrieval.hit_scores", format!("{:?}", scores));
+                        tracing::event!(
+                            tracing::Level::INFO,
+                            event.name = "incident_primary_hit_ids",
+                            retrieval.hit_chunk_ids = %serde_json::to_string(&chunk_ids)
+                                .unwrap_or_else(|_| "[]".to_string())
+                        );
 
-                            if !scores.is_empty() {
+                        if !scores.is_empty() {
                                 let top_score = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                                 let min_score = scores.iter().copied().fold(f32::INFINITY, f32::min);
                                 tracing::Span::current().record("retrieval.top_score", top_score);
@@ -174,6 +216,11 @@ impl IncidentEvidenceRetrieval {
                             Ok(r)
                         }
                         Err(e) => {
+                            crate::observability::record_error(
+                                oi_primary_span,
+                                "IncidentEvidenceRetrieval.Collection",
+                                &format!("Primary search failed: {}", e),
+                            );
                             tracing::Span::current().record("status", "error");
                             tracing::Span::current().record("error.type", "IncidentEvidenceRetrieval.Collection");
                             tracing::Span::current()
@@ -189,6 +236,11 @@ impl IncidentEvidenceRetrieval {
             let result = match result {
                 Ok(r) => r,
                 Err(e) => {
+                    crate::observability::record_error(
+                        oi_primary_span,
+                        "IncidentEvidenceRetrieval.Collection",
+                        &format!("Primary search failed: {}", e),
+                    );
                     tracing::Span::current().record("module.outcome", "failure");
                     tracing::Span::current().record("status", "error");
                     tracing::Span::current().record("error.type", "IncidentEvidenceRetrieval.Collection");
@@ -201,12 +253,37 @@ impl IncidentEvidenceRetrieval {
             let chunks = map_hits(result.hits);
             let chunk_ids: Vec<&str> = chunks.iter().map(|c| c.chunk_id.as_str()).collect();
             tracing::Span::current().record("incident_evidence.primary_chunks.count", chunks.len());
-            tracing::Span::current().record("incident_evidence.primary_chunks.ids", format!("{:?}", chunk_ids));
+            tracing::event!(
+                tracing::Level::INFO,
+                event.name = "incident_primary_chunk_ids",
+                incident_evidence.primary_chunks.ids = %serde_json::to_string(&chunk_ids)
+                    .unwrap_or_else(|_| "[]".to_string())
+            );
+            let oi_primary_output_json = serde_json::json!({
+                "documents": chunks.iter().map(|c| {
+                    serde_json::json!({
+                        "document.id": c.chunk_id,
+                        "document.score": c.score,
+                        "document.metadata": { "case_id": c.case_id }
+                    })
+                }).collect::<Vec<_>>()
+            })
+            .to_string();
+            oi_primary_span.record("output.value", oi_primary_output_json.as_str());
+            oi_primary_span.record("output.mime_type", "application/json");
+            oi_primary_span.record("status", "ok");
             chunks
         } else {
             tracing::Span::current().record("incident_evidence.primary_search.executed", false);
             tracing::Span::current().record("incident_evidence.primary_chunks.count", 0);
-            tracing::Span::current().record("incident_evidence.primary_chunks.ids", format!("{:?}", Vec::<&str>::new()));
+            tracing::event!(
+                tracing::Level::INFO,
+                event.name = "incident_primary_chunk_ids",
+                incident_evidence.primary_chunks.ids = "[]"
+            );
+            oi_primary_span.record("output.value", r#"{"documents":[]}"#);
+            oi_primary_span.record("output.mime_type", "application/json");
+            oi_primary_span.record("status", "ok");
             vec![]
         };
 
@@ -219,20 +296,17 @@ impl IncidentEvidenceRetrieval {
                 .iter()
                 .map(|c| c.case_id.clone())
                 .collect();
-            let case_ids_str: Vec<&str> = case_ids.iter().map(|s| s.as_str()).collect();
 
             let alternative_span = info_span!(
                 "qdrant.practice_chunks.search.alternatives",
                 retrieval.branch = "alternatives",
                 retrieval.collection = "practice_chunks",
                 retrieval.case_ids_count = case_ids.len(),
-                retrieval.case_ids = format!("{:?}", case_ids_str),
                 retrieval.chunk_tags_filter.count = ALTERNATIVE_TAGS.len(),
                 retrieval.chunk_tags_filter = format!("{:?}", ALTERNATIVE_TAGS),
                 retrieval.limit = self.settings.top_k,
                 retrieval.score_threshold = self.settings.score_threshold,
                 retrieval.hits_count = field::Empty,
-                retrieval.hit_chunk_ids = field::Empty,
                 retrieval.hit_scores = field::Empty,
                 retrieval.top_score = field::Empty,
                 retrieval.min_score = field::Empty,
@@ -249,13 +323,18 @@ impl IncidentEvidenceRetrieval {
                         Ok(r) => {
                             let hit_count = r.hits.len();
                             let chunk_ids: Vec<&str> = r.hits.iter().map(|h| h.chunk_id.as_str()).collect();
-                            let scores: Vec<f32> = r.hits.iter().map(|h| h.score).collect();
+                        let scores: Vec<f32> = r.hits.iter().map(|h| h.score).collect();
 
-                            tracing::Span::current().record("retrieval.hits_count", hit_count);
-                            tracing::Span::current().record("retrieval.hit_chunk_ids", format!("{:?}", chunk_ids));
-                            tracing::Span::current().record("retrieval.hit_scores", format!("{:?}", scores));
+                        tracing::Span::current().record("retrieval.hits_count", hit_count);
+                        tracing::Span::current().record("retrieval.hit_scores", format!("{:?}", scores));
+                        tracing::event!(
+                            tracing::Level::INFO,
+                            event.name = "incident_alternative_hit_ids",
+                            retrieval.hit_chunk_ids = %serde_json::to_string(&chunk_ids)
+                                .unwrap_or_else(|_| "[]".to_string())
+                        );
 
-                            if !scores.is_empty() {
+                        if !scores.is_empty() {
                                 let top_score = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
                                 let min_score = scores.iter().copied().fold(f32::INFINITY, f32::min);
                                 tracing::Span::current().record("retrieval.top_score", top_score);
@@ -266,6 +345,11 @@ impl IncidentEvidenceRetrieval {
                             Ok(r)
                         }
                         Err(e) => {
+                            crate::observability::record_error(
+                                oi_alternatives_span,
+                                "IncidentEvidenceRetrieval.Collection",
+                                &format!("Alternative search failed: {}", e),
+                            );
                             tracing::Span::current().record("status", "error");
                             tracing::Span::current().record("error.type", "IncidentEvidenceRetrieval.Collection");
                             tracing::Span::current()
@@ -281,6 +365,11 @@ impl IncidentEvidenceRetrieval {
             let result = match result {
                 Ok(r) => r,
                 Err(e) => {
+                    crate::observability::record_error(
+                        oi_alternatives_span,
+                        "IncidentEvidenceRetrieval.Collection",
+                        &format!("Alternative search failed: {}", e),
+                    );
                     tracing::Span::current().record("module.outcome", "failure");
                     tracing::Span::current().record("status", "error");
                     tracing::Span::current().record("error.type", "IncidentEvidenceRetrieval.Collection");
@@ -293,14 +382,46 @@ impl IncidentEvidenceRetrieval {
             let chunks = map_hits(result.hits);
             let chunk_ids: Vec<&str> = chunks.iter().map(|c| c.chunk_id.as_str()).collect();
             tracing::Span::current().record("incident_evidence.alternative_chunks.count", chunks.len());
-            tracing::Span::current().record("incident_evidence.alternative_chunks.ids", format!("{:?}", chunk_ids));
+            tracing::event!(
+                tracing::Level::INFO,
+                event.name = "incident_alternative_chunk_ids",
+                incident_evidence.alternative_chunks.ids = %serde_json::to_string(&chunk_ids)
+                    .unwrap_or_else(|_| "[]".to_string())
+            );
+            let oi_alternative_output_json = serde_json::json!({
+                "documents": chunks.iter().map(|c| {
+                    serde_json::json!({
+                        "document.id": c.chunk_id,
+                        "document.score": c.score,
+                        "document.metadata": { "case_id": c.case_id }
+                    })
+                }).collect::<Vec<_>>()
+            })
+            .to_string();
+            oi_alternatives_span.record("output.value", oi_alternative_output_json.as_str());
+            oi_alternatives_span.record("output.mime_type", "application/json");
+            oi_alternatives_span.record("status", "ok");
             chunks
         } else {
             tracing::Span::current().record("incident_evidence.alternative_search.executed", false);
             tracing::Span::current().record("incident_evidence.alternative_chunks.count", 0);
-            tracing::Span::current().record("incident_evidence.alternative_chunks.ids", format!("{:?}", Vec::<&str>::new()));
+            tracing::event!(
+                tracing::Level::INFO,
+                event.name = "incident_alternative_chunk_ids",
+                incident_evidence.alternative_chunks.ids = "[]"
+            );
+            oi_alternatives_span.record("output.value", r#"{"documents":[]}"#);
+            oi_alternatives_span.record("output.mime_type", "application/json");
+            oi_alternatives_span.record("status", "ok");
             vec![]
         };
+
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "incident_alternative_case_ids",
+            incident_evidence.alternative.case_ids = %serde_json::to_string(&alternative_case_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
 
         let total_count = primary_chunks.len() + alternative_chunks.len();
         tracing::Span::current().record("incident_evidence.total_chunks.count", total_count);

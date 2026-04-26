@@ -149,6 +149,7 @@ Constructor settings validation rules:
 - `settings.chunk_packing.supporting_explanation.limit` may be `0`;
 - `settings.chunk_packing.alternative_context.limit` may be `0`;
 - `settings.chunk_packing.mechanism_explanation.limit` may be `0`;
+- `settings.chunk_packing.mechanism_explanation.limit` must be less than or equal to `1`;
 - `settings.chunk_packing.alternative_context.per_case_limit` must be `Some(n)` with `n > 0` when `alternative_context.limit > 0`;
 - when `settings.chunk_packing.alternative_context.limit = 0`, `per_case_limit` may be `None` or any `Some(n)` value; the constructor must not reject it because alternative context selection is disabled;
 - `settings.chunk_packing.mechanism_explanation.tag_priority` must be empty because theory chunks do not expose tags.
@@ -244,7 +245,7 @@ Rules:
 This module uses one hydrated primary incident card as the structured precedent.
 
 Rules:
-- if `cards.primary` is `Some(card)`, that card must become the `matched_incident_card` value inside the rendered prompt JSON context;
+- if `cards.primary` is `Some(card)`, the module must derive a compact prompt-facing `matched_incident_card` object from that card rather than embedding the full shared `IncidentCard` payload;
 - if `cards.primary` is `None`, assembly must fail with `PromptContextAssemblyError::MissingPrimaryCard`;
 - full alternative cards from `cards.alternatives` must not be included in the rendered prompt JSON context in the current version;
 - alternative cards may affect ordering of `alternative_context` chunks by their `case_id`;
@@ -324,6 +325,7 @@ Theory chunk ranking rules:
 - `mechanism_explanation` selection must use `TheoryEvidenceRetrievalOutput.chunks` in collection-returned order;
 - selected theory chunks must preserve raw score and text;
 - no theory chunks are selected when `mechanism_explanation.limit = 0`;
+- when `mechanism_explanation.limit = 1`, at most one theory chunk may be selected;
 - empty theory evidence is valid when `mechanism_explanation.limit = 0`;
 - empty theory evidence is also valid when `mechanism_explanation.limit > 0`; the role is optional.
 
@@ -424,11 +426,11 @@ Source:
 - `TheoryEvidenceRetrievalOutput.chunks`
 
 Rules:
-- select up to `settings.chunk_packing.mechanism_explanation.limit` chunks;
+- select at most one chunk, controlled by `settings.chunk_packing.mechanism_explanation.limit`;
 - selected chunks must be emitted with `PromptEvidenceRole::MechanismExplanation`;
 - this role is optional;
 - when `limit = 0`, no theory chunks are selected;
-- when `limit > 0`, selected theory chunks must preserve retrieval order.
+- when `limit = 1`, the first retrieved theory chunk must be selected and retrieval order must be preserved.
 
 ## 9) Prompt Rendering Rules
 
@@ -440,7 +442,7 @@ The rendered prompt must contain:
 - the strict JSON response schema from the loaded prompt asset;
 - the policy constraints from the loaded prompt asset;
 - a `JSON context follows:` marker from the loaded prompt asset;
-- a JSON context object containing the normalized request, prompt-facing normalized incident query, hydrated primary card, selected chunks, competing precedent context, selected theory chunks, and policy constraints.
+- a JSON context object containing the normalized request, prompt-facing normalized incident query, a compact primary-card summary, selected chunks, selected theory chunks, and policy constraints.
 
 The prompt JSON context rendered into `{{json_context}}` must contain exactly
 these top-level fields in the current version:
@@ -453,7 +455,6 @@ these top-level fields in the current version:
   "normalized_incident_query": {},
   "matched_incident_card": {},
   "incident_evidence_chunks": [],
-  "competing_precedent_context": [],
   "theory_chunks": [],
   "policy_constraints": []
 }
@@ -524,19 +525,101 @@ Insufficient query-structure data rules:
 
 `matched_incident_card`:
 - must be built from `CardHydrationOutput.primary`;
-- must contain all shared `IncidentCard` fields from `Specification/runtime/runtime.md`;
+- must be a compact prompt-facing DTO, not the shared `IncidentCard` shape;
 - must not include retrieval scores or candidate-card metadata.
+
+`matched_incident_card` must contain exactly these nested objects:
+- `context`
+- `hypotheses`
+- `checks`
+
+`matched_incident_card.context`:
+- must contain:
+  - `systems`
+  - `affected_components`
+  - `initial_symptoms`
+  - `later_symptoms`
+
+`matched_incident_card.context.systems`:
+- <- `IncidentCard.vendor_or_project` and `IncidentCard.system_type`;
+- preserve first occurrence order after de-duplicating exact string matches;
+- omit empty strings if present.
+
+`matched_incident_card.context.affected_components`:
+- <- `IncidentCard.affected_components`;
+- preserve source order;
+- omit empty strings if present.
+
+`matched_incident_card.context.initial_symptoms`:
+- <- `IncidentCard.canonical_symptoms`;
+- preserve source order;
+- omit empty strings if present.
+
+`matched_incident_card.context.later_symptoms`:
+- <- concatenate in order:
+  - `IncidentCard.incident_phases[*].symptoms[*]`
+  - `IncidentCard.user_visible_impact`
+- preserve first occurrence order after de-duplicating exact string matches;
+- omit empty strings if present.
+
+`matched_incident_card.hypotheses`:
+- must contain:
+  - `failure_modes`
+  - `hypothesis_signals`
+  - `hypothesis_updates`
+  - `contributing_factors`
+
+`matched_incident_card.hypotheses.failure_modes`:
+- <- `IncidentCard.failure_mode_candidates`;
+- preserve source order;
+- omit empty strings if present.
+
+`matched_incident_card.hypotheses.hypothesis_signals`:
+- <- `IncidentCard.candidate_explanations`;
+- preserve source order;
+- omit empty strings if present.
+
+`matched_incident_card.hypotheses.hypothesis_updates`:
+- <- `IncidentCard.diagnostic_patterns`;
+- preserve source order;
+- omit empty strings if present.
+
+`matched_incident_card.hypotheses.contributing_factors`:
+- <- `IncidentCard.confidence_notes`;
+- preserve source order;
+- omit empty strings if present.
+
+`matched_incident_card.checks`:
+- must contain:
+  - `investigation_questions`
+  - `discriminating_checks`
+
+`matched_incident_card.checks.investigation_questions`:
+- <- `IncidentCard.discriminating_checks[*].question`;
+- preserve source order;
+- omit empty strings if present.
+
+`matched_incident_card.checks.discriminating_checks`:
+- <- `IncidentCard.investigation_steps` when non-empty;
+- otherwise <- `IncidentCard.discriminating_checks[*].question`;
+- preserve source order;
+- omit empty strings if present.
+
+Fields that must not appear in `matched_incident_card` in the current version:
+- `case_id`
+- `title`
+- `source_name`
+- full-card sections not explicitly mapped above
 
 `incident_evidence_chunks`:
 - must contain selected incident chunks only;
 - each object must contain:
   - `role`
-  - `chunk_id`
-  - `case_id`
-  - `score`
+  - `source_document_id`
   - `chunk_tags`
   - `text`
 - `role` must serialize through the prompt evidence role serialization table below;
+- `source_document_id` <- selected incident chunk `case_id`;
 - `chunk_tags` must serialize from `IncidentChunkTag` using canonical full tag strings such as `chunk_role:symptom`;
 - raw unknown source tags must not appear in prompt context output.
 
@@ -552,41 +635,14 @@ Serialization rules:
 - the generated implementation must use a module-private serializable DTO or helper mapping for prompt JSON rendering;
 - `PromptEvidenceRole` itself must not be made serializable solely for prompt rendering.
 
-`competing_precedent_context`:
-- must contain one prompt-facing object for each selected `AlternativeContext` chunk;
-- multiple selected `AlternativeContext` chunks from the same `case_id` must produce multiple `competing_precedent_context` entries in selected chunk order;
-- must be derived only from selected `AlternativeContext` chunks and the hydrated alternative card with the same `case_id`;
-- must be emitted as an empty array when no `AlternativeContext` chunks are selected;
-- must not include full alternative cards in the current version.
-
-Each `competing_precedent_context` object must contain:
-- `case_id`
-- `title`
-- `source_name`
-- `competing_signal`
-
-`competing_precedent_context[].case_id`:
-- <- selected `AlternativeContext.case_id`
-
-`competing_precedent_context[].title`:
-- <- `CardHydrationOutput.alternatives[*].title` for the same `case_id`
-
-`competing_precedent_context[].source_name`:
-- <- `CardHydrationOutput.alternatives[*].source_name` for the same `case_id`
-
-`competing_precedent_context[].competing_signal`:
-- <- selected `AlternativeContext.text`;
-- must be normalized to one line by trimming leading/trailing whitespace and collapsing internal whitespace runs to one ASCII space;
-- must not be generated, summarized, or rewritten by a model.
-
 `theory_chunks`:
 - must contain selected theory chunks only;
 - each object must contain:
   - `role`
-  - `chunk_id`
-  - `score`
+  - `source_document_id`
   - `text`
 - `role` must serialize through the prompt evidence role serialization table above.
+- `source_document_id` <- selected theory chunk `chunk_id`
 
 `policy_constraints`:
 - must be copied from `DiagnosticResponsePromptAsset.policy_constraints`.

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use crate::config::{ChunkPackingSource, ChunkRolePackingSettings, PromptContextSettings};
+use crate::request_pipeline::context::Context;
 use crate::shared_types::{
     CardHydrationOutput, IncidentCard, IncidentChunkTag, IncidentEvidenceChunk,
     IncidentEvidenceRetrievalOutput, NormalizedUserRequest, PromptContextAssemblyOutput,
@@ -55,9 +56,8 @@ struct JsonContext<'a> {
     user_problem: &'a str,
     input_token_count: usize,
     normalized_incident_query: NormalizedIncidentQueryDto,
-    matched_incident_card: &'a IncidentCard,
+    matched_incident_card: MatchedIncidentCardDto,
     incident_evidence_chunks: Vec<IncidentChunkDto>,
-    competing_precedent_context: Vec<CompetingPrecedentDto>,
     theory_chunks: Vec<TheoryChunkDto>,
     policy_constraints: &'a Vec<String>,
 }
@@ -76,26 +76,44 @@ struct NormalizedIncidentQueryDto {
 #[derive(serde::Serialize)]
 struct IncidentChunkDto {
     role: String,
-    chunk_id: String,
-    case_id: String,
-    score: f32,
+    source_document_id: String,
     chunk_tags: Vec<String>,
     text: String,
 }
 
 #[derive(serde::Serialize)]
-struct CompetingPrecedentDto {
-    case_id: String,
-    title: String,
-    source_name: String,
-    competing_signal: String,
+struct MatchedIncidentCardDto {
+    context: MatchedIncidentContextDto,
+    hypotheses: MatchedIncidentHypothesesDto,
+    checks: MatchedIncidentChecksDto,
+}
+
+#[derive(serde::Serialize)]
+struct MatchedIncidentContextDto {
+    systems: Vec<String>,
+    affected_components: Vec<String>,
+    initial_symptoms: Vec<String>,
+    later_symptoms: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct MatchedIncidentHypothesesDto {
+    failure_modes: Vec<String>,
+    hypothesis_signals: Vec<String>,
+    hypothesis_updates: Vec<String>,
+    contributing_factors: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct MatchedIncidentChecksDto {
+    investigation_questions: Vec<String>,
+    discriminating_checks: Vec<String>,
 }
 
 #[derive(serde::Serialize)]
 struct TheoryChunkDto {
     role: String,
-    chunk_id: String,
-    score: f32,
+    source_document_id: String,
     text: String,
 }
 
@@ -141,6 +159,25 @@ impl PromptContextAssembly {
         incident_evidence: &IncidentEvidenceRetrievalOutput,
         theory_evidence: &TheoryEvidenceRetrievalOutput,
     ) -> Result<PromptContextAssemblyOutput, PromptContextAssemblyError> {
+        self.assemble_with_context(
+            request,
+            query,
+            cards,
+            incident_evidence,
+            theory_evidence,
+            &Context::noop(),
+        )
+    }
+
+    pub fn assemble_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        query: &QueryStructuringOutput,
+        cards: &CardHydrationOutput,
+        incident_evidence: &IncidentEvidenceRetrievalOutput,
+        theory_evidence: &TheoryEvidenceRetrievalOutput,
+        context: &Context,
+    ) -> Result<PromptContextAssemblyOutput, PromptContextAssemblyError> {
         let primary_card_present = cards.primary.is_some();
         let primary_card_case_id = cards
             .primary
@@ -166,25 +203,34 @@ impl PromptContextAssembly {
             .collect();
         let structured_query_json = serde_json::to_string(&query.structured_query)
             .unwrap_or_else(|_| "{}".to_string());
+        let oi_span =
+            crate::observability::oi_chain_prompt_context_assembly_span(&context.open_inference.root_span);
+        let oi_input_json = serde_json::json!({
+            "normalized_query": request.query,
+            "structured_query": query.structured_query,
+            "primary_card_present": primary_card_present,
+            "alternative_cards_count": cards.alternatives.len(),
+            "primary_incident_chunks_count": incident_evidence.primary_chunks.len(),
+            "alternative_incident_chunks_count": incident_evidence.alternative_chunks.len(),
+            "theory_chunks_count": theory_evidence.chunks.len()
+        })
+        .to_string();
+        oi_span.record("input.value", oi_input_json.as_str());
+        oi_span.record("input.mime_type", "application/json");
 
         let span = info_span!(
             "request_pipeline.prompt_context_assembly",
             module.name = "prompt_context_assembly",
             query.normalized = %request.query,
-            structured_query.json = %structured_query_json,
             prompt.asset.name = %self.prompt_asset.name,
             prompt.asset.version = %self.prompt_asset.version,
             prompt.asset.policy_constraints_count = self.prompt_asset.policy_constraints.len() as i64,
             prompt.input.primary_card_present = primary_card_present,
             prompt.input.primary_card.case_id = primary_card_case_id,
             prompt.input.alternative_cards_count = cards.alternatives.len() as i64,
-            prompt.input.alternative_card.case_ids = %serde_json::to_string(&alternative_card_case_ids).unwrap_or_else(|_| "[]".to_string()),
             prompt.input.primary_incident_chunks_count = incident_evidence.primary_chunks.len() as i64,
-            prompt.input.primary_incident_chunk_ids = %serde_json::to_string(&primary_incident_chunk_ids).unwrap_or_else(|_| "[]".to_string()),
             prompt.input.alternative_incident_chunks_count = incident_evidence.alternative_chunks.len() as i64,
-            prompt.input.alternative_incident_chunk_ids = %serde_json::to_string(&alternative_incident_chunk_ids).unwrap_or_else(|_| "[]".to_string()),
             prompt.input.theory_chunks_count = theory_evidence.chunks.len() as i64,
-            prompt.input.theory_chunk_ids = %serde_json::to_string(&theory_chunk_ids).unwrap_or_else(|_| "[]".to_string()),
             prompt.selected.total_chunks_count = field::Empty,
             prompt.selected.evidence_for_match.count = field::Empty,
             prompt.selected.first_check_hint.count = field::Empty,
@@ -193,7 +239,6 @@ impl PromptContextAssembly {
             prompt.selected.mechanism_explanation.count = field::Empty,
             prompt.rendered_chars = field::Empty,
             prompt.context_json_chars = field::Empty,
-            prompt.has_competing_precedent_context = field::Empty,
             module.outcome = field::Empty,
             status = field::Empty,
             error.type = field::Empty,
@@ -201,6 +246,35 @@ impl PromptContextAssembly {
         );
 
         let _guard = span.enter();
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "prompt_structured_query_payload",
+            structured_query.json = %structured_query_json
+        );
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "prompt_input_alternative_card_case_ids",
+            prompt.input.alternative_card.case_ids = %serde_json::to_string(&alternative_card_case_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "prompt_input_primary_incident_chunk_ids",
+            prompt.input.primary_incident_chunk_ids = %serde_json::to_string(&primary_incident_chunk_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "prompt_input_alternative_incident_chunk_ids",
+            prompt.input.alternative_incident_chunk_ids = %serde_json::to_string(&alternative_incident_chunk_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "prompt_input_theory_chunk_ids",
+            prompt.input.theory_chunk_ids = %serde_json::to_string(&theory_chunk_ids)
+                .unwrap_or_else(|_| "[]".to_string())
+        );
 
         let primary_card = cards
             .primary
@@ -208,6 +282,11 @@ impl PromptContextAssembly {
             .ok_or_else(|| {
                 record_prompt_context_error(
                     &span,
+                    "PromptContextAssembly.MissingPrimaryCard",
+                    "missing hydrated primary card",
+                );
+                crate::observability::record_error(
+                    &oi_span,
                     "PromptContextAssembly.MissingPrimaryCard",
                     "missing hydrated primary card",
                 );
@@ -225,6 +304,11 @@ impl PromptContextAssembly {
         )
         .map_err(|e| {
             record_prompt_context_error_for_err(&span, &e);
+            crate::observability::record_error(
+                &oi_span,
+                "PromptContextAssembly.MissingRequiredEvidence",
+                &e.to_string(),
+            );
             e
         })?;
 
@@ -237,6 +321,11 @@ impl PromptContextAssembly {
         )
         .map_err(|e| {
             record_prompt_context_error_for_err(&span, &e);
+            crate::observability::record_error(
+                &oi_span,
+                "PromptContextAssembly.MissingRequiredEvidence",
+                &e.to_string(),
+            );
             e
         })?;
 
@@ -249,6 +338,11 @@ impl PromptContextAssembly {
         )
         .map_err(|e| {
             record_prompt_context_error_for_err(&span, &e);
+            crate::observability::record_error(
+                &oi_span,
+                "PromptContextAssembly.InvalidSettings",
+                &e.to_string(),
+            );
             e
         })?;
 
@@ -281,6 +375,11 @@ impl PromptContextAssembly {
                     chunk.chunk_id, chunk.case_id, primary_case_id
                 ));
                 record_prompt_context_error_for_err(&span, &err);
+                crate::observability::record_error(
+                    &oi_span,
+                    "PromptContextAssembly.InconsistentEvidence",
+                    &err.to_string(),
+                );
                 return Err(err);
             }
         }
@@ -296,6 +395,11 @@ impl PromptContextAssembly {
                     chunk.chunk_id, chunk.case_id
                 ));
                 record_prompt_context_error_for_err(&span, &err);
+                crate::observability::record_error(
+                    &oi_span,
+                    "PromptContextAssembly.InconsistentEvidence",
+                    &err.to_string(),
+                );
                 return Err(err);
             }
         }
@@ -312,13 +416,9 @@ impl PromptContextAssembly {
         incident_chunks.extend(se);
         incident_chunks.extend(ac);
 
-        // Build competing_precedent_context
-        let competing_precedent_context =
-            build_competing_precedent(&incident_chunks, &cards.alternatives);
-        let has_competing_precedent_context = !competing_precedent_context.is_empty();
-
         // Build normalized incident query
         let normalized_incident_query = build_normalized_incident_query(&query.structured_query);
+        let matched_incident_card = build_matched_incident_card(primary_card);
 
         // Serialize context to JSON
         let ctx = JsonContext {
@@ -326,9 +426,8 @@ impl PromptContextAssembly {
             user_problem: &request.query,
             input_token_count: request.input_token_count,
             normalized_incident_query,
-            matched_incident_card: primary_card,
+            matched_incident_card,
             incident_evidence_chunks: incident_chunks.iter().map(incident_chunk_to_dto).collect(),
-            competing_precedent_context,
             theory_chunks: theory_chunks.iter().map(theory_chunk_to_dto).collect(),
             policy_constraints: &self.prompt_asset.policy_constraints,
         };
@@ -338,6 +437,11 @@ impl PromptContextAssembly {
                 "JSON serialization failed: {e}"
             ));
             record_prompt_context_error_for_err(&span, &err);
+            crate::observability::record_error(
+                &oi_span,
+                "PromptContextAssembly.PromptAsset",
+                &err.to_string(),
+            );
             err
         })?;
 
@@ -358,10 +462,22 @@ impl PromptContextAssembly {
         );
         span.record("prompt.rendered_chars", prompt.len() as i64);
         span.record("prompt.context_json_chars", json_str.len() as i64);
-        span.record(
-            "prompt.has_competing_precedent_context",
-            has_competing_precedent_context,
-        );
+        let oi_output_json = serde_json::json!({
+            "selected_counts": {
+                "evidence_for_match": efm_count,
+                "first_check_hint": fch_count,
+                "supporting_explanation": se_count,
+                "alternative_context": ac_count,
+                "mechanism_explanation": theory_count,
+                "total": incident_chunks.len() + theory_chunks.len()
+            },
+            "context_json_chars": json_str.len(),
+            "prompt_chars": prompt.len()
+        })
+        .to_string();
+        oi_span.record("output.value", oi_output_json.as_str());
+        oi_span.record("output.mime_type", "application/json");
+        oi_span.record("status", "ok");
         span.record("module.outcome", "success");
         span.record("status", "ok");
 
@@ -490,6 +606,11 @@ fn validate_settings(s: &PromptContextSettings) -> Result<(), PromptContextAssem
     if !cp.mechanism_explanation.tag_priority.is_empty() {
         return Err(PromptContextAssemblyError::InvalidSettings(
             "mechanism_explanation.tag_priority must be empty because theory chunks do not expose tags".to_string(),
+        ));
+    }
+    if cp.mechanism_explanation.limit > 1 {
+        return Err(PromptContextAssemblyError::InvalidSettings(
+            "mechanism_explanation.limit must be <= 1".to_string(),
         ));
     }
 
@@ -847,33 +968,6 @@ fn select_alternative_context(
 }
 
 // ---------------------------------------------------------------------------
-// Competing precedent context builder
-// ---------------------------------------------------------------------------
-
-fn build_competing_precedent(
-    incident_chunks: &[PromptIncidentEvidenceChunk],
-    alt_cards: &[IncidentCard],
-) -> Vec<CompetingPrecedentDto> {
-    incident_chunks
-        .iter()
-        .filter(|c| c.role == PromptEvidenceRole::AlternativeContext)
-        .map(|c| {
-            let alt_card = alt_cards
-                .iter()
-                .find(|card| card.case_id == c.case_id)
-                .expect("alternative card must exist — validated before this call");
-            let competing_signal = c.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            CompetingPrecedentDto {
-                case_id: c.case_id.clone(),
-                title: alt_card.title.clone(),
-                source_name: alt_card.source_name.clone(),
-                competing_signal,
-            }
-        })
-        .collect()
-}
-
-// ---------------------------------------------------------------------------
 // Normalized incident query builder
 // ---------------------------------------------------------------------------
 
@@ -919,6 +1013,63 @@ fn build_normalized_incident_query(query: &StructuredUserQuery) -> NormalizedInc
     }
 }
 
+fn build_matched_incident_card(card: &IncidentCard) -> MatchedIncidentCardDto {
+    let systems = [card.vendor_or_project.as_deref(), card.system_type.as_deref()]
+        .into_iter()
+        .flatten()
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_string())
+        .collect();
+
+    let later_symptoms = card
+        .incident_phases
+        .iter()
+        .flat_map(|phase| phase.symptoms.iter().chain(phase.user_visible_impact.iter()))
+        .filter(|value| !value.is_empty())
+        .cloned()
+        .collect();
+
+    let investigation_questions = card
+        .discriminating_checks
+        .iter()
+        .map(|check| check.question.clone())
+        .filter(|value| !value.is_empty())
+        .collect();
+
+    let discriminating_checks = if !card.investigation_steps.is_empty() {
+        card.investigation_steps
+            .iter()
+            .filter(|value| !value.is_empty())
+            .cloned()
+            .collect()
+    } else {
+        card.discriminating_checks
+            .iter()
+            .map(|check| check.question.clone())
+            .filter(|value| !value.is_empty())
+            .collect()
+    };
+
+    MatchedIncidentCardDto {
+        context: MatchedIncidentContextDto {
+            systems,
+            affected_components: card.affected_components.clone(),
+            initial_symptoms: card.canonical_symptoms.clone(),
+            later_symptoms,
+        },
+        hypotheses: MatchedIncidentHypothesesDto {
+            failure_modes: card.failure_mode_candidates.clone(),
+            hypothesis_signals: card.candidate_explanations.clone(),
+            hypothesis_updates: card.diagnostic_patterns.clone(),
+            contributing_factors: card.confidence_notes.clone(),
+        },
+        checks: MatchedIncidentChecksDto {
+            investigation_questions,
+            discriminating_checks,
+        },
+    }
+}
+
 // ---------------------------------------------------------------------------
 // DTO conversion helpers
 // ---------------------------------------------------------------------------
@@ -926,9 +1077,7 @@ fn build_normalized_incident_query(query: &StructuredUserQuery) -> NormalizedInc
 fn incident_chunk_to_dto(chunk: &PromptIncidentEvidenceChunk) -> IncidentChunkDto {
     IncidentChunkDto {
         role: role_to_str(chunk.role).to_string(),
-        chunk_id: chunk.chunk_id.clone(),
-        case_id: chunk.case_id.clone(),
-        score: chunk.score,
+        source_document_id: chunk.case_id.clone(),
         chunk_tags: chunk
             .chunk_tags
             .iter()
@@ -941,8 +1090,7 @@ fn incident_chunk_to_dto(chunk: &PromptIncidentEvidenceChunk) -> IncidentChunkDt
 fn theory_chunk_to_dto(chunk: &PromptTheoryEvidenceChunk) -> TheoryChunkDto {
     TheoryChunkDto {
         role: role_to_str(chunk.role).to_string(),
-        chunk_id: chunk.chunk_id.clone(),
-        score: chunk.score,
+        source_document_id: chunk.chunk_id.clone(),
         text: chunk.text.clone(),
     }
 }
@@ -1012,7 +1160,7 @@ mod tests {
                 },
                 mechanism_explanation: ChunkRolePackingSettings {
                     source: ChunkPackingSource::Theory,
-                    limit: 2,
+                    limit: 1,
                     per_case_limit: None,
                     fallback_to_any_chunk: false,
                     tag_priority: vec![],
@@ -1509,11 +1657,29 @@ mod tests {
 
     #[test]
     fn assemble_includes_primary_card_as_matched_incident_card() {
-        let card = minimal_card("case_a");
+        let mut card = minimal_card("case_a");
+        card.vendor_or_project = Some("etcd".to_string());
+        card.system_type = Some("coordination store".to_string());
+        card.affected_components = vec!["lock_service".to_string()];
+        card.canonical_symptoms = vec!["duplicate_lock_holders".to_string()];
+        card.failure_mode_candidates = vec!["lock_ownership_violation".to_string()];
+        card.candidate_explanations = vec!["lock ownership may not be exclusive".to_string()];
+        card.diagnostic_patterns = vec!["healthy kv behavior can coexist with unsafe locks".to_string()];
+        card.discriminating_checks = vec![crate::shared_types::DiscriminatingCheck {
+            question: "Do conflicts cluster around lease expiry?".to_string(),
+            why: "Tests a lease-related trigger.".to_string(),
+        }];
+        card.investigation_steps =
+            vec!["Correlate failures with lease timing and lock wait paths.".to_string()];
         let chunks = two_primary_chunks("case_a");
         let out = assemble_with(card, chunks).unwrap();
-        // The rendered prompt must contain the case_id in the JSON context.
-        assert!(out.prompt.contains("case_a"));
+        let ctx = extract_json_context(&out.prompt);
+        assert!(ctx["matched_incident_card"].get("context").is_some());
+        assert!(ctx["matched_incident_card"].get("hypotheses").is_some());
+        assert!(ctx["matched_incident_card"].get("checks").is_some());
+        assert!(ctx["matched_incident_card"].get("case_id").is_none());
+        assert!(ctx["matched_incident_card"].get("title").is_none());
+        assert!(ctx["matched_incident_card"].get("source_name").is_none());
     }
 
     #[test]
@@ -1847,7 +2013,7 @@ mod tests {
     // ---------------------------------------------------------------------------
 
     #[test]
-    fn rendered_prompt_embeds_incident_chunks_with_roles_and_canonical_tags() {
+    fn rendered_prompt_embeds_incident_chunks_with_manual_prompt_fields() {
         let card = minimal_card("case_a");
         let chunks = two_primary_chunks("case_a");
         let out = assemble_with(card, chunks).unwrap();
@@ -1867,7 +2033,10 @@ mod tests {
                 .contains(&role),
                 "unexpected role: {role}"
             );
-            // chunk_tags are full canonical strings
+            assert!(c.get("chunk_id").is_none());
+            assert!(c.get("case_id").is_none());
+            assert!(c.get("score").is_none());
+            assert_eq!(c["source_document_id"], "case_a");
             for tag in c["chunk_tags"].as_array().unwrap() {
                 let t = tag.as_str().unwrap();
                 assert!(t.starts_with("chunk_role:"), "tag should be canonical: {t}");
@@ -1974,7 +2143,7 @@ mod tests {
             .iter()
             .filter(|c| c["role"] == "evidence_for_match")
             .collect();
-        assert_eq!(efm[0]["chunk_id"], "c1");
+        assert_eq!(efm[0]["text"], "symptom");
     }
 
     #[test]
@@ -2008,7 +2177,7 @@ mod tests {
             .iter()
             .filter(|c| c["role"] == "first_check_hint")
             .collect();
-        assert_eq!(fch[0]["chunk_id"], "c2");
+        assert_eq!(fch[0]["text"], "diag step");
     }
 
     #[test]
@@ -2035,7 +2204,7 @@ mod tests {
             .iter()
             .filter(|c| c["role"] == "supporting_explanation")
             .collect();
-        assert_eq!(se[0]["chunk_id"], "c3");
+        assert_eq!(se[0]["text"], "contrib");
     }
 
     #[test]
@@ -2074,7 +2243,7 @@ mod tests {
             .iter()
             .filter(|c| c["role"] == "evidence_for_match")
             .collect();
-        assert_eq!(efm[0]["chunk_id"], "c2");
+        assert_eq!(efm[0]["text"], "high-score symptom");
     }
 
     #[test]
@@ -2094,7 +2263,7 @@ mod tests {
             .iter()
             .filter(|c| c["role"] == "evidence_for_match")
             .collect();
-        assert_eq!(efm[0]["chunk_id"], "c1");
+        assert_eq!(efm[0]["text"], "first");
     }
 
     #[test]
@@ -2120,7 +2289,7 @@ mod tests {
             .iter()
             .filter(|c| c["role"] == "evidence_for_match")
             .collect();
-        assert_eq!(efm[0]["chunk_id"], "c1");
+        assert_eq!(efm[0]["text"], "multi-tag");
     }
 
     #[test]
@@ -2237,16 +2406,15 @@ mod tests {
         let chunks = two_primary_chunks("case_a");
         let out = assemble_with(card, chunks).unwrap();
         let ctx = extract_json_context(&out.prompt);
-        let ids: Vec<&str> = ctx["incident_evidence_chunks"]
+        let texts: Vec<&str> = ctx["incident_evidence_chunks"]
             .as_array()
             .unwrap()
             .iter()
             .filter(|c| c["role"] == "evidence_for_match" || c["role"] == "first_check_hint")
-            .map(|c| c["chunk_id"].as_str().unwrap())
+            .map(|c| c["text"].as_str().unwrap())
             .collect();
-        // chunk_ids must be distinct
-        let unique: std::collections::HashSet<_> = ids.iter().collect();
-        assert_eq!(ids.len(), unique.len());
+        let unique: std::collections::HashSet<_> = texts.iter().collect();
+        assert_eq!(texts.len(), unique.len());
     }
 
     #[test]
@@ -2432,8 +2600,8 @@ mod tests {
             .filter(|c| c["role"] == "alternative_context")
             .collect();
         // alt_a should appear first (card order), then alt_b
-        assert_eq!(ac[0]["case_id"], "alt_a");
-        assert_eq!(ac[1]["case_id"], "alt_b");
+        assert_eq!(ac[0]["source_document_id"], "alt_a");
+        assert_eq!(ac[1]["source_document_id"], "alt_b");
     }
 
     #[test]
@@ -2497,160 +2665,13 @@ mod tests {
         assert_eq!(ac_count, 0);
     }
 
-    // ---------------------------------------------------------------------------
-    // assemble() — competing_precedent_context
-    // ---------------------------------------------------------------------------
-
     #[test]
-    fn rendered_prompt_embeds_competing_precedent_context_from_alt_context_chunks() {
-        let mut s = default_settings();
-        s.chunk_packing.alternative_context.limit = 1;
-        s.chunk_packing.alternative_context.per_case_limit = Some(1);
-        s.chunk_packing.alternative_context.tag_priority = vec![IncidentChunkTag::FailureMode];
-        let asm = PromptContextAssembly::new(s).unwrap();
-
-        let card = minimal_card("primary");
-        let alt_card = minimal_card("alt_a");
-        let primary_chunks = two_primary_chunks("primary");
-        let alt_chunk = chunk(
-            "ca1",
-            "alt_a",
-            0.7,
-            &["chunk_role:failure_mode"],
-            "competing signal text",
-        );
-
-        let cards = CardHydrationOutput {
-            primary: Some(card),
-            alternatives: vec![alt_card],
-        };
-        let evidence = IncidentEvidenceRetrievalOutput {
-            primary_chunks,
-            alternative_chunks: vec![alt_chunk],
-        };
-
-        let out = asm
-            .assemble(
-                &minimal_request(),
-                &minimal_query(),
-                &cards,
-                &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
-            )
-            .unwrap();
-        let ctx = extract_json_context(&out.prompt);
-        let cpc = ctx["competing_precedent_context"].as_array().unwrap();
-        assert_eq!(cpc.len(), 1);
-        assert_eq!(cpc[0]["case_id"], "alt_a");
-        assert_eq!(cpc[0]["title"], "Title alt_a");
-        assert_eq!(cpc[0]["source_name"], "Source alt_a");
-        assert_eq!(cpc[0]["competing_signal"], "competing signal text");
-    }
-
-    #[test]
-    fn competing_precedent_context_has_multiple_entries_for_same_case_with_multiple_chunks() {
-        let mut s = default_settings();
-        s.chunk_packing.alternative_context.limit = 2;
-        s.chunk_packing.alternative_context.per_case_limit = Some(2);
-        s.chunk_packing.alternative_context.tag_priority = vec![IncidentChunkTag::FailureMode];
-        let asm = PromptContextAssembly::new(s).unwrap();
-
-        let card = minimal_card("primary");
-        let alt_card = minimal_card("alt_a");
-        let primary_chunks = two_primary_chunks("primary");
-        let alt_chunks = vec![
-            chunk(
-                "ca1",
-                "alt_a",
-                0.9,
-                &["chunk_role:failure_mode"],
-                "first alt signal",
-            ),
-            chunk(
-                "ca2",
-                "alt_a",
-                0.7,
-                &["chunk_role:failure_mode"],
-                "second alt signal",
-            ),
-        ];
-
-        let cards = CardHydrationOutput {
-            primary: Some(card),
-            alternatives: vec![alt_card],
-        };
-        let evidence = IncidentEvidenceRetrievalOutput {
-            primary_chunks,
-            alternative_chunks: alt_chunks,
-        };
-
-        let out = asm
-            .assemble(
-                &minimal_request(),
-                &minimal_query(),
-                &cards,
-                &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
-            )
-            .unwrap();
-        let ctx = extract_json_context(&out.prompt);
-        let cpc = ctx["competing_precedent_context"].as_array().unwrap();
-        assert_eq!(cpc.len(), 2, "two alt chunks from same case → two entries");
-        assert_eq!(cpc[0]["case_id"], "alt_a");
-        assert_eq!(cpc[1]["case_id"], "alt_a");
-    }
-
-    #[test]
-    fn competing_signal_is_one_line_normalized() {
-        let mut s = default_settings();
-        s.chunk_packing.alternative_context.limit = 1;
-        s.chunk_packing.alternative_context.per_case_limit = Some(1);
-        s.chunk_packing.alternative_context.tag_priority = vec![IncidentChunkTag::FailureMode];
-        let asm = PromptContextAssembly::new(s).unwrap();
-
-        let card = minimal_card("primary");
-        let alt_card = minimal_card("alt_a");
-        let primary_chunks = two_primary_chunks("primary");
-        let alt_chunk = chunk(
-            "ca1",
-            "alt_a",
-            0.7,
-            &["chunk_role:failure_mode"],
-            "  multi\n  line\n  text  ",
-        );
-
-        let cards = CardHydrationOutput {
-            primary: Some(card),
-            alternatives: vec![alt_card],
-        };
-        let evidence = IncidentEvidenceRetrievalOutput {
-            primary_chunks,
-            alternative_chunks: vec![alt_chunk],
-        };
-
-        let out = asm
-            .assemble(
-                &minimal_request(),
-                &minimal_query(),
-                &cards,
-                &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
-            )
-            .unwrap();
-        let ctx = extract_json_context(&out.prompt);
-        let signal = ctx["competing_precedent_context"][0]["competing_signal"]
-            .as_str()
-            .unwrap();
-        assert_eq!(signal, "multi line text");
-    }
-
-    #[test]
-    fn competing_precedent_context_is_empty_when_no_alt_context_chunks() {
+    fn competing_precedent_context_is_not_rendered() {
         let card = minimal_card("case_a");
         let chunks = two_primary_chunks("case_a");
         let out = assemble_with(card, chunks).unwrap();
         let ctx = extract_json_context(&out.prompt);
-        assert_eq!(ctx["competing_precedent_context"], serde_json::json!([]));
+        assert!(ctx.get("competing_precedent_context").is_none());
     }
 
     // ---------------------------------------------------------------------------
@@ -2658,9 +2679,9 @@ mod tests {
     // ---------------------------------------------------------------------------
 
     #[test]
-    fn theory_chunk_selection_respects_mechanism_explanation_limit() {
+    fn theory_chunk_selection_is_capped_at_one() {
         let mut s = default_settings();
-        s.chunk_packing.mechanism_explanation.limit = 2;
+        s.chunk_packing.mechanism_explanation.limit = 1;
         let asm = PromptContextAssembly::new(s).unwrap();
         let card = minimal_card("case_a");
         let chunks = two_primary_chunks("case_a");
@@ -2686,7 +2707,19 @@ mod tests {
             )
             .unwrap();
         let ctx = extract_json_context(&out.prompt);
-        assert_eq!(ctx["theory_chunks"].as_array().unwrap().len(), 2);
+        assert_eq!(ctx["theory_chunks"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn constructor_rejects_mechanism_explanation_limit_above_one() {
+        let mut s = default_settings();
+        s.chunk_packing.mechanism_explanation.limit = 2;
+        let err = PromptContextAssembly::new(s).unwrap_err();
+        assert!(matches!(
+            err,
+            PromptContextAssemblyError::InvalidSettings(message)
+            if message == "mechanism_explanation.limit must be <= 1"
+        ));
     }
 
     #[test]
@@ -2836,22 +2869,22 @@ mod tests {
         let chunks = two_primary_chunks("case_a");
         let out = assemble_with(card, chunks).unwrap();
         let ctx = extract_json_context(&out.prompt);
-        let embedded_ids: Vec<&str> = ctx["incident_evidence_chunks"]
+        let embedded_texts: Vec<&str> = ctx["incident_evidence_chunks"]
             .as_array()
             .unwrap()
             .iter()
-            .map(|c| c["chunk_id"].as_str().unwrap())
+            .map(|c| c["text"].as_str().unwrap())
             .collect();
-        let returned_ids: Vec<&str> = out
+        let returned_texts: Vec<&str> = out
             .incident_evidence_chunks
             .iter()
-            .map(|c| c.chunk_id.as_str())
+            .map(|c| c.text.as_str())
             .collect();
-        assert_eq!(embedded_ids, returned_ids);
+        assert_eq!(embedded_texts, returned_texts);
     }
 
     #[test]
-    fn selected_incident_chunks_preserve_raw_chunk_id_case_id_score_text() {
+    fn selected_incident_chunks_preserve_raw_runtime_fields_while_prompt_is_compact() {
         let card = minimal_card("case_a");
         let chunks = two_primary_chunks("case_a");
         let out = assemble_with(card, chunks).unwrap();
@@ -2889,7 +2922,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_theory_chunks_preserve_raw_chunk_id_score_text() {
+    fn selected_theory_chunks_preserve_raw_runtime_fields_while_prompt_is_compact() {
         let mut s = default_settings();
         s.chunk_packing.mechanism_explanation.limit = 1;
         let asm = PromptContextAssembly::new(s).unwrap();

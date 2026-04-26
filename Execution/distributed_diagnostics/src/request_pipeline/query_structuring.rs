@@ -7,6 +7,7 @@ use crate::api_clients::model::{
     ModelMessageRole, ModelResponseMode,
 };
 use crate::config::QueryStructuringSettings;
+use crate::request_pipeline::context::Context;
 use crate::shared_types::{
     ModelTokenUsage, NormalizedUserRequest, QueryStructuringOutput, StructuredUserQuery,
 };
@@ -143,6 +144,14 @@ impl QueryStructuring {
         &self,
         request: &NormalizedUserRequest,
     ) -> Result<QueryStructuringOutput, QueryStructuringError> {
+        self.structure_with_context(request, &Context::noop()).await
+    }
+
+    pub async fn structure_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        context: &Context,
+    ) -> Result<QueryStructuringOutput, QueryStructuringError> {
         let prompt_name = std::path::Path::new(&self.prompt_asset_path)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -153,6 +162,22 @@ impl QueryStructuring {
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_string();
+        let oi_span = crate::observability::oi_llm_query_structuring_span(
+            &context.open_inference.root_span,
+        );
+        let oi_input_json = serde_json::json!({
+            "normalized_query": request.query,
+            "input_token_count": request.input_token_count
+        })
+        .to_string();
+        oi_span.record("input.value", oi_input_json.as_str());
+        oi_span.record("input.mime_type", "application/json");
+        oi_span.record("llm.model_name", "unknown");
+        oi_span.record("llm.provider", "unknown");
+        oi_span.record(
+            "llm.invocation_parameters",
+            r#"{"temperature":0.0,"response_format":"json_object"}"#,
+        );
 
         let span = info_span!(
             "request_pipeline.query_structuring",
@@ -172,7 +197,6 @@ impl QueryStructuring {
             model.prompt_tokens = field::Empty,
             model.completion_tokens = field::Empty,
             model.total_tokens = field::Empty,
-            structured_query.json = field::Empty,
             structured.intent_present = field::Empty,
             structured.symptoms_count = field::Empty,
             structured.affected_subsystems_count = field::Empty,
@@ -185,12 +209,15 @@ impl QueryStructuring {
             error.message = field::Empty,
         );
 
-        self.structure_instrumented(request).instrument(span).await
+        self.structure_instrumented(request, &oi_span)
+            .instrument(span)
+            .await
     }
 
     async fn structure_instrumented(
         &self,
         request: &NormalizedUserRequest,
+        oi_span: &tracing::Span,
     ) -> Result<QueryStructuringOutput, QueryStructuringError> {
         let vocab_json = serde_json::to_string(&self.controlled_vocabulary)
             .expect("QueryStructuringControlledVocabulary serialization must not fail");
@@ -237,9 +264,11 @@ impl QueryStructuring {
         let response = {
             async {
                 match self.model_client.generate(&model_request).await {
-                    Ok(r) => {
-                        tracing::Span::current().record("model.provider", "unknown");
-                        tracing::Span::current().record("model.name", "unknown");
+            Ok(r) => {
+                oi_span.record("llm.model_name", "unknown");
+                oi_span.record("llm.provider", "unknown");
+                tracing::Span::current().record("model.provider", "unknown");
+                tracing::Span::current().record("model.name", "unknown");
                         tracing::Span::current().record("model.response_mode", "JsonObject");
                         tracing::Span::current().record("model.temperature", 0.0);
                         tracing::Span::current().record("model.max_output_tokens", self.max_output_tokens as i64);
@@ -247,18 +276,27 @@ impl QueryStructuring {
                             tracing::Span::current().record("model.finish_reason", format!("{:?}", fr));
                         }
                         if let Some(pt) = r.prompt_tokens {
+                            oi_span.record("llm.token_count.prompt", pt as i64);
                             tracing::Span::current().record("model.prompt_tokens", pt as i64);
                         }
                         if let Some(ct) = r.completion_tokens {
+                            oi_span.record("llm.token_count.completion", ct as i64);
                             tracing::Span::current().record("model.completion_tokens", ct as i64);
                         }
                         if let Some(tt) = r.total_tokens {
+                            oi_span.record("llm.token_count.total", tt as i64);
                             tracing::Span::current().record("model.total_tokens", tt as i64);
                         }
+                        oi_span.record("status", "ok");
                         tracing::Span::current().record("status", "ok");
                         Ok(r)
                     }
                     Err(e) => {
+                        crate::observability::record_error(
+                            oi_span,
+                            "QueryStructuring.Model",
+                            &format!("Model client error: {}", e),
+                        );
                         tracing::Span::current().record("status", "error");
                         tracing::Span::current().record("error.type", "QueryStructuring.Model");
                         tracing::Span::current()
@@ -274,6 +312,11 @@ impl QueryStructuring {
         let response = match response {
             Ok(r) => r,
             Err(e) => {
+                crate::observability::record_error(
+                    oi_span,
+                    "QueryStructuring.Model",
+                    &format!("Model client error: {}", e),
+                );
                 tracing::Span::current().record("module.outcome", "failure");
                 tracing::Span::current().record("status", "error");
                 tracing::Span::current().record("error.type", "QueryStructuring.Model");
@@ -320,6 +363,7 @@ impl QueryStructuring {
             tracing::Span::current().record("status", "error");
             tracing::Span::current().record("error.type", "QueryStructuring.InvalidModelOutput");
             tracing::Span::current().record("error.message", reason);
+            crate::observability::record_error(oi_span, "QueryStructuring.InvalidModelOutput", reason);
             return Err(QueryStructuringError::InvalidModelOutput {
                 reason: reason.to_string(),
                 token_usage,
@@ -331,6 +375,11 @@ impl QueryStructuring {
         let parse_finish_reason = finish_reason.clone();
         let structured_query: StructuredUserQuery =
             serde_json::from_str(&content).map_err(|e| {
+                crate::observability::record_error(
+                    oi_span,
+                    "QueryStructuring.InvalidModelOutput",
+                    &format!("Failed to parse model output: {}", e),
+                );
                 tracing::Span::current().record("module.outcome", "failure");
                 tracing::Span::current().record("status", "error");
                 tracing::Span::current().record("error.type", "QueryStructuring.InvalidModelOutput");
@@ -344,6 +393,11 @@ impl QueryStructuring {
             })?;
 
         if structured_query.failure_modes.len() > 1 {
+            crate::observability::record_error(
+                oi_span,
+                "QueryStructuring.InvalidModelOutput",
+                "failure_modes must contain at most one item",
+            );
             tracing::Span::current().record("module.outcome", "failure");
             tracing::Span::current().record("status", "error");
             tracing::Span::current().record("error.type", "QueryStructuring.InvalidModelOutput");
@@ -365,7 +419,14 @@ impl QueryStructuring {
         let constraints_count = structured_query.constraints.len();
         let confidence_str = format!("{:?}", structured_query.confidence);
 
-        tracing::Span::current().record("structured_query.json", &structured_query_json);
+        tracing::event!(
+            tracing::Level::INFO,
+            event.name = "structured_query_payload",
+            structured_query.json = %structured_query_json
+        );
+        oi_span.record("output.value", structured_query_json.as_str());
+        oi_span.record("output.mime_type", "application/json");
+        oi_span.record("status", "ok");
         tracing::Span::current().record("structured.intent_present", intent_present);
         tracing::Span::current().record("structured.symptoms_count", symptoms_count as i64);
         tracing::Span::current().record("structured.affected_subsystems_count", affected_subsystems_count as i64);

@@ -9,6 +9,7 @@ use opentelemetry_sdk::trace::{
 };
 use opentelemetry_sdk::Resource;
 use thiserror::Error;
+use tracing::field;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
 use crate::config::ObservabilitySettings;
@@ -297,5 +298,161 @@ pub(crate) fn finish_step_span(
         status = tracing::field::Empty,
         error.type = tracing::field::Empty,
         error.message = tracing::field::Empty,
+    )
+}
+
+pub(crate) fn oi_iteration_chain_span(
+    parent: &tracing::Span,
+    run_id: &str,
+    iteration_id: &str,
+    sequence_no: u64,
+) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.chain.diagnostic_iteration",
+        openinference.span.kind = "CHAIN",
+        run.id = run_id,
+        iteration.id = iteration_id,
+        iteration.sequence_no = sequence_no,
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        run.outcome = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_llm_query_structuring_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.llm.query_structuring",
+        openinference.span.kind = "LLM",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        llm.model_name = field::Empty,
+        llm.provider = field::Empty,
+        llm.invocation_parameters = field::Empty,
+        llm.token_count.prompt = field::Empty,
+        llm.token_count.completion = field::Empty,
+        llm.token_count.total = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_llm_diagnostic_response_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.llm.diagnostic_response",
+        openinference.span.kind = "LLM",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        llm.model_name = field::Empty,
+        llm.provider = field::Empty,
+        llm.invocation_parameters = field::Empty,
+        llm.token_count.prompt = field::Empty,
+        llm.token_count.completion = field::Empty,
+        llm.token_count.total = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_guardrail_response_validation_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.guardrail.response_validation",
+        openinference.span.kind = "GUARDRAIL",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_retriever_candidate_cards_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.retriever.candidate_cards",
+        openinference.span.kind = "RETRIEVER",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_retriever_incident_primary_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.retriever.incident_evidence.primary",
+        openinference.span.kind = "RETRIEVER",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_retriever_incident_alternatives_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.retriever.incident_evidence.alternatives",
+        openinference.span.kind = "RETRIEVER",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_retriever_theory_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.retriever.theory_evidence",
+        openinference.span.kind = "RETRIEVER",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_chain_prompt_context_assembly_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.chain.prompt_context_assembly",
+        openinference.span.kind = "CHAIN",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
     )
 }

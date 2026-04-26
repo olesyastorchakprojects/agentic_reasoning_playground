@@ -1,5 +1,6 @@
 use crate::orchestrator::run_state::model::{RunStatus, StepError, StepKind, StepResultEnvelope};
 use crate::orchestrator::run_state::view::{FinishedStepView, IterationView, RunStateView};
+use crate::request_pipeline::context::Context;
 use crate::request_pipeline::candidate_card_retrieval::CandidateCardRetrieval;
 use crate::request_pipeline::card_hydration::CardHydration;
 use crate::request_pipeline::incident_evidence_retrieval::IncidentEvidenceRetrieval;
@@ -81,6 +82,15 @@ impl StepExecutor {
         step: StepKind,
         state: RunStateView<'_>,
     ) -> Result<StepResultEnvelope, StepError> {
+        self.execute_with_context(step, state, &Context::noop()).await
+    }
+
+    pub async fn execute_with_context(
+        &self,
+        step: StepKind,
+        state: RunStateView<'_>,
+        context: &Context,
+    ) -> Result<StepResultEnvelope, StepError> {
         let run_id_str = state.run_id().0.to_string();
         let iter_id_str = state
             .last_iteration()
@@ -97,7 +107,7 @@ impl StepExecutor {
             step_sequence_no,
         );
         let _entered = span.enter();
-        let result = self.execute_inner(step, state).await;
+        let result = self.execute_inner(step, state, context).await;
         match &result {
             Ok(_) => {
                 span.record("step.outcome", "success");
@@ -115,6 +125,7 @@ impl StepExecutor {
         &self,
         step: StepKind,
         state: RunStateView<'_>,
+        context: &Context,
     ) -> Result<StepResultEnvelope, StepError> {
         if state.status() == RunStatus::Archived {
             return Err(StepError::InvalidState {
@@ -144,14 +155,17 @@ impl StepExecutor {
             }
             StepKind::QueryStructuring => {
                 let normalized_request = Self::read_normalized_request(iteration)?;
-                let result = self.query_structuring.structure(normalized_request).await?;
+                let result = self
+                    .query_structuring
+                    .structure_with_context(normalized_request, context)
+                    .await?;
                 Ok(StepResultEnvelope::QueryStructuring(result))
             }
             StepKind::CandidateCardRetrieval => {
                 let normalized_request = Self::read_normalized_request(iteration)?;
                 let result = self
                     .candidate_card_retrieval
-                    .retrieve(normalized_request)
+                    .retrieve_with_context(normalized_request, context)
                     .await?;
                 Ok(StepResultEnvelope::CandidateCardRetrieval(result))
             }
@@ -165,7 +179,7 @@ impl StepExecutor {
                 let candidates = Self::read_candidates(iteration)?;
                 let result = self
                     .incident_evidence_retrieval
-                    .retrieve(normalized_request, candidates)
+                    .retrieve_with_context(normalized_request, candidates, context)
                     .await?;
                 Ok(StepResultEnvelope::IncidentEvidenceRetrieval(result))
             }
@@ -173,7 +187,7 @@ impl StepExecutor {
                 let normalized_request = Self::read_normalized_request(iteration)?;
                 let result = self
                     .theory_evidence_retrieval
-                    .retrieve(normalized_request)
+                    .retrieve_with_context(normalized_request, context)
                     .await?;
                 Ok(StepResultEnvelope::TheoryEvidenceRetrieval(result))
             }
@@ -183,25 +197,29 @@ impl StepExecutor {
                 let hydrated_cards = Self::read_hydrated_cards(iteration)?;
                 let incident_evidence = Self::read_incident_evidence(iteration)?;
                 let theory_evidence = Self::read_theory_evidence(iteration)?;
-                let result = self.prompt_context_assembly.assemble(
+                let result = self.prompt_context_assembly.assemble_with_context(
                     normalized_request,
                     structured_query,
                     hydrated_cards,
                     incident_evidence,
                     theory_evidence,
+                    context,
                 )?;
                 Ok(StepResultEnvelope::PromptContextAssembly(result))
             }
             StepKind::LlmStructuredGeneration => {
                 let prompt_context = Self::read_prompt_context(iteration)?;
-                let result = self.llm_structured_generation.generate(prompt_context).await?;
+                let result = self
+                    .llm_structured_generation
+                    .generate_with_context(prompt_context, context)
+                    .await?;
                 Ok(StepResultEnvelope::LlmStructuredGeneration(result))
             }
             StepKind::ResponseValidationAndNormalization => {
                 let llm_output = Self::read_llm_output(iteration)?;
                 let result = self
                     .response_validation_and_normalization
-                    .validate_and_normalize(llm_output)?;
+                    .validate_and_normalize_with_context(llm_output, context)?;
                 Ok(StepResultEnvelope::ResponseValidationAndNormalization(result))
             }
         }
