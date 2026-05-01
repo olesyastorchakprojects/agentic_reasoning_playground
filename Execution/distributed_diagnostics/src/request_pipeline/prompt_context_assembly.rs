@@ -55,11 +55,21 @@ struct JsonContext<'a> {
     task: String,
     user_problem: &'a str,
     input_token_count: usize,
+    evidence_topology: EvidenceTopologyDto,
     normalized_incident_query: NormalizedIncidentQueryDto,
     matched_incident_card: MatchedIncidentCardDto,
     incident_evidence_chunks: Vec<IncidentChunkDto>,
     theory_chunks: Vec<TheoryChunkDto>,
     policy_constraints: &'a Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct EvidenceTopologyDto {
+    primary_evidence_roles: Vec<&'static str>,
+    alternative_context_present: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    alternative_context_case_ids: Vec<String>,
+    theory_evidence_present: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -404,6 +414,24 @@ impl PromptContextAssembly {
             }
         }
 
+        // Build evidence topology before moving efm/fch/se/ac
+        let mut primary_roles: Vec<&'static str> = Vec::new();
+        if !efm.is_empty() { primary_roles.push("evidence_for_match"); }
+        if !fch.is_empty() { primary_roles.push("first_check_hint"); }
+        if !se.is_empty() { primary_roles.push("supporting_explanation"); }
+        let mut seen_alt_cases = std::collections::HashSet::new();
+        let alt_case_ids: Vec<String> = ac
+            .iter()
+            .filter(|c| seen_alt_cases.insert(c.case_id.clone()))
+            .map(|c| c.case_id.clone())
+            .collect();
+        let evidence_topology = EvidenceTopologyDto {
+            primary_evidence_roles: primary_roles,
+            alternative_context_present: !ac.is_empty(),
+            alternative_context_case_ids: alt_case_ids,
+            theory_evidence_present: !theory_chunks.is_empty(),
+        };
+
         // Assemble incident chunks in role order
         let efm_count = efm.len();
         let fch_count = fch.len();
@@ -425,6 +453,7 @@ impl PromptContextAssembly {
             task: "diagnostic_response".to_string(),
             user_problem: &request.query,
             input_token_count: request.input_token_count,
+            evidence_topology,
             normalized_incident_query,
             matched_incident_card,
             incident_evidence_chunks: incident_chunks.iter().map(incident_chunk_to_dto).collect(),

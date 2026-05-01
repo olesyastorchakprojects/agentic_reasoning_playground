@@ -89,7 +89,7 @@ async fn main() -> Result<(), RuntimeError> {
                         if !r.active_hypotheses.is_empty() {
                             println!("Hypotheses:");
                             for h in &r.active_hypotheses {
-                                println!("  - {h}");
+                                println!("  - {}", h.hypothesis);
                             }
                         }
                         println!("First check: {}", r.first_check);
@@ -104,8 +104,9 @@ async fn main() -> Result<(), RuntimeError> {
                         if let Some(inconclusive) = &r.result_interpretation.inconclusive_if {
                             println!("Result interpretation — inconclusive if: {inconclusive}");
                         }
-                        if let Some(competing) = &r.competing_interpretation {
-                            println!("Competing interpretation: {competing}");
+                        let aca = &r.alternative_context_assessment;
+                        if aca.used_as_hypothesis {
+                            println!("Alternative context used as hypothesis: {}", aca.reason);
                         }
                     }
                     Ok(RunOutcome::Failed { error, .. }) => {
@@ -159,7 +160,7 @@ async fn main() -> Result<(), RuntimeError> {
                         if !r.active_hypotheses.is_empty() {
                             println!("Hypotheses:");
                             for h in &r.active_hypotheses {
-                                println!("  - {h}");
+                                println!("  - {}", h.hypothesis);
                             }
                         }
                         println!("First check: {}", r.first_check);
@@ -174,8 +175,9 @@ async fn main() -> Result<(), RuntimeError> {
                         if let Some(inconclusive) = &r.result_interpretation.inconclusive_if {
                             println!("Result interpretation — inconclusive if: {inconclusive}");
                         }
-                        if let Some(competing) = &r.competing_interpretation {
-                            println!("Competing interpretation: {competing}");
+                        let aca = &r.alternative_context_assessment;
+                        if aca.used_as_hypothesis {
+                            println!("Alternative context used as hypothesis: {}", aca.reason);
                         }
                     }
                     Ok(RunOutcome::Failed { error, .. }) => {
