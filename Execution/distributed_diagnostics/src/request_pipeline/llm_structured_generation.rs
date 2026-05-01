@@ -15,9 +15,13 @@ const REQUIRED_RESPONSE_TOP_LEVEL_KEYS: &[&str] = &[
     "similar_practical_context",
     "first_check",
     "result_interpretation",
-    "competing_interpretation",
+    "alternative_context_assessment",
     "active_hypotheses",
 ];
+
+const VALID_HYPOTHESIS_SOURCES: &[&str] =
+    &["primary_incident", "alternative_context", "theory_mechanism"];
+const VALID_HYPOTHESIS_CONFIDENCES: &[&str] = &["low", "medium", "high"];
 
 const REQUIRED_RESULT_INTERPRETATION_KEYS: &[&str] = &[
     "supports_primary_if",
@@ -607,10 +611,33 @@ fn json_matches_expected_shape(parsed: &serde_json::Value) -> bool {
     let Some(active_hypotheses) = obj.get("active_hypotheses").and_then(|v| v.as_array()) else {
         return false;
     };
-    if !(2..=3).contains(&active_hypotheses.len())
-        || !active_hypotheses.iter().all(|v| v.is_string())
-    {
+    if !(2..=3).contains(&active_hypotheses.len()) {
         return false;
+    }
+    for item in active_hypotheses {
+        let Some(item_obj) = item.as_object() else {
+            return false;
+        };
+        if item_obj.len() != 3 {
+            return false;
+        }
+        if !item_obj.get("hypothesis").map_or(false, |v| v.is_string()) {
+            return false;
+        }
+        let source_ok = item_obj
+            .get("source")
+            .and_then(|v| v.as_str())
+            .map_or(false, |s| VALID_HYPOTHESIS_SOURCES.contains(&s));
+        if !source_ok {
+            return false;
+        }
+        let confidence_ok = item_obj
+            .get("confidence")
+            .and_then(|v| v.as_str())
+            .map_or(false, |s| VALID_HYPOTHESIS_CONFIDENCES.contains(&s));
+        if !confidence_ok {
+            return false;
+        }
     }
 
     let Some(first_check) = obj.get("first_check") else {
@@ -657,10 +684,19 @@ fn json_matches_expected_shape(parsed: &serde_json::Value) -> bool {
         return false;
     }
 
-    let Some(competing_interpretation) = obj.get("competing_interpretation") else {
+    let Some(aca) = obj
+        .get("alternative_context_assessment")
+        .and_then(|v| v.as_object())
+    else {
         return false;
     };
-    if !(competing_interpretation.is_null() || competing_interpretation.is_string()) {
+    if aca.len() != 2 {
+        return false;
+    }
+    if !aca.get("used_as_hypothesis").map_or(false, |v| v.is_boolean()) {
+        return false;
+    }
+    if !aca.get("reason").map_or(false, |v| v.is_string()) {
         return false;
     }
 
@@ -795,12 +831,12 @@ fn build_shape_repair_prompt(original_prompt: &str, invalid_json: &str) -> Strin
             "Preserve the original meaning and reuse existing text whenever possible.\n",
             "Return exactly one valid JSON object and nothing else.\n",
             "Required top-level keys exactly: ",
-            "[\"problem_understanding\",\"similar_practical_context\",\"first_check\",\"result_interpretation\",\"competing_interpretation\",\"active_hypotheses\"].\n",
+            "[\"problem_understanding\",\"similar_practical_context\",\"first_check\",\"result_interpretation\",\"alternative_context_assessment\",\"active_hypotheses\"].\n",
             "Required nested keys inside result_interpretation exactly: ",
             "[\"supports_primary_if\",\"supports_competing_if\",\"inconclusive_if\"].\n",
             "Constraints:\n",
-            "- active_hypotheses must be an array of 2 or 3 strings\n",
-            "- competing_interpretation may be null\n",
+            "- active_hypotheses must be an array of 2 or 3 objects, each with: hypothesis (string), source (one of: primary_incident, alternative_context, theory_mechanism), confidence (one of: low, medium, high)\n",
+            "- alternative_context_assessment must be an object with: used_as_hypothesis (boolean), reason (string)\n",
             "- inconclusive_if may be null\n",
             "- no markdown fences and no text outside JSON\n",
             "- preserve uncertainty and avoid definitive-root-cause language\n",
@@ -818,8 +854,13 @@ fn build_shape_repair_prompt(original_prompt: &str, invalid_json: &str) -> Strin
             "    \"supports_competing_if\": \"string\",\n",
             "    \"inconclusive_if\": \"string|null\"\n",
             "  }},\n",
-            "  \"competing_interpretation\": \"string|null\",\n",
-            "  \"active_hypotheses\": [\"string\", \"string\"]\n",
+            "  \"alternative_context_assessment\": {{\n",
+            "    \"used_as_hypothesis\": true,\n",
+            "    \"reason\": \"string\"\n",
+            "  }},\n",
+            "  \"active_hypotheses\": [\n",
+            "    {{\"hypothesis\": \"string\", \"source\": \"primary_incident|alternative_context|theory_mechanism\", \"confidence\": \"low|medium|high\"}}\n",
+            "  ]\n",
             "}}\n\n",
             "Original task prompt:\n{original_prompt}\n\n",
             "Previous invalid JSON:\n{invalid_json}\n"
@@ -1313,19 +1354,22 @@ mod tests {
         let invalid_but_parseable = r#"{
             "problem_understanding":"Two concurrent transactions lose one append.",
             "similar_practical_context":"Looks like a repeatable-read lost update.",
-            "active_hypotheses":["H1","H2","result_interpretation","competing_interpretation"]
+            "active_hypotheses":["H1","H2"]
         }"#;
         let repaired = r#"{
             "problem_understanding":"Two concurrent transactions lose one append.",
             "similar_practical_context":"Looks like a repeatable-read lost update.",
-            "active_hypotheses":["Repeatable Read permits this anomaly.","The app may assume stronger protection than MySQL provides."],
+            "active_hypotheses":[
+                {"hypothesis":"Repeatable Read permits this anomaly.","source":"primary_incident","confidence":"medium"},
+                {"hypothesis":"The app may assume stronger protection than MySQL provides.","source":"theory_mechanism","confidence":"low"}
+            ],
             "first_check":"Inspect whether both transactions read the missing key before either insert became visible.",
             "result_interpretation":{
                 "supports_primary_if":"Both transactions read the key as absent before writing.",
                 "supports_competing_if":"The reads were serialized yet one append still disappeared.",
                 "inconclusive_if":null
             },
-            "competing_interpretation":"A separate write-path bug could be dropping one append."
+            "alternative_context_assessment":{"used_as_hypothesis":false,"reason":"Alternative context not available."}
         }"#;
 
         let client = SeqStubModelClient::ok(vec![ok_response(invalid_but_parseable), ok_response(repaired)]);
@@ -1366,14 +1410,17 @@ mod tests {
         let with_extra_field = r#"{
             "problem_understanding":"Reader misses writes visible on writer.",
             "similar_practical_context":"Primary and reader disagree on visibility.",
-            "active_hypotheses":["Reader endpoint has weaker visibility semantics.","Replica ordering differs from writer ordering."],
+            "active_hypotheses":[
+                {"hypothesis":"Reader endpoint has weaker visibility semantics.","source":"primary_incident","confidence":"medium"},
+                {"hypothesis":"Replica ordering differs from writer ordering.","source":"alternative_context","confidence":"low"}
+            ],
             "first_check":"Compare the same read on writer and reader.",
             "result_interpretation":{
                 "supports_primary_if":"Reader still misses the write while writer sees it.",
                 "supports_competing_if":"Reader sees the write, suggesting a narrower divergence.",
                 "inconclusive_if":null
             },
-            "competing_interpretation":"A narrower ordering anomaly may explain the divergence.",
+            "alternative_context_assessment":{"used_as_hypothesis":true,"reason":"Alternative shows a different ordering anomaly."},
             "extra_field":"should be stripped"
         }"#;
 
@@ -1403,7 +1450,10 @@ mod tests {
         let with_extra_nested = r#"{
             "problem_understanding":"Two clients hold the same lock.",
             "similar_practical_context":"etcd lease expiry allows two holders.",
-            "active_hypotheses":["Lease expiry overlap.","Keepalive missed."],
+            "active_hypotheses":[
+                {"hypothesis":"Lease expiry overlap.","source":"primary_incident","confidence":"medium"},
+                {"hypothesis":"Keepalive missed.","source":"primary_incident","confidence":"low"}
+            ],
             "first_check":"Correlate conflicts with lease renewal timing.",
             "result_interpretation":{
                 "supports_primary_if":"Conflicts cluster around lease expiry.",
@@ -1411,7 +1461,7 @@ mod tests {
                 "inconclusive_if":null,
                 "extra_nested_key":"should be stripped"
             },
-            "competing_interpretation":null
+            "alternative_context_assessment":{"used_as_hypothesis":false,"reason":"No credible alternative mechanism from alternative context."}
         }"#;
 
         let client = StubModelClient::ok(ok_response(with_extra_nested));
@@ -1445,8 +1495,11 @@ mod tests {
                     "supports_competing_if":"Both values present but in wrong order.",
                     "inconclusive_if":null
                 },
-                "competing_interpretation":null,
-                "active_hypotheses":["Default sessions allow last-writer-wins.","No optimistic concurrency means no conflict detection."]
+                "alternative_context_assessment":{"used_as_hypothesis":false,"reason":"Alternative context does not suggest a different mechanism."},
+                "active_hypotheses":[
+                    {"hypothesis":"Default sessions allow last-writer-wins.","source":"primary_incident","confidence":"medium"},
+                    {"hypothesis":"No optimistic concurrency means no conflict detection.","source":"theory_mechanism","confidence":"medium"}
+                ]
             }
         }"#;
 
@@ -1480,8 +1533,11 @@ mod tests {
                 "supports_competing_if":"Both values present but in unexpected order.",
                 "inconclusive_if":null
             },
-            "competing_interpretation":null,
-            "active_hypotheses":["Default sessions use last-writer-wins semantics.","No conflict detection without optimistic concurrency."]
+            "alternative_context_assessment":{"used_as_hypothesis":false,"reason":"Alternative context describes a similar symptom but via a different mechanism."},
+            "active_hypotheses":[
+                {"hypothesis":"Default sessions use last-writer-wins semantics.","source":"primary_incident","confidence":"medium"},
+                {"hypothesis":"No conflict detection without optimistic concurrency.","source":"theory_mechanism","confidence":"medium"}
+            ]
         }"#;
 
         let client = StubModelClient::ok(ok_response(with_wrong_key));

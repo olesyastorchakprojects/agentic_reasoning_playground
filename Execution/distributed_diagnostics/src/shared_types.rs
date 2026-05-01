@@ -499,14 +499,43 @@ pub struct ResponseValidationAndNormalizationOutput {
     pub response: DiagnosticResponse,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HypothesisSource {
+    PrimaryIncident,
+    AlternativeContext,
+    TheoryMechanism,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HypothesisConfidence {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ActiveHypothesis {
+    pub hypothesis: String,
+    pub source: HypothesisSource,
+    pub confidence: HypothesisConfidence,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AlternativeContextAssessment {
+    pub used_as_hypothesis: bool,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DiagnosticResponse {
     pub problem_understanding: String,
     pub similar_practical_context: String,
-    pub active_hypotheses: Vec<String>,
+    pub active_hypotheses: Vec<ActiveHypothesis>,
     pub first_check: String,
     pub result_interpretation: DiagnosticResultInterpretation,
-    pub competing_interpretation: Option<String>,
+    pub alternative_context_assessment: AlternativeContextAssessment,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

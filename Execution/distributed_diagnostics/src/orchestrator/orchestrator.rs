@@ -1033,14 +1033,28 @@ mod tests {
             response: DiagnosticResponse {
                 problem_understanding: problem_understanding.to_string(),
                 similar_practical_context: "ctx".to_string(),
-                active_hypotheses: vec!["h1".to_string()],
+                active_hypotheses: vec![
+                    crate::shared_types::ActiveHypothesis {
+                        hypothesis: "h1".to_string(),
+                        source: crate::shared_types::HypothesisSource::PrimaryIncident,
+                        confidence: crate::shared_types::HypothesisConfidence::Medium,
+                    },
+                    crate::shared_types::ActiveHypothesis {
+                        hypothesis: "h2".to_string(),
+                        source: crate::shared_types::HypothesisSource::PrimaryIncident,
+                        confidence: crate::shared_types::HypothesisConfidence::Low,
+                    },
+                ],
                 first_check: "check".to_string(),
                 result_interpretation: DiagnosticResultInterpretation {
                     supports_primary_if: "supports".to_string(),
                     supports_competing_if: "competes".to_string(),
                     inconclusive_if: Some("maybe".to_string()),
                 },
-                competing_interpretation: None,
+                alternative_context_assessment: crate::shared_types::AlternativeContextAssessment {
+                    used_as_hypothesis: false,
+                    reason: "not enough signal from alternative context".to_string(),
+                },
             },
         }
     }

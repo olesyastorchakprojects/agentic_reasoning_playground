@@ -725,14 +725,17 @@ mod tests {
             response_json: serde_json::json!({
                 "problem_understanding": "Service is down",
                 "similar_practical_context": "Similar past incidents",
-                "active_hypotheses": ["overload", "network partition"],
+                "active_hypotheses": [
+                    {"hypothesis": "overload", "source": "primary_incident", "confidence": "medium"},
+                    {"hypothesis": "network partition", "source": "alternative_context", "confidence": "low"}
+                ],
                 "first_check": "Check logs",
                 "result_interpretation": {
                     "supports_primary_if": "Logs show errors",
                     "supports_competing_if": "No errors in logs",
                     "inconclusive_if": null
                 },
-                "competing_interpretation": null
+                "alternative_context_assessment": {"used_as_hypothesis": true, "reason": "Alternative case shows similar failure via different mechanism."}
             }),
             token_usage: empty_token_usage(),
         }
@@ -847,14 +850,17 @@ mod tests {
             content: serde_json::json!({
                 "problem_understanding": "Service is down",
                 "similar_practical_context": "Similar incidents in the past",
-                "active_hypotheses": ["overload", "network partition"],
+                "active_hypotheses": [
+                    {"hypothesis": "overload", "source": "primary_incident", "confidence": "medium"},
+                    {"hypothesis": "network partition", "source": "alternative_context", "confidence": "low"}
+                ],
                 "first_check": "Check service logs",
                 "result_interpretation": {
                     "supports_primary_if": "Logs show error spikes",
                     "supports_competing_if": "No errors in logs",
                     "inconclusive_if": null
                 },
-                "competing_interpretation": null
+                "alternative_context_assessment": {"used_as_hypothesis": true, "reason": "Alternative case shows similar failure via different mechanism."}
             })
             .to_string(),
             finish_reason: Some(ModelFinishReason::Stop),

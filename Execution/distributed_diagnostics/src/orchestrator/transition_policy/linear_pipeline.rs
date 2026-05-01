@@ -453,14 +453,28 @@ mod tests {
             response: DiagnosticResponse {
                 problem_understanding: "service down".to_string(),
                 similar_practical_context: "similar incident".to_string(),
-                active_hypotheses: vec!["overload".to_string(), "network fault".to_string()],
+                active_hypotheses: vec![
+                    crate::shared_types::ActiveHypothesis {
+                        hypothesis: "overload".to_string(),
+                        source: crate::shared_types::HypothesisSource::PrimaryIncident,
+                        confidence: crate::shared_types::HypothesisConfidence::Medium,
+                    },
+                    crate::shared_types::ActiveHypothesis {
+                        hypothesis: "network fault".to_string(),
+                        source: crate::shared_types::HypothesisSource::AlternativeContext,
+                        confidence: crate::shared_types::HypothesisConfidence::Low,
+                    },
+                ],
                 first_check: "check logs".to_string(),
                 result_interpretation: DiagnosticResultInterpretation {
                     supports_primary_if: "logs show errors".to_string(),
                     supports_competing_if: "no errors".to_string(),
                     inconclusive_if: None,
                 },
-                competing_interpretation: None,
+                alternative_context_assessment: crate::shared_types::AlternativeContextAssessment {
+                    used_as_hypothesis: true,
+                    reason: "alternative case shows a different failure mechanism".to_string(),
+                },
             },
         }
     }
