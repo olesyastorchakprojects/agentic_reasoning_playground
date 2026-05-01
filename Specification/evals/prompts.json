@@ -1,0 +1,189 @@
+{
+  "judge_suites": {
+    "query_structuring_field_boundary_correctness": {
+      "id": "evals.diagnostics.query_structuring_field_boundary_correctness",
+      "version": "v1",
+      "category": "query_structuring",
+      "scope": "iteration",
+      "required_for_mvp": true,
+      "input_variables": [
+        "raw_user_query",
+        "structured_query"
+      ],
+      "prompt_template": "You are evaluating a query-structuring output for a distributed-systems diagnostic assistant.\n\nGiven:\n- the original user query\n- the structured output\n\nEvaluate whether the fields respect their intended meanings:\n\nField rules:\n- symptoms must contain only observed user-visible effects or directly described anomalous behavior;\n- affected_subsystems must contain only components or subsystems implicated by the query;\n- failure_modes must contain only hypotheses about what might be wrong, not observations;\n- system_properties must contain only safety, consistency, availability, durability, ordering, or correctness properties at stake, not components and not failure modes.\n\nQuestion:\nAre any terms placed in the wrong field?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"wrong_fields\":[{\"field\":\"string\",\"term\":\"string\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "wrong_fields",
+          "explanation"
+        ]
+      }
+    },
+    "query_structuring_grounding_conservatism": {
+      "id": "evals.diagnostics.query_structuring_grounding_conservatism",
+      "version": "v1",
+      "category": "query_structuring",
+      "scope": "iteration",
+      "required_for_mvp": true,
+      "input_variables": [
+        "raw_user_query",
+        "structured_query"
+      ],
+      "prompt_template": "You are evaluating whether a query-structuring output is grounded in the user query.\n\nGiven:\n- the original user query\n- the structured output\n- selected vocabulary terms with evidence_span and support_level\n\nFor each selected vocabulary term, check whether the user query explicitly supports it, strongly paraphrases it, or only weakly suggests it.\n\nQuestion:\nDid the model select any terms that are not sufficiently supported by the query?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"unsupported_terms\":[{\"field\":\"string\",\"term\":\"string\",\"claimed_support_level\":\"explicit|strong_paraphrase|weak_inference\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "unsupported_terms",
+          "explanation"
+        ]
+      }
+    },
+    "evidence_pack_role_fit": {
+      "id": "evals.diagnostics.evidence_pack_role_fit",
+      "version": "v1",
+      "category": "evidence_pack",
+      "scope": "iteration",
+      "required_for_mvp": true,
+      "input_variables": [
+        "raw_user_query",
+        "structured_query",
+        "evidence_topology",
+        "incident_evidence_chunks",
+        "theory_chunks"
+      ],
+      "prompt_template": "You are evaluating selected evidence chunks for a distributed-systems diagnostic assistant.\n\nGiven:\n- the user query\n- the structured query\n- the selected chunks with their assigned roles\n- the role definitions\n\nRole definitions:\n- evidence_for_match: should explain why the primary incident is similar to the user problem.\n- first_check_hint: should contain a diagnostic step, investigation clue, or lesson useful for choosing the first check.\n- supporting_explanation: should add mechanism, uncertainty, contributing factors, or hypothesis updates for the primary incident.\n- alternative_context: should provide a competing incident context, preferably a different plausible mechanism for similar symptoms.\n- mechanism_explanation: should explain a general distributed-systems mechanism relevant to the case.\n\nQuestion:\nDoes each selected chunk fit its assigned role?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"bad_chunks\":[{\"role\":\"string\",\"chunk_id\":\"string\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "bad_chunks",
+          "explanation"
+        ]
+      }
+    },
+    "evidence_pack_sufficiency": {
+      "id": "evals.diagnostics.evidence_pack_sufficiency",
+      "version": "v1",
+      "category": "evidence_pack",
+      "scope": "iteration",
+      "required_for_mvp": true,
+      "input_variables": [
+        "raw_user_query",
+        "structured_query",
+        "matched_incident_card",
+        "incident_evidence_chunks",
+        "theory_chunks"
+      ],
+      "prompt_template": "You are evaluating the evidence pack used to generate a first diagnostic response.\n\nGiven:\n- the user query\n- the structured query\n- the matched primary incident card\n- selected incident evidence chunks\n- selected theory chunks\n\nA useful first diagnostic move requires:\n- understanding the user's observed problem;\n- forming 2 or 3 plausible hypotheses;\n- preserving uncertainty when evidence is not unique;\n- choosing one first check that can distinguish between hypotheses;\n- explaining how the check result should be interpreted.\n\nQuestion:\nIs this evidence pack sufficient to support a useful first diagnostic move?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"missing_support\":[\"string\"],\"explanation\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "missing_support",
+          "explanation"
+        ]
+      }
+    },
+    "final_no_root_cause_claim": {
+      "id": "evals.diagnostics.final_no_root_cause_claim",
+      "version": "v1",
+      "category": "final_answer",
+      "scope": "iteration",
+      "required_for_mvp": true,
+      "input_variables": [
+        "eval_context",
+        "final_answer"
+      ],
+      "prompt_template": "You are evaluating the final diagnostic response of a distributed-systems diagnostic assistant.\n\nGiven:\n- the JSON context used by the model\n- the model's final JSON answer\n\nThe assistant should produce a first diagnostic move, not a final diagnosis.\n\nQuestion:\nDoes the answer avoid claiming a final root cause or presenting any hypothesis as proven?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"violations\":[{\"field\":\"string\",\"text\":\"string\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "violations",
+          "explanation"
+        ]
+      }
+    },
+    "final_first_check_discriminates": {
+      "id": "evals.diagnostics.final_first_check_discriminates",
+      "version": "v1",
+      "category": "final_answer",
+      "scope": "iteration",
+      "required_for_mvp": true,
+      "input_variables": [
+        "eval_context",
+        "final_answer"
+      ],
+      "prompt_template": "You are evaluating the first_check field of a distributed-systems diagnostic response.\n\nGiven:\n- the JSON context used by the model\n- the final JSON answer\n- active_hypotheses\n- result_interpretation\n\nA good first check:\n- is exactly one next check, not a checklist;\n- is actionable using plausible logs, metrics, traces, configs, or system observations;\n- helps distinguish between at least two active hypotheses or between primary and competing interpretation;\n- does not require destructive action.\n\nQuestion:\nIs first_check a single useful discriminating check?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"is_single_check\":true|false,\"is_discriminating\":true|false,\"reason\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "is_single_check",
+          "is_discriminating",
+          "reason"
+        ]
+      }
+    },
+    "final_hypothesis_source_alignment": {
+      "id": "evals.diagnostics.final_hypothesis_source_alignment",
+      "version": "v1",
+      "category": "final_answer",
+      "scope": "iteration",
+      "required_for_mvp": true,
+      "input_variables": [
+        "evidence_topology",
+        "matched_incident_card",
+        "incident_evidence_chunks",
+        "theory_chunks",
+        "final_answer"
+      ],
+      "prompt_template": "You are evaluating active_hypotheses in the final diagnostic response.\n\nGiven:\n- evidence_topology\n- matched_incident_card\n- incident_evidence_chunks with roles\n- theory_chunks\n- final answer\n\nFor each hypothesis, check whether its declared source is supported.\n\nQuestion:\nAre the hypotheses aligned with their declared sources?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"misaligned_hypotheses\":[{\"hypothesis\":\"string\",\"declared_source\":\"primary_incident|alternative_context|theory_mechanism\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "misaligned_hypotheses",
+          "explanation"
+        ]
+      }
+    },
+    "final_alternative_context_handling": {
+      "id": "evals.diagnostics.final_alternative_context_handling",
+      "version": "v1",
+      "category": "final_answer",
+      "scope": "iteration",
+      "required_for_mvp": true,
+      "input_variables": [
+        "eval_context",
+        "final_answer"
+      ],
+      "prompt_template": "You are evaluating how the final answer uses alternative_context.\n\nGiven:\n- the JSON context\n- the evidence topology\n- the alternative_context chunks, if present\n- the final answer\n\nQuestion:\nDid the answer handle alternative context correctly?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"used_as_hypothesis_matches_sources\":true|false,\"should_have_used_alternative\":true|false,\"reason\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "used_as_hypothesis_matches_sources",
+          "should_have_used_alternative",
+          "reason"
+        ]
+      }
+    },
+    "final_result_interpretation_usefulness": {
+      "id": "evals.diagnostics.final_result_interpretation_usefulness",
+      "version": "v1",
+      "category": "final_answer",
+      "scope": "iteration",
+      "required_for_mvp": true,
+      "input_variables": [
+        "final_answer",
+        "active_hypotheses",
+        "first_check"
+      ],
+      "prompt_template": "You are evaluating result_interpretation in the final diagnostic response.\n\nGiven:\n- the final answer\n- the active_hypotheses\n- the first_check\n\nQuestion:\nWould the user know how to interpret the result of the first check?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"primary_condition_clear\":true|false,\"competing_condition_clear\":true|false,\"uncertainty_preserved\":true|false,\"reason\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "primary_condition_clear",
+          "competing_condition_clear",
+          "uncertainty_preserved",
+          "reason"
+        ]
+      }
+    }
+  }
+}
