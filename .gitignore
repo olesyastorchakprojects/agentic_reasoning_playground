@@ -12,3 +12,4 @@ __pycache__/
 .codex
 .claude/
 Z_examples/
+chunk_audit.log.jsonl

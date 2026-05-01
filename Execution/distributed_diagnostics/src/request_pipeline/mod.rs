@@ -1,10 +1,11 @@
 pub mod candidate_card_retrieval;
 pub mod card_hydration;
-pub mod context;
 pub mod incident_evidence_retrieval;
 pub mod input_normalization;
 pub mod llm_structured_generation;
 pub mod prompt_context_assembly;
 pub mod query_structuring;
+pub mod query_structuring_metrics;
+pub mod retrieval_metrics;
 pub mod response_validation_and_normalization;
 pub mod theory_evidence_retrieval;

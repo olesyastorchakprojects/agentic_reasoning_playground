@@ -387,6 +387,7 @@ mod tests {
     fn user_req() -> UserRequest {
         UserRequest {
             query: "hello".to_string(),
+            golden_question: None,
         }
     }
 
@@ -906,6 +907,7 @@ mod tests {
                 StepResultEnvelope::CandidateCardRetrieval(CandidateCardRetrievalOutput {
                     primary: None,
                     alternatives: vec![],
+            metrics: None,
                 }),
             ),
             (
@@ -920,12 +922,14 @@ mod tests {
                 StepResultEnvelope::IncidentEvidenceRetrieval(IncidentEvidenceRetrievalOutput {
                     primary_chunks: vec![],
                     alternative_chunks: vec![],
+            metrics: None,
                 }),
             ),
             (
                 StepKind::TheoryEvidenceRetrieval,
                 StepResultEnvelope::TheoryEvidenceRetrieval(TheoryEvidenceRetrievalOutput {
                     chunks: vec![],
+            metrics: None,
                 }),
             ),
         ];

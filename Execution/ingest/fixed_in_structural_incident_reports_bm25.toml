@@ -1,0 +1,79 @@
+[pipeline]
+name = "hybrid_ingest"
+chunk_schema_version = 1
+ingest_config_version = "v3"
+corpus_version = "v3"
+chunking_strategy = "fixed_in_structural"
+
+[embedding.model]
+name = "qwen3-embedding:0.6b"
+dimension = 1024
+
+[embedding.input]
+text_source = "chunk.text"
+
+[embedding.transport]
+timeout_sec = 60
+max_batch_size = 1
+
+[embedding.retry]
+max_attempts = 3
+backoff = "exponential"
+
+[sparse.strategy]
+kind = "bm25_like"
+version = "v1"
+
+[sparse.input]
+text_source = "chunk.text"
+
+[sparse.tokenizer]
+library = "tokenizers"
+source = "Qwen/Qwen3-Embedding-0.6B"
+
+[sparse.preprocessing]
+kind = "basic_word_v1"
+lowercase = true
+min_token_length = 2
+
+[sparse.bm25_like]
+document = "bm25_document_weight"
+query = "bm25_query_weight"
+k1 = 1.2
+b = 0.75
+idf_smoothing = "standard"
+
+[artifacts]
+manifest_path = "Execution/ingest/hybrid/artifacts/manifests/2026-04-30T00-00-00Z_33333333-3333-3333-3333-333333333333/run_manifest.json"
+
+[qdrant.collection]
+name = "incident_reports_fixed_in_structural_qwen3"
+distance = "Cosine"
+dense_vector_name = "dense"
+sparse_vector_name = "sparse"
+create_if_missing = true
+
+[qdrant.point_id]
+strategy = "uuid5(chunk.chunk_id)"
+namespace_uuid = "6f4c2c14-7d3a-5f77-8e4b-32cb4f6cf0d1"
+format = "canonical_uuid"
+
+[qdrant.transport]
+timeout_sec = 30
+upsert_batch_size = 64
+
+[qdrant.retry]
+max_attempts = 3
+backoff = "exponential"
+
+[idempotency]
+strategy = "field_tuple_hash"
+fingerprint_fields = [
+  "content_hash",
+]
+on_fingerprint_change = "log_and_skip"
+on_metadata_change = "update_changed_fields"
+
+[logging]
+failed_chunk_log_path = "Execution/ingest/hybrid/artifacts/logs/fixed_in_structural_incident_reports_bm25_ingest_failed_chunks.jsonl"
+skipped_chunk_log_path = "Execution/ingest/hybrid/artifacts/logs/fixed_in_structural_incident_reports_bm25_ingest_skipped_chunks.jsonl"

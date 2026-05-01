@@ -1,0 +1,62 @@
+[
+  {
+    "case_id": "q001",
+    "query": {
+      "raw": "In our Amazon RDS for PostgreSQL Multi-AZ cluster, the writer endpoint and reader endpoint sometimes return inconsistent snapshots under normal load. There was no failover or fault injection. Read-only transactions through the reader endpoint appear to miss writes that were already visible through the primary endpoint. What should I check first?"
+    }
+  },
+  {
+    "case_id": "q002",
+    "query": {
+      "raw": "We are investigating a PostgreSQL-compatible managed cluster where transactions committed on the primary seem to become visible in a different order on read replicas. The anomaly happens in healthy conditions and looks like a Long Fork rather than a failover issue. What practical precedent and first diagnostic check fit this?"
+    }
+  },
+  {
+    "case_id": "q003",
+    "query": {
+      "raw": "Our service uses etcd locks to guard writes to an external in-memory set. Under short lease TTLs and occasional process pauses, two clients sometimes believe they hold the same lock, and the protected set loses acknowledged updates. Plain etcd key-value operations still look consistent. What should we check first?"
+    }
+  },
+  {
+    "case_id": "q004",
+    "query": {
+      "raw": "The etcd cluster passes our regular register and watch checks, but workflows protected by etcd mutexes still overlap during lock contention. Conflicts cluster around lease expiry and clients that waited for a lock. We need to know whether this is core KV inconsistency or lock semantics. What first check separates them?"
+    }
+  },
+  {
+    "case_id": "q005",
+    "query": {
+      "raw": "In MongoDB 4.2-style transactions, developers set read concern snapshot but did not set transaction-level write concern majority. During a network partition, read-only transactions observed divergent timelines and some transactional effects appeared both visible and not visible. Is this likely a snapshot isolation configuration trap or a deeper transaction bug?"
+    }
+  },
+  {
+    "case_id": "q006",
+    "query": {
+      "raw": "A MongoDB transactional workload uses read concern snapshot and write concern majority, but under network partitions arrays sometimes contain duplicate copies of the same element after transaction retries or ambiguous errors. We need a first check to separate retry-path duplication from weak default concern settings."
+    }
+  },
+  {
+    "case_id": "q007",
+    "query": {
+      "raw": "On a single healthy MySQL 8.0.34 node using InnoDB Repeatable Read, two concurrent transactions read the same missing key and both append what they think is the first value. One update effectively disappears, even though there is no network fault or failover. What first check confirms whether this is a Repeatable Read lost-update issue?"
+    }
+  },
+  {
+    "case_id": "q008",
+    "query": {
+      "raw": "In a MySQL Repeatable Read transaction, a reader first sees row 0 before a writer's update, then after a harmless update to row 1 sees the writer's new value for row 1 but still misses the corresponding new value for row 0. It looks like partial visibility of another transaction's effects. What should be checked first?"
+    }
+  },
+  {
+    "case_id": "q009",
+    "query": {
+      "raw": "In an early CockroachDB-like distributed SQL system, single-key operations look linearizable, but a comments-style workload shows a later correction comment without the original comment when requests are load-balanced across nodes. Clock offsets are within the expected threshold. Is this a strict serializability gap rather than ordinary stale reads?"
+    }
+  },
+  {
+    "case_id": "q010",
+    "query": {
+      "raw": "A CockroachDB beta-style monotonic test produces duplicate inserted values with the same transaction timestamp during cross-range transactions. The failure appears when timestamps collide below the clock-offset threshold, not during a broad outage. What precedent and first check should guide the diagnosis?"
+    }
+  }
+]

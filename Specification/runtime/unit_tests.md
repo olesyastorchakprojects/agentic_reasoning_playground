@@ -27,6 +27,8 @@ The current crate-level runtime unit-test scope covers:
 
 - `errors`
 - `config`
+- `golden_eval_input`
+- `startup`
 - `observability`
 - `api_clients`
 - `request_pipeline`
@@ -61,6 +63,7 @@ Additional child-owned unit-test specifications may be added later without chang
 Generated unit tests for the crate-level error boundary must include all of the following cases:
 
 - conversion from `ConfigError` into `RuntimeError` produces the exact `RuntimeError::Config(...)` variant;
+- conversion from `GoldenEvalInputError` into `RuntimeError` produces the exact `RuntimeError::GoldenEvalInput(...)` variant;
 - conversion from `ApiClientError` into `RuntimeError` produces the exact `RuntimeError::ApiClients(...)` variant;
 - the crate-level error boundary preserves typed child errors rather than flattening them into strings.
 
@@ -156,12 +159,24 @@ Generated unit tests for the `query_structuring` runtime module must include all
 - constructor fails when the prompt asset JSON is invalid;
 - constructor fails when the user template is missing either required placeholder;
 - constructor succeeds when both JSON asset files exist on disk and satisfy the asset contract;
-- `structure(...)` builds exactly two messages in order: one `system`, one `user`;
-- `structure(...)` serializes the loaded vocabulary into compact JSON inside the user message;
-- `structure(...)` sends `JsonObject` response mode;
-- `structure(...)` sends `temperature = 0.0`;
-- `structure(...)` sends the configured `max_output_tokens`;
+- `structure(...)` delegates to `structure_with_context(..., &Context::noop())`;
+- `structure_with_context(...)` builds exactly two messages in order: one
+  `system`, one `user`;
+- `structure_with_context(...)` serializes the loaded vocabulary into compact
+  JSON inside the user message;
+- `structure_with_context(...)` sends `JsonObject` response mode;
+- `structure_with_context(...)` sends `temperature = 0.0`;
+- `structure_with_context(...)` sends the configured `max_output_tokens`;
+- when `context.golden_question = Some(...)`, `structure_with_context(...)`
+  computes metrics from `expected_query_structuring` and returns them as
+  `QueryStructuringOutput.metrics = Some(...)`;
+- when `context.golden_question = None`, `structure_with_context(...)` returns
+  `QueryStructuringOutput.metrics = None`;
+- metrics-helper failure under `context.golden_question = Some(...)` is wrapped
+  as `QueryStructuringError::MetricsComputation`;
 - successful model output preserves `prompt_tokens`, `completion_tokens`, and `total_tokens` in `QueryStructuringOutput.token_usage`;
+- successful model output preserves the exact shared `QueryStructuringMetrics`
+  value inside `QueryStructuringOutput.metrics` when metrics were computed;
 - model output with malformed JSON fails with `InvalidModelOutput`;
 - model output missing a required top-level field fails with `InvalidModelOutput`;
 - model output with an unknown `support_level` fails with `InvalidModelOutput`;
@@ -173,6 +188,88 @@ Generated unit tests for the `query_structuring` runtime module must include all
 - `InvalidModelOutput` preserves available `prompt_tokens`, `completion_tokens`, and `total_tokens`;
 - `InvalidModelOutput` preserves the parsed `finish_reason` when the provider returned one;
 - successful model output maps into the exact shared `QueryStructuringOutput` shape.
+
+### 4.7a) `query_structuring_metrics`
+
+Generated unit tests for the `query_structuring_metrics` runtime helper module
+must include all of the following cases:
+
+- per-field vocabulary metric computation for `symptoms`,
+  `affected_subsystems`, `failure_modes`, and `system_properties`;
+- duplicate selected terms do not increase recall, precision, or graded metrics
+  and are counted by `duplicate_term_count`;
+- invalid controlled-vocabulary terms are counted by `invalid_vocab_count`;
+- set-based metrics compute the documented `precision_soft`, `recall_strict`,
+  `recall_soft`, `num_false_positive`, `num_false_negative_strict`, and
+  `num_predicted_terms` values;
+- graded metrics compute the documented `graded_coverage`,
+  `average_selected_score`, and `zero_score_selection_count` values;
+- grounding metrics compute the documented `grounded_strict_recall`,
+  `unsupported_selected_term_rate`, `missing_evidence_span_count`,
+  `invalid_evidence_span_count`, and `evidence_span_near_substring_rate`
+  values;
+- support-level metrics compute the documented `weak_inference_rate`,
+  `strict_terms_weak_inference_rate`, and `weak_false_positive_rate` values;
+- field-success metrics compute the documented `field_core_success`,
+  `field_grounded_success`, and `empty_when_gold_exists` values;
+- non-vocabulary field metrics compute the documented count/presence outputs for
+  `entities`, `constraints`, `triggers`, `observability_signals`,
+  `unresolved_terms`, `intent_present`, and `scenario_present`;
+- cross-field aggregates compute the documented `macro_precision_soft`,
+  `macro_recall_strict`, `macro_recall_soft`,
+  `overall_grounded_strict_recall`, and `all_fields_core_success_rate` values;
+- the helper returns the exact shared `QueryStructuringMetrics` shape;
+- invalid golden target duplicates or invalid graded relevance shape are
+  rejected as helper input errors;
+- invalid golden target score assignments are rejected when:
+  - a strict term is not scored `1.0`;
+  - a soft-only term is not scored `0.5`;
+  - a non-soft term is scored `1.0` or `0.5`;
+- an all-whitespace raw user query is rejected as helper input error;
+- when every field has empty `StrictGold`, `overall_grounded_strict_recall`
+  evaluates to `1.0`;
+- grounding metrics expose separate `missing_evidence_span_count` and
+  `invalid_evidence_span_count` diagnostics with the documented semantics;
+- `field_grounded_success` fails when any selected soft or false-positive term
+  remains unsupported even if all strict terms are grounded;
+- invalid helper inputs fail through one typed internal helper error boundary
+  rather than stringly typed failures.
+
+### 4.7b) `retrieval_metrics`
+
+Generated unit tests for the `retrieval_metrics` runtime helper module must
+include all of the following cases:
+
+- recall metrics compute the documented `recall_soft` and `recall_strict`
+  values over `ActualTopK_dedup`;
+- reciprocal-rank metrics compute the documented `rr_soft`, `rr_strict`,
+  `first_relevant_rank_soft`, and `first_relevant_rank_strict` values;
+- relevant-count metrics compute the documented `num_relevant_soft` and
+  `num_relevant_strict` values;
+- `nDCG` computes the documented value over `ActualTopK_dedup` and
+  deterministic `IdealTopK`;
+- later duplicate ids in the ranked output do not increase recall, reciprocal
+  rank, relevant counts, or nDCG after the first occurrence;
+- `IdealTopK` ordering is deterministic under score ties through ascending
+  lexical `id`;
+- `IdealTopK` excludes grade-`0.0` ids in the current contract;
+- the helper returns the exact shared `RetrievalEvaluationMetrics` shape;
+- invalid normalized golden targets are rejected when:
+  - `strict_positive_ids` is empty;
+  - `soft_positive_ids` is empty;
+  - `StrictRel` is not a subset of `SoftRel`;
+  - duplicate ids appear in `strict_positive_ids`;
+  - duplicate ids appear in `soft_positive_ids`;
+  - duplicate ids appear in `graded_relevance`;
+  - any id becomes empty after trimming;
+- invalid graded-relevance assignments are rejected when:
+  - a strict id is not scored `1.0`;
+  - a soft-only id is not scored `0.5`;
+  - a non-soft id is scored `1.0` or `0.5`;
+  - a score is outside `0.0`, `0.5`, `1.0`;
+- `k = 0` fails through `RetrievalMetricsError::InvalidK`;
+- invalid helper inputs fail through one typed internal helper error boundary
+  rather than stringly typed failures.
 
 ### 4.8) `candidate_card_retrieval`
 
@@ -193,20 +290,57 @@ Generated unit tests for the `candidate_card_retrieval` runtime module must incl
 - pass-through of collection errors through `CandidateCardRetrievalError::Collection`;
 - request construction using the unchanged normalized query text;
 - request construction using `limit = top_k`;
-- request construction using the configured `score_threshold`.
+- request construction using the configured `score_threshold`;
+- when `context.golden_question = Some(...)` and candidate-card golden targets
+  are non-empty, `CandidateCardRetrievalOutput.metrics = Some(...)` contains
+  the exact shared `CandidateCardRetrievalMetrics` value;
+- when `context.golden_question = Some(...)` and candidate-card golden targets
+  contain an empty `strict_card_ids` or `soft_card_ids` list,
+  `CandidateCardRetrievalOutput.metrics = None`;
+- metrics-helper failure under `context.golden_question = Some(...)` is wrapped
+  into `CandidateCardRetrievalError`.
 
 ### 4.9) `main`
 
 Generated unit tests for the crate-level `main` CLI boundary must include all of the following cases:
 
 - CLI argument parsing accepts `--config` and `--ingest-config` and preserves the supplied paths exactly;
+- CLI argument parsing accepts `--golden-cases-file` and `--golden-cases-schema` together and preserves the supplied paths exactly;
 - missing required `--config` fails as a startup-time CLI argument error;
 - missing required `--ingest-config` fails as a startup-time CLI argument error;
+- supplying `--golden-cases-file` without `--golden-cases-schema` fails as a startup-time CLI argument error;
+- supplying `--golden-cases-schema` without `--golden-cases-file` fails as a startup-time CLI argument error;
 - startup loads `.env` through library-owned config-loading code rather than requiring a dedicated CLI path argument for the env contract;
 - startup fails before later runtime initialization when a required environment variable is absent after config loading;
-- the CLI delegates config loading to library-owned code rather than parsing TOML content inside `main.rs`.
+- the CLI delegates config loading to library-owned code rather than parsing TOML content inside `main.rs`;
+- the CLI delegates golden-file validation and parsing to the dedicated `golden_eval_input` module rather than implementing that logic inline in `main.rs`.
 
-### 4.10) `incident_evidence_retrieval`
+### 4.10) `golden_eval_input`
+
+Generated unit tests for the `golden_eval_input` runtime module must include
+all of the following cases:
+
+- reading a missing golden-cases file fails with the exact `GoldenEvalInputError::GoldenCasesRead { ... }` variant;
+- reading a missing golden-cases schema file fails with the exact `GoldenEvalInputError::GoldenCasesSchemaRead { ... }` variant;
+- malformed golden JSON fails with the exact `GoldenEvalInputError::InvalidJson { ... }` variant;
+- schema validation failure fails with the exact `GoldenEvalInputError::SchemaValidation { ... }` variant;
+- typed parsing failure after successful schema validation fails with the exact `GoldenEvalInputError::TypedParse { ... }` variant;
+- successful loading returns one `UserRequest` per golden-case item;
+- each returned `UserRequest.query` is copied from `golden_case.query.raw`;
+- each returned `UserRequest.golden_question` is `Some(...)` and preserves the typed golden-case structure;
+- the module does not create `RunState`, does not assemble `Context`, and does not invoke orchestrator entrypoints.
+
+### 4.10a) `startup`
+
+Generated unit tests for the `startup` runtime module must include all of the
+following cases:
+
+- `build_orchestrator(settings)` succeeds when all typed child-module constructors succeed;
+- `build_orchestrator(settings)` returns `StartupError` rather than `RuntimeError` or untyped string errors;
+- child-module construction failures are preserved through typed `StartupError` variants rather than flattened into strings;
+- `build_orchestrator(settings)` constructs and returns an `Orchestrator` whose dependencies are wired from the supplied resolved `Settings`.
+
+### 4.11) `incident_evidence_retrieval`
 
 Generated unit tests for the `incident_evidence_retrieval` runtime module must include all of the following cases:
 
@@ -219,9 +353,18 @@ Generated unit tests for the `incident_evidence_retrieval` runtime module must i
 - preservation of alternative-search hit order in `alternative_chunks`;
 - pass-through of collection errors through `IncidentEvidenceRetrievalError::Collection`;
 - whole-module failure when one branch succeeds and the other branch returns a collection error;
-- no deduplication of returned chunks.
+- no deduplication of returned chunks;
+- when `context.golden_question = Some(...)` and both incident-evidence golden
+  branches are non-empty, `IncidentEvidenceRetrievalOutput.metrics = Some(...)`
+  contains the exact shared `IncidentEvidenceRetrievalMetrics` value with both
+  branch-local bundles preserved;
+- when either incident-evidence golden branch contains an empty
+  `strict_chunk_ids` or `soft_chunk_ids` list,
+  `IncidentEvidenceRetrievalOutput.metrics = None`;
+- metrics-helper failure under `context.golden_question = Some(...)` is wrapped
+  into `IncidentEvidenceRetrievalError`.
 
-### 4.11) `theory_evidence_retrieval`
+### 4.12) `theory_evidence_retrieval`
 
 Generated unit tests for the `theory_evidence_retrieval` runtime module must include all of the following cases:
 
@@ -243,9 +386,17 @@ Generated unit tests for the `theory_evidence_retrieval` runtime module must inc
 - no post-collection truncation beyond the collection request limit;
 - no deduplication of returned chunks;
 - pass-through of collection errors through `TheoryEvidenceRetrievalError::Collection`;
-- `retrieve(...)` does not require candidate-card, card-hydration, or incident-evidence inputs.
+- `retrieve(...)` does not require candidate-card, card-hydration, or incident-evidence inputs;
+- when `context.golden_question = Some(...)` and theory-evidence golden targets
+  are non-empty, `TheoryEvidenceRetrievalOutput.metrics = Some(...)` contains
+  the exact shared `TheoryEvidenceRetrievalMetrics` value;
+- when `context.golden_question = Some(...)` and theory-evidence golden targets
+  contain an empty `strict_chunk_ids` or `soft_chunk_ids` list,
+  `TheoryEvidenceRetrievalOutput.metrics = None`;
+- metrics-helper failure under `context.golden_question = Some(...)` is wrapped
+  into `TheoryEvidenceRetrievalError`.
 
-### 4.12) `prompt_context_assembly`
+### 4.13) `prompt_context_assembly`
 
 Generated unit tests for the `prompt_context_assembly` runtime module must include all of the following cases:
 
@@ -335,7 +486,7 @@ Generated unit tests for the `prompt_context_assembly` runtime module must inclu
 - selected incident chunks are emitted in role order: `EvidenceForMatch`, `FirstCheckHint`, `SupportingExplanation`, then `AlternativeContext`;
 - no unselected chunks are included in output.
 
-### 4.13) `orchestrator`
+### 4.14) `orchestrator`
 
 Generated unit tests for the `orchestrator` runtime subtree must include all of
 the following cases:
@@ -430,6 +581,10 @@ the following cases:
   validation behavior;
 - `StepExecutor::execute(...)` returns `StepError::MissingRequiredInput` when no
   current iteration exists;
+- `StepExecutor::execute(...)` delegates to `StepExecutor::execute_with_context(...)`
+  using `Context::noop()`;
+- `StepExecutor::execute_with_context(...)` passes the supplied execution-time
+  `Context` unchanged into context-aware leaf-module methods;
 - `StepExecutor::execute(...)` returns `StepError::InvalidState` for
   `StepKind::UserInputReceived`;
 - each executable `StepKind` dispatches to the correct leaf-module method;
@@ -478,14 +633,17 @@ the following cases:
 - `resume(run_id)` loads the existing run and does not create a new iteration;
 - `resume_with_input(run_id, user_input)` loads the existing run, appends
   exactly one new iteration, and preserves prior iterations unchanged;
+- when the current iteration `UserRequest` contains `golden_question = Some(...)`,
+  the assembled execution-time `Context` preserves the same
+  `golden_question` value;
 - `load_existing_run(run_id)` maps repository `Ok(None)` into
   `OrchestratorError::RunNotFound { run_id }`;
 - `drive_to_outcome(...)` asks policy for a new `PolicyTransition` on each loop
   iteration;
 - when policy returns `ExecuteStep { step }`, orchestrator opens a pending step
-  before calling `StepExecutor::execute(...)`;
+  before calling `StepExecutor::execute_with_context(...)`;
 - when policy returns `ExecuteStep { step }`, orchestrator persists the pending
-  step record before calling `StepExecutor::execute(...)`;
+  step record before calling `StepExecutor::execute_with_context(...)`;
 - the pending step persisted by orchestrator uses the same `record_id` returned
   by `PendingStepWriter::record_id()`;
 - the pending step persisted by orchestrator uses the current iteration last
@@ -500,7 +658,8 @@ the following cases:
   `FinishWithResult`;
 - `drive_to_outcome(...)` returns `RunOutcome::Failed` when policy returns
   `FinishWithError`;
-- `drive_to_outcome(...)` never calls `StepExecutor::execute(...)` for
+- `drive_to_outcome(...)` never calls `StepExecutor::execute_with_context(...)`
+  for
   `StepKind::UserInputReceived`;
 - `resume(run_id)` preserves already successful finished steps in the current
   iteration and lets policy continue from the persisted state;
@@ -513,7 +672,7 @@ the following cases:
   `RunRepository` as long as the documented production public API remains
   unchanged.
 
-### 4.14) `api_clients.postgres.run_state_store`
+### 4.15) `api_clients.postgres.run_state_store`
 
 Generated unit tests for `PostgresRunStateStore` must include all of the
 following cases:

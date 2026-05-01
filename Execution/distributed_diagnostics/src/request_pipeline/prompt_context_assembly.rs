@@ -2,12 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use crate::config::{ChunkPackingSource, ChunkRolePackingSettings, PromptContextSettings};
-use crate::request_pipeline::context::Context;
 use crate::shared_types::{
-    CardHydrationOutput, IncidentCard, IncidentChunkTag, IncidentEvidenceChunk,
-    IncidentEvidenceRetrievalOutput, NormalizedUserRequest, PromptContextAssemblyOutput,
-    PromptEvidenceRole, PromptIncidentEvidenceChunk, PromptTheoryEvidenceChunk,
-    QueryStructuringOutput, StructuredUserQuery, TheoryEvidenceRetrievalOutput,
+    CardHydrationOutput, Context, IncidentCard, IncidentChunkTag,
+    IncidentEvidenceChunk, IncidentEvidenceRetrievalOutput, NormalizedUserRequest,
+    PromptContextAssemblyOutput, PromptEvidenceRole, PromptIncidentEvidenceChunk,
+    PromptTheoryEvidenceChunk, QueryStructuringOutput, StructuredUserQuery,
+    TheoryEvidenceRetrievalOutput,
 };
 use tracing::{field, info_span};
 
@@ -483,6 +483,7 @@ impl PromptContextAssembly {
 
         Ok(PromptContextAssemblyOutput {
             prompt,
+            response_schema: self.prompt_asset.response_schema.clone(),
             incident_evidence_chunks: incident_chunks,
             theory_chunks,
         })
@@ -1251,6 +1252,7 @@ mod tests {
                 completion_tokens: None,
                 total_tokens: None,
             },
+            metrics: Some(crate::shared_types::QueryStructuringMetrics::default()),
         }
     }
 
@@ -1270,6 +1272,7 @@ mod tests {
         IncidentEvidenceRetrievalOutput {
             primary_chunks: chunks,
             alternative_chunks: vec![],
+            metrics: None,
         }
     }
 
@@ -1286,7 +1289,7 @@ mod tests {
             alternatives: vec![],
         };
         let evidence = primary_evidence(primary_chunks);
-        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![] };
+        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None };
         asm.assemble(&request, &query, &cards, &evidence, &theory)
     }
 
@@ -1645,7 +1648,7 @@ mod tests {
             alternatives: vec![],
         };
         let evidence = primary_evidence(vec![]);
-        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![] };
+        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None };
         let err = asm
             .assemble(&request, &query, &cards, &evidence, &theory)
             .expect_err("should fail — no primary card");
@@ -1696,7 +1699,7 @@ mod tests {
 
         let chunks = two_primary_chunks("primary_case");
         let evidence = primary_evidence(chunks);
-        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![] };
+        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None };
         let out = asm
             .assemble(&request, &query, &cards, &evidence, &theory)
             .unwrap();
@@ -1754,6 +1757,7 @@ mod tests {
                 completion_tokens: None,
                 total_tokens: None,
             },
+            metrics: Some(crate::shared_types::QueryStructuringMetrics::default()),
         }
     }
 
@@ -1778,7 +1782,7 @@ mod tests {
             alternatives: vec![],
         };
         let evidence = primary_evidence(chunks);
-        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![] };
+        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None };
         let out = asm
             .assemble(&request, &query, &cards, &evidence, &theory)
             .unwrap();
@@ -1798,7 +1802,7 @@ mod tests {
             alternatives: vec![],
         };
         let evidence = primary_evidence(chunks);
-        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![] };
+        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None };
         let out = asm
             .assemble(&request, &query, &cards, &evidence, &theory)
             .unwrap();
@@ -1820,7 +1824,7 @@ mod tests {
             alternatives: vec![],
         };
         let evidence = primary_evidence(chunks);
-        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![] };
+        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None };
         let out = asm
             .assemble(&minimal_request(), &query, &cards, &evidence, &theory)
             .unwrap();
@@ -1842,7 +1846,7 @@ mod tests {
             alternatives: vec![],
         };
         let evidence = primary_evidence(chunks);
-        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![] };
+        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None };
         let out = asm
             .assemble(&minimal_request(), &query, &cards, &evidence, &theory)
             .unwrap();
@@ -1871,7 +1875,7 @@ mod tests {
             alternatives: vec![],
         };
         let evidence = primary_evidence(chunks);
-        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![] };
+        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None };
         let out = asm
             .assemble(&minimal_request(), &query, &cards, &evidence, &theory)
             .unwrap();
@@ -1952,7 +1956,7 @@ mod tests {
             alternatives: vec![],
         };
         let evidence = primary_evidence(chunks);
-        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![] };
+        let theory = TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None };
         let out = asm
             .assemble(&minimal_request(), &query, &cards, &evidence, &theory)
             .unwrap();
@@ -2096,9 +2100,11 @@ mod tests {
         let evidence = IncidentEvidenceRetrievalOutput {
             primary_chunks,
             alternative_chunks: vec![alt_chunk],
+            metrics: None,
         };
         let theory = TheoryEvidenceRetrievalOutput {
             chunks: vec![theory_chunk("t1", 0.5, "theory text")],
+            metrics: None,
         };
 
         let out = asm
@@ -2322,7 +2328,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .unwrap();
         let ctx = extract_json_context(&out.prompt);
@@ -2361,7 +2367,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .expect_err("should fail — no eligible chunk");
         assert!(matches!(
@@ -2390,7 +2396,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .expect_err("should fail");
         assert!(matches!(
@@ -2448,7 +2454,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .unwrap();
         let ctx = extract_json_context(&out.prompt);
@@ -2492,7 +2498,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .unwrap();
         let ctx = extract_json_context(&out.prompt);
@@ -2524,6 +2530,7 @@ mod tests {
         let evidence = IncidentEvidenceRetrievalOutput {
             primary_chunks: two_primary_chunks("case_a"),
             alternative_chunks: vec![alt_chunk],
+            metrics: None,
         };
         let out = asm
             .assemble(
@@ -2531,7 +2538,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .unwrap();
         let ctx = extract_json_context(&out.prompt);
@@ -2581,6 +2588,7 @@ mod tests {
         let evidence = IncidentEvidenceRetrievalOutput {
             primary_chunks: chunks,
             alternative_chunks: alt_chunks,
+            metrics: None,
         };
 
         let out = asm
@@ -2589,7 +2597,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .unwrap();
         let ctx = extract_json_context(&out.prompt);
@@ -2629,6 +2637,7 @@ mod tests {
         let evidence = IncidentEvidenceRetrievalOutput {
             primary_chunks: chunks,
             alternative_chunks: alt_chunks,
+            metrics: None,
         };
 
         let out = asm
@@ -2637,7 +2646,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .unwrap();
         let ctx = extract_json_context(&out.prompt);
@@ -2696,6 +2705,7 @@ mod tests {
                 theory_chunk("t2", 0.8, "second theory"),
                 theory_chunk("t3", 0.7, "third theory"),
             ],
+            metrics: None,
         };
         let out = asm
             .assemble(
@@ -2736,6 +2746,7 @@ mod tests {
         let evidence = primary_evidence(chunks);
         let theory = TheoryEvidenceRetrievalOutput {
             chunks: vec![theory_chunk("t1", 0.9, "theory text")],
+            metrics: None,
         };
         let out = asm
             .assemble(
@@ -2808,6 +2819,7 @@ mod tests {
         let evidence = IncidentEvidenceRetrievalOutput {
             primary_chunks,
             alternative_chunks: vec![alt_chunk],
+            metrics: None,
         };
         let err = asm
             .assemble(
@@ -2815,7 +2827,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .expect_err("should fail — no alt card");
         assert!(matches!(
@@ -2850,6 +2862,7 @@ mod tests {
         let evidence = primary_evidence(chunks);
         let theory = TheoryEvidenceRetrievalOutput {
             chunks: vec![theory_chunk("t1", 0.8, "theory")],
+            metrics: None,
         };
         let out = asm
             .assemble(
@@ -2934,6 +2947,7 @@ mod tests {
         let evidence = primary_evidence(two_primary_chunks("case_a"));
         let theory = TheoryEvidenceRetrievalOutput {
             chunks: vec![theory_chunk("t42", 0.77, "theory content")],
+            metrics: None,
         };
         let out = asm
             .assemble(
@@ -2989,6 +3003,7 @@ mod tests {
         let evidence = IncidentEvidenceRetrievalOutput {
             primary_chunks,
             alternative_chunks: vec![alt_chunk],
+            metrics: None,
         };
 
         let out = asm
@@ -2997,7 +3012,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .unwrap();
         let roles: Vec<PromptEvidenceRole> = out
@@ -3042,7 +3057,7 @@ mod tests {
                 &minimal_query(),
                 &cards,
                 &evidence,
-                &TheoryEvidenceRetrievalOutput { chunks: vec![] },
+                &TheoryEvidenceRetrievalOutput { chunks: vec![], metrics: None },
             )
             .unwrap();
         // At most 2 chunks (efm=1, fch=1, se=0 because no contributing_factor)

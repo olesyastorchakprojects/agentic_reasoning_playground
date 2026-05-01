@@ -158,9 +158,9 @@ impl ModelClient for OllamaModelClient {
             })
             .collect();
 
-        let format = match request.response_mode {
+        let format = match &request.response_mode {
             ModelResponseMode::Text => None,
-            ModelResponseMode::JsonObject => Some("json"),
+            ModelResponseMode::JsonObject | ModelResponseMode::JsonSchema(_) => Some("json"),
         };
 
         let wire_req = WireRequest {

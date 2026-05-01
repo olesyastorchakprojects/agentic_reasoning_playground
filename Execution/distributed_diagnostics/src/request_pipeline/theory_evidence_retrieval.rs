@@ -5,9 +5,12 @@ use crate::api_clients::qdrant::theory_chunks_collection::{
     TheoryChunkSearchRequest, TheoryChunksCollection, TheoryChunksCollectionError,
 };
 use crate::config::CollectionRetrievalSettings;
-use crate::request_pipeline::context::Context;
+use crate::request_pipeline::retrieval_metrics::{
+    compute_retrieval_metrics, GoldenRetrievalRelevanceById, GoldenRetrievalTargetsById,
+};
 use crate::shared_types::{
-    NormalizedUserRequest, TheoryEvidenceChunk, TheoryEvidenceRetrievalOutput,
+    Context, NormalizedUserRequest, TheoryEvidenceChunk, TheoryEvidenceRetrievalMetrics,
+    TheoryEvidenceRetrievalOutput,
 };
 use tracing::{info_span, field, Instrument};
 
@@ -19,6 +22,8 @@ pub enum TheoryEvidenceRetrievalError {
     InvalidSettings(String),
     #[error("theory chunks collection error: {0}")]
     Collection(TheoryChunksCollectionError),
+    #[error("retrieval metrics computation failed: {0}")]
+    MetricsComputation(String),
 }
 
 // ─── Public struct ────────────────────────────────────────────────────────────
@@ -113,7 +118,7 @@ impl TheoryEvidenceRetrieval {
             error.message = field::Empty,
         );
 
-        self.retrieve_instrumented(request, &oi_span)
+        self.retrieve_instrumented(request, &oi_span, context)
             .instrument(span)
             .await
     }
@@ -122,6 +127,7 @@ impl TheoryEvidenceRetrieval {
         &self,
         request: &NormalizedUserRequest,
         oi_span: &tracing::Span,
+        context: &Context,
     ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError> {
         let collection_name = match &self.settings.collection {
             crate::config::CollectionSettings::Dense(dense) => dense.name.clone(),
@@ -240,7 +246,133 @@ impl TheoryEvidenceRetrieval {
         tracing::Span::current().record("module.outcome", "success");
         tracing::Span::current().record("status", "ok");
 
-        Ok(TheoryEvidenceRetrievalOutput { chunks })
+        let metrics = if let Some(golden_question) = &context.golden_question {
+            let golden = &golden_question.expected_theory_evidence.mechanism_explanation;
+            if golden.strict_chunk_ids.is_empty() || golden.soft_chunk_ids.is_empty() {
+                None
+            } else {
+                let golden_targets = GoldenRetrievalTargetsById {
+                    strict_positive_ids: golden.strict_chunk_ids.clone(),
+                    soft_positive_ids: golden.soft_chunk_ids.clone(),
+                    graded_relevance: golden
+                        .graded_relevance
+                        .iter()
+                        .map(|rel| GoldenRetrievalRelevanceById {
+                            id: rel.chunk_id.clone(),
+                            score: rel.score,
+                        })
+                        .collect(),
+                };
+                let actual_ranked_ids: Vec<String> =
+                    chunks.iter().map(|chunk| chunk.chunk_id.clone()).collect();
+                let computed = compute_retrieval_metrics(
+                    &golden_targets,
+                    &actual_ranked_ids,
+                    self.settings.top_k,
+                )
+                .map_err(|e| TheoryEvidenceRetrievalError::MetricsComputation(e.to_string()))?;
+                let metrics = TheoryEvidenceRetrievalMetrics {
+                    mechanism_explanation: computed,
+                };
+                oi_span.in_scope(|| emit_theory_evidence_metrics_oi_span(&oi_span, &metrics));
+                Some(metrics)
+            }
+        } else {
+            None
+        };
+
+        Ok(TheoryEvidenceRetrievalOutput {
+            chunks,
+            metrics,
+        })
+    }
+}
+
+fn emit_theory_evidence_metrics_oi_span(
+    oi_parent: &tracing::Span,
+    metrics: &TheoryEvidenceRetrievalMetrics,
+) {
+    use opentelemetry::{Key, Value};
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+    let span = crate::observability::oi_chain_theory_evidence_retrieval_metrics_span(oi_parent);
+    span.record(
+        "input.value",
+        r#"{"golden_backed":true,"source":"theory_evidence"}"#,
+    );
+    span.record("input.mime_type", "application/json");
+
+    let m = &metrics.mechanism_explanation;
+    span.set_attribute(
+        Key::from("rt.theory_evidence.recall_soft"),
+        Value::F64(m.recall_soft as f64),
+    );
+    span.set_attribute(
+        Key::from("rt.theory_evidence.recall_strict"),
+        Value::F64(m.recall_strict as f64),
+    );
+    span.set_attribute(
+        Key::from("rt.theory_evidence.rr_soft"),
+        Value::F64(m.rr_soft as f64),
+    );
+    span.set_attribute(
+        Key::from("rt.theory_evidence.rr_strict"),
+        Value::F64(m.rr_strict as f64),
+    );
+    span.set_attribute(Key::from("rt.theory_evidence.ndcg"), Value::F64(m.ndcg as f64));
+    span.set_attribute(
+        Key::from("rt.theory_evidence.evaluated_k"),
+        Value::I64(m.evaluated_k as i64),
+    );
+    span.set_attribute(
+        Key::from("rt.theory_evidence.first_relevant_rank_soft"),
+        opt_u32_attr(m.first_relevant_rank_soft),
+    );
+    span.set_attribute(
+        Key::from("rt.theory_evidence.first_relevant_rank_strict"),
+        opt_u32_attr(m.first_relevant_rank_strict),
+    );
+    span.set_attribute(
+        Key::from("rt.theory_evidence.num_relevant_soft"),
+        Value::I64(m.num_relevant_soft as i64),
+    );
+    span.set_attribute(
+        Key::from("rt.theory_evidence.num_relevant_strict"),
+        Value::I64(m.num_relevant_strict as i64),
+    );
+
+    let payload = serde_json::json!({
+        "recall_soft": m.recall_soft,
+        "recall_strict": m.recall_strict,
+        "rr_soft": m.rr_soft,
+        "rr_strict": m.rr_strict,
+        "ndcg": m.ndcg,
+        "evaluated_k": m.evaluated_k,
+        "first_relevant_rank_soft": m.first_relevant_rank_soft,
+        "first_relevant_rank_strict": m.first_relevant_rank_strict,
+        "num_relevant_soft": m.num_relevant_soft,
+        "num_relevant_strict": m.num_relevant_strict,
+    })
+    .to_string();
+
+    let _guard = span.enter();
+    tracing::event!(
+        tracing::Level::INFO,
+        event.name = "retrieval_metrics.theory_evidence",
+        payload = %payload
+    );
+    drop(_guard);
+
+    let output_json = serde_json::to_string(metrics).unwrap_or_default();
+    span.record("output.value", output_json.as_str());
+    span.record("output.mime_type", "application/json");
+    span.record("status", "ok");
+}
+
+fn opt_u32_attr(value: Option<u32>) -> opentelemetry::Value {
+    match value {
+        Some(v) => opentelemetry::Value::I64(v as i64),
+        None => opentelemetry::Value::String("null".into()),
     }
 }
 

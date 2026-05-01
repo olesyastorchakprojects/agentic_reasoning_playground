@@ -358,6 +358,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![],
+            metrics: None,
         };
 
         let out = sut.hydrate(&candidates).await.unwrap();
@@ -378,6 +379,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![],
+            metrics: None,
         };
 
         let out = sut.hydrate(&candidates).await.unwrap();
@@ -398,6 +400,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![candidate("card-A"), candidate("card-B")],
+            metrics: None,
         };
 
         let out = sut.hydrate(&candidates).await.unwrap();
@@ -424,6 +427,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2"), candidate("card-3")],
+            metrics: None,
         };
 
         let out = sut.hydrate(&candidates).await.unwrap();
@@ -451,6 +455,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2"), candidate("card-3")],
+            metrics: None,
         };
 
         sut.hydrate(&candidates).await.unwrap();
@@ -468,6 +473,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![],
+            metrics: None,
         };
 
         let err = sut.hydrate(&candidates).await.unwrap_err();
@@ -483,6 +489,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![candidate("card-1"), candidate("card-missing")],
+            metrics: None,
         };
 
         let err = sut.hydrate(&candidates).await.unwrap_err();
@@ -502,6 +509,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![],
+            metrics: None,
         };
 
         let err = sut.hydrate(&candidates).await.unwrap_err();

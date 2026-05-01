@@ -1,5 +1,84 @@
 {
   "version": "v2",
   "system_prompt": "You are a query_structuring module. Return one JSON object only.\nInterpretation rules by field:\nsymptoms = only observed user-visible effects or directly described anomalous behavior;\naffected_subsystems = only components or subsystems implicated by the query;\nfailure_modes = only hypotheses about what might be wrong, not observations;\nsystem_properties = only safety or consistency properties at stake, not components and not failure modes.\nFor vocabulary-based fields, choose terms from the controlled vocabulary only when the query supports them.\nFor each selected vocabulary term, return term, evidence_span, support_level.\nPrefer omission over weak_inference.\nUse the query directly for the remaining fields.\nAlso return rejected_nearby_terms.\nFor failure_modes only: return at most 1 item; choose the most directly supported hypothesis; otherwise return [].\nSchema: {\"intent\":string,\"scenario\":string,\"symptoms\":[{\"term\":string,\"evidence_span\":string,\"support_level\":\"explicit|strong_paraphrase|weak_inference\"}],\"affected_subsystems\":[{\"term\":string,\"evidence_span\":string,\"support_level\":\"explicit|strong_paraphrase|weak_inference\"}],\"failure_modes\":[{\"term\":string,\"evidence_span\":string,\"support_level\":\"explicit|strong_paraphrase|weak_inference\"}],\"system_properties\":[{\"term\":string,\"evidence_span\":string,\"support_level\":\"explicit|strong_paraphrase|weak_inference\"}],\"entities\":string[],\"constraints\":string[],\"triggers\":string[],\"observability_signals\":string[],\"unresolved_terms\":string[],\"rejected_nearby_terms\":[{\"term\":string,\"reason\":string}],\"confidence\":\"low|medium|high\"}",
-  "user_template": "Query:\n{{normalized_query}}\n\nControlled vocabulary:\n{{controlled_vocabulary_json}}"
+  "user_template": "Query:\n{{normalized_query}}\n\nControlled vocabulary:\n{{controlled_vocabulary_json}}",
+  "response_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["intent", "scenario", "symptoms", "affected_subsystems", "failure_modes", "system_properties", "entities", "constraints", "triggers", "observability_signals", "unresolved_terms", "rejected_nearby_terms", "confidence"],
+    "properties": {
+      "intent": {"type": "string"},
+      "scenario": {"type": "string"},
+      "symptoms": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["term", "evidence_span", "support_level"],
+          "properties": {
+            "term": {"type": "string"},
+            "evidence_span": {"type": "string"},
+            "support_level": {"type": "string", "enum": ["explicit", "strong_paraphrase", "weak_inference"]}
+          }
+        }
+      },
+      "affected_subsystems": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["term", "evidence_span", "support_level"],
+          "properties": {
+            "term": {"type": "string"},
+            "evidence_span": {"type": "string"},
+            "support_level": {"type": "string", "enum": ["explicit", "strong_paraphrase", "weak_inference"]}
+          }
+        }
+      },
+      "failure_modes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["term", "evidence_span", "support_level"],
+          "properties": {
+            "term": {"type": "string"},
+            "evidence_span": {"type": "string"},
+            "support_level": {"type": "string", "enum": ["explicit", "strong_paraphrase", "weak_inference"]}
+          }
+        }
+      },
+      "system_properties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["term", "evidence_span", "support_level"],
+          "properties": {
+            "term": {"type": "string"},
+            "evidence_span": {"type": "string"},
+            "support_level": {"type": "string", "enum": ["explicit", "strong_paraphrase", "weak_inference"]}
+          }
+        }
+      },
+      "entities": {"type": "array", "items": {"type": "string"}},
+      "constraints": {"type": "array", "items": {"type": "string"}},
+      "triggers": {"type": "array", "items": {"type": "string"}},
+      "observability_signals": {"type": "array", "items": {"type": "string"}},
+      "unresolved_terms": {"type": "array", "items": {"type": "string"}},
+      "rejected_nearby_terms": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["term", "reason"],
+          "properties": {
+            "term": {"type": "string"},
+            "reason": {"type": "string"}
+          }
+        }
+      },
+      "confidence": {"type": "string", "enum": ["low", "medium", "high"]}
+    }
+  }
 }

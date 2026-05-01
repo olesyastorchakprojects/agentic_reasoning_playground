@@ -36,6 +36,9 @@ Collection-level card-search behavior is defined by:
 Collection-level shared Qdrant types are defined by:
 - `Specification/runtime/api_clients/qdrant/shared_types.md`
 
+OpenInference span behavior for the context-aware execution path is defined by:
+- `Specification/runtime/observability/open_inference_spans.md`
+
 The generated Rust module file for the current version is:
 - `src/request_pipeline/candidate_card_retrieval.rs`
 
@@ -45,6 +48,7 @@ This module must use the shared runtime types:
 - `NormalizedUserRequest`
 - `CandidateCard`
 - `CandidateCardRetrievalOutput`
+- `CandidateCardRetrievalMetrics`
 
 These shared types are defined in:
 - `Specification/runtime/runtime.md`
@@ -61,6 +65,7 @@ pub struct CandidateCard {
 pub struct CandidateCardRetrievalOutput {
     pub primary: Option<CandidateCard>,
     pub alternatives: Vec<CandidateCard>,
+    pub metrics: Option<CandidateCardRetrievalMetrics>,
 }
 ```
 
@@ -73,10 +78,20 @@ Shared-type rules:
 - `CandidateCardRetrievalOutput` is the shared cross-module output of `candidate_card_retrieval`;
 - `CandidateCardRetrievalOutput.primary` contains the highest-ranked candidate card when retrieval returns at least one hit;
 - `CandidateCardRetrievalOutput.primary` must be `None` when retrieval returns zero hits;
-- `CandidateCardRetrievalOutput.alternatives` contains the remaining selected candidates in retrieval order after excluding the `primary` hit.
+- `CandidateCardRetrievalOutput.alternatives` contains the remaining selected candidates in retrieval order after excluding the `primary` hit;
+- `CandidateCardRetrievalOutput.metrics` contains request-local retrieval
+  metrics in the shared `CandidateCardRetrievalMetrics` shape when such metrics
+  were computed for the current execution;
+- `CandidateCardRetrievalOutput.metrics = None` is allowed when no matching
+  golden candidate-card retrieval targets are available in the current execution
+  context.
 
 Import rule for the generated Rust module:
 - shared output types used by this module, including `CandidateCard` and `CandidateCardRetrievalOutput`, must be imported from `crate::shared_types`;
+- `CandidateCardRetrievalMetrics` must be imported from `crate::shared_types`
+  when request-local retrieval metrics are attached to the module output;
+- retrieval metrics helper behavior is defined by
+  `Specification/runtime/request_pipeline/retrieval_metrics.md`;
 - collection-layer card-search types and trait dependencies must be imported through `crate::api_clients::qdrant::...`;
 - `NormalizedUserQuery` must be imported through `crate::api_clients::qdrant::...`.
 
@@ -154,6 +169,12 @@ impl CandidateCardRetrieval {
         &self,
         request: &NormalizedUserRequest,
     ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError>;
+
+    pub async fn retrieve_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        context: &Context,
+    ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError>;
 }
 ```
 
@@ -165,10 +186,33 @@ For the current version, the implementation-owned fields must contain exactly:
 
 Rules:
 - `new(...)` must validate constructor-owned settings and retain dependencies for reuse;
-- `retrieve(...)` must be the single public request-time entrypoint of this module;
+- `retrieve(...)` must delegate to
+  `retrieve_with_context(request, &Context::noop())`;
+- `retrieve_with_context(...)` is the context-aware request-time entrypoint used
+  by the orchestrator;
+- `retrieve_with_context(...)` must treat `context.open_inference.root_span` as
+  the parent span for the module-owned OpenInference retriever span
+  `oi.retriever.candidate_cards`;
+- when `CandidateCardRetrievalOutput.metrics = Some(...)`,
+  `retrieve_with_context(...)` must also emit the companion OpenInference
+  metrics span `oi.chain.candidate_card_retrieval_metrics` as defined by
+  `Specification/runtime/observability/open_inference_spans.md`;
 - `retrieve(...)` must not mutate the input request;
 - `retrieve(...)` must not perform card hydration or any PostgreSQL reads;
-- `retrieve(...)` must not expose collection-layer result types in its public return value.
+- `retrieve(...)` must not expose collection-layer result types in its public return value;
+- when `context.golden_question = Some(...)`, `retrieve_with_context(...)` must
+  compute retrieval metrics against
+  `golden_question.expected_candidate_cards.retrieval_relevant_cards` and set
+  `CandidateCardRetrievalOutput.metrics = Some(...)`;
+- if `golden_question.expected_candidate_cards.retrieval_relevant_cards`
+  contains an empty `strict_card_ids` or `soft_card_ids` list,
+  `retrieve_with_context(...)` must not call `compute_retrieval_metrics(...)`
+  and must return `CandidateCardRetrievalOutput.metrics = None`;
+- when `context.golden_question = None`, `CandidateCardRetrievalOutput.metrics`
+  must be `None`.
+- helper failures from `compute_retrieval_metrics(...)` must be wrapped into
+  `CandidateCardRetrievalError` and must fail the request-time call rather than
+  being silently ignored.
 
 Debug rules:
 - `CandidateCardRetrieval` must not derive `Debug` in the current version because `Arc<dyn CardsCollection>` does not implement `Debug`;
@@ -193,7 +237,10 @@ Request-construction rules:
 - the module must not paraphrase, tokenize, rewrite, or otherwise mutate `NormalizedUserRequest.query` before constructing `NormalizedUserQuery`;
 - `CardSearchRequest.limit` must equal `self.top_k`;
 - `CardSearchRequest.score_threshold` must equal `self.score_threshold`;
-- `CardSearchRequest` must be the only collection-layer input created by this module in the current version.
+- `CardSearchRequest` must be the only collection-layer input created by this module in the current version;
+- the OpenInference input/output payload contract for
+  `retrieve_with_context(...)` is owned by
+  `Specification/runtime/observability/open_inference_spans.md`.
 
 ## 7) Retrieval and Partitioning Rules
 
@@ -210,6 +257,7 @@ Partitioning rules:
 CandidateCardRetrievalOutput {
     primary: None,
     alternatives: vec![],
+    metrics: None,
 }
 ```
 
@@ -225,6 +273,23 @@ CandidateCardRetrievalOutput {
 Mapping rules:
 - each `CardSearchHit` must map to one `CandidateCard`;
 - `CandidateCard.case_id` <- `CardSearchHit.case_id`
+- request-local retrieval metrics, when computed, must use the emitted selected
+  card order after module-owned partitioning:
+  - `actual_ranked_ids = [primary.case_id] + alternatives[*].case_id`
+  - when `primary = None`, `actual_ranked_ids = alternatives[*].case_id`
+- for the current contract, the module must call
+  `compute_retrieval_metrics(...)` with:
+  - normalized golden targets derived from
+    `golden_question.expected_candidate_cards.retrieval_relevant_cards`
+  - `actual_ranked_ids` extracted from the emitted selected ranking
+  - `k = self.top_k`
+- after helper success, the module must attach:
+
+```rust
+CandidateCardRetrievalMetrics {
+    retrieval_relevant_cards: computed_metrics,
+}
+```
 - `CandidateCard.score` <- `CardSearchHit.score`
 - `CandidateCard.score` must preserve the original `f32` retrieval score value without rounding, bucketing, normalization, or rescaling.
 

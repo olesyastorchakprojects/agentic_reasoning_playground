@@ -1,6 +1,158 @@
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UserRequest {
     pub query: String,
+    pub golden_question: Option<GoldenQuestion>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenQuestion {
+    pub case_id: String,
+    pub query: GoldenQuestionQuery,
+    pub expected_query_structuring: GoldenQueryStructuringTargets,
+    pub expected_candidate_cards: GoldenCandidateCardSection,
+    pub expected_incident_evidence: GoldenIncidentEvidenceTargets,
+    pub expected_theory_evidence: GoldenTheoryEvidenceTargets,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenQuestionQuery {
+    pub raw: String,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenQueryStructuringTargets {
+    pub symptoms: GoldenVocabularyFieldTargets,
+    pub affected_subsystems: GoldenVocabularyFieldTargets,
+    pub failure_modes: GoldenVocabularyFieldTargets,
+    pub system_properties: GoldenVocabularyFieldTargets,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenVocabularyFieldTargets {
+    pub strict_vocabulary_terms: Vec<String>,
+    pub soft_vocabulary_terms: Vec<String>,
+    pub graded_relevance: Vec<GoldenTermRelevance>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenTermRelevance {
+    pub term: String,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenCandidateCardSection {
+    pub retrieval_relevant_cards: GoldenCardRetrievalTargets,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenCardRetrievalTargets {
+    pub strict_card_ids: Vec<String>,
+    pub soft_card_ids: Vec<String>,
+    pub graded_relevance: Vec<GoldenCardRelevance>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenCardRelevance {
+    pub card_id: String,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenIncidentEvidenceTargets {
+    pub primary_card_evidence_query: GoldenChunkRetrievalCallTargets,
+    pub alternative_cards_evidence_query: GoldenChunkRetrievalCallTargets,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenChunkRetrievalCallTargets {
+    pub retrieval_call_id: String,
+    pub relevance_judgments: GoldenChunkRetrievalTargets,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenTheoryEvidenceTargets {
+    pub mechanism_explanation: GoldenChunkRetrievalTargets,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenChunkRetrievalTargets {
+    pub strict_chunk_ids: Vec<String>,
+    pub soft_chunk_ids: Vec<String>,
+    pub graded_relevance: Vec<GoldenChunkRelevance>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenChunkRelevance {
+    pub chunk_id: String,
+    pub score: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct RetrievalEvaluationMetrics {
+    pub evaluated_k: u32,
+    pub recall_soft: f32,
+    pub recall_strict: f32,
+    pub rr_soft: f32,
+    pub rr_strict: f32,
+    pub ndcg: f32,
+    pub first_relevant_rank_soft: Option<u32>,
+    pub first_relevant_rank_strict: Option<u32>,
+    pub num_relevant_soft: u32,
+    pub num_relevant_strict: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct CandidateCardRetrievalMetrics {
+    pub retrieval_relevant_cards: RetrievalEvaluationMetrics,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct IncidentEvidenceBranchRetrievalMetrics {
+    pub relevance_judgments: RetrievalEvaluationMetrics,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct IncidentEvidenceRetrievalMetrics {
+    pub primary_card_evidence_query: IncidentEvidenceBranchRetrievalMetrics,
+    pub alternative_cards_evidence_query: IncidentEvidenceBranchRetrievalMetrics,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct TheoryEvidenceRetrievalMetrics {
+    pub mechanism_explanation: RetrievalEvaluationMetrics,
+}
+
+#[derive(Debug, Clone)]
+pub struct OpenInferenceContext {
+    pub root_span: tracing::Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct Context {
+    pub open_inference: OpenInferenceContext,
+    pub golden_question: Option<GoldenQuestion>,
+}
+
+impl Context {
+    pub fn new(
+        open_inference: OpenInferenceContext,
+        golden_question: Option<GoldenQuestion>,
+    ) -> Self {
+        Self {
+            open_inference,
+            golden_question,
+        }
+    }
+
+    pub fn noop() -> Self {
+        Self {
+            open_inference: OpenInferenceContext {
+                root_span: tracing::Span::none(),
+            },
+            golden_question: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -84,10 +236,95 @@ pub struct StructuredUserQuery {
     pub confidence: StructuredUserQueryConfidence,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct QueryStructuringOutput {
     pub structured_query: StructuredUserQuery,
     pub token_usage: ModelTokenUsage,
+    pub metrics: Option<QueryStructuringMetrics>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QueryStructuringControlledVocabulary {
+    pub canonical_symptoms: Vec<String>,
+    pub affected_components: Vec<String>,
+    pub failure_mode_candidates: Vec<String>,
+    pub violated_properties: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct QueryStructuringMetrics {
+    pub top_level: QueryStructuringTopLevelMetrics,
+    pub vocab_fields: QueryStructuringVocabularyFieldMetrics,
+    pub non_vocab_fields: QueryStructuringNonVocabularyFieldMetrics,
+    pub aggregates: QueryStructuringAggregateMetrics,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct QueryStructuringTopLevelMetrics {
+    pub macro_precision_soft: f32,
+    pub macro_recall_strict: f32,
+    pub macro_recall_soft: f32,
+    pub overall_grounded_strict_recall: f32,
+    pub all_fields_core_success_rate: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct QueryStructuringVocabularyFieldMetrics {
+    pub symptoms: QueryStructuringVocabularyFieldMetricSet,
+    pub affected_subsystems: QueryStructuringVocabularyFieldMetricSet,
+    pub failure_modes: QueryStructuringVocabularyFieldMetricSet,
+    pub system_properties: QueryStructuringVocabularyFieldMetricSet,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct QueryStructuringVocabularyFieldMetricSet {
+    pub invalid_vocab_count: u32,
+    pub duplicate_term_count: u32,
+
+    pub precision_soft: f32,
+    pub recall_strict: f32,
+    pub recall_soft: f32,
+    pub num_false_positive: u32,
+    pub num_false_negative_strict: u32,
+    pub num_predicted_terms: u32,
+
+    pub graded_coverage: f32,
+    pub average_selected_score: f32,
+    pub zero_score_selection_count: u32,
+
+    pub grounded_strict_recall: f32,
+    pub unsupported_selected_term_rate: f32,
+    pub missing_evidence_span_count: u32,
+    pub invalid_evidence_span_count: u32,
+    pub evidence_span_near_substring_rate: f32,
+
+    pub weak_inference_rate: f32,
+    pub strict_terms_weak_inference_rate: f32,
+    pub weak_false_positive_rate: f32,
+
+    pub field_core_success: bool,
+    pub field_grounded_success: bool,
+    pub empty_when_gold_exists: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct QueryStructuringNonVocabularyFieldMetrics {
+    pub entities_count: u32,
+    pub constraints_count: u32,
+    pub triggers_count: u32,
+    pub observability_signals_count: u32,
+    pub unresolved_terms_count: u32,
+    pub intent_present: bool,
+    pub scenario_present: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct QueryStructuringAggregateMetrics {
+    pub macro_precision_soft: f32,
+    pub macro_recall_strict: f32,
+    pub macro_recall_soft: f32,
+    pub overall_grounded_strict_recall: f32,
+    pub all_fields_core_success_rate: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -136,6 +373,7 @@ pub struct CandidateCard {
 pub struct CandidateCardRetrievalOutput {
     pub primary: Option<CandidateCard>,
     pub alternatives: Vec<CandidateCard>,
+    pub metrics: Option<CandidateCardRetrievalMetrics>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -157,6 +395,7 @@ pub struct IncidentEvidenceChunk {
 pub struct IncidentEvidenceRetrievalOutput {
     pub primary_chunks: Vec<IncidentEvidenceChunk>,
     pub alternative_chunks: Vec<IncidentEvidenceChunk>,
+    pub metrics: Option<IncidentEvidenceRetrievalMetrics>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -169,6 +408,7 @@ pub struct TheoryEvidenceChunk {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TheoryEvidenceRetrievalOutput {
     pub chunks: Vec<TheoryEvidenceChunk>,
+    pub metrics: Option<TheoryEvidenceRetrievalMetrics>,
 }
 
 #[derive(
@@ -243,6 +483,7 @@ pub struct PromptTheoryEvidenceChunk {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PromptContextAssemblyOutput {
     pub prompt: String,
+    pub response_schema: serde_json::Value,
     pub incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>,
     pub theory_chunks: Vec<PromptTheoryEvidenceChunk>,
 }

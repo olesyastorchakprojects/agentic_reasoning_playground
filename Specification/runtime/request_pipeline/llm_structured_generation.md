@@ -27,6 +27,7 @@ This module depends on:
 - `Specification/runtime/api_clients/model/model_client.md`
 - `Specification/runtime/api_clients/model/shared_types.md`
 - `Specification/runtime/runtime.md`
+- `Specification/runtime/observability/open_inference_spans.md`
 
 Required shared runtime input type:
 - `PromptContextAssemblyOutput`
@@ -162,6 +163,12 @@ impl LlmStructuredGeneration {
         &self,
         prompt_context: &PromptContextAssemblyOutput,
     ) -> Result<LlmStructuredGenerationOutput, LlmStructuredGenerationError>;
+
+    pub async fn generate_with_context(
+        &self,
+        prompt_context: &PromptContextAssemblyOutput,
+        context: &Context,
+    ) -> Result<LlmStructuredGenerationOutput, LlmStructuredGenerationError>;
 }
 ```
 
@@ -171,7 +178,15 @@ For the current version, implementation-owned fields must contain exactly:
 
 Rules:
 - `new(...)` must validate constructor settings once;
-- `generate(...)` must call the shared `ModelClient` asynchronously;
+- `generate(...)` must delegate to
+  `generate_with_context(prompt_context, &Context::noop())`;
+- `generate_with_context(...)` is the context-aware request-time entrypoint used
+  by the orchestrator;
+- `generate_with_context(...)` must treat
+  `context.open_inference.root_span` as the parent span for the module-owned
+  OpenInference LLM span `oi.llm.diagnostic_response`;
+- `generate_with_context(...)` must call the shared `ModelClient`
+  asynchronously;
 - this module must store the model client behind `Arc<dyn ModelClient>`;
 - the current version must not require callers to pass raw model settings per
   request;
@@ -222,6 +237,9 @@ Rules:
 - the module must use the configured `max_output_tokens` value on every request;
 - the module must rely on the supplied prompt text to describe the domain JSON
   contract;
+- the OpenInference input/output payload and LLM metadata contract for
+  `generate_with_context(...)` is owned by
+  `Specification/runtime/observability/open_inference_spans.md`;
 - the module must not construct provider-specific request objects.
 
 ## 9) Stop-Reason Rules

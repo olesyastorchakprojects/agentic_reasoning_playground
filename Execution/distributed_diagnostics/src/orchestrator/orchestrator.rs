@@ -12,8 +12,9 @@ use crate::orchestrator::step_executor::StepExecutor;
 use crate::orchestrator::transition_policy::{
     PolicyError, PolicyTransition, TransitionPolicy,
 };
-use crate::request_pipeline::context::{Context, OpenInferenceContext};
-use crate::shared_types::{ResponseValidationAndNormalizationOutput, UserRequest};
+use crate::shared_types::{
+    Context, OpenInferenceContext, ResponseValidationAndNormalizationOutput, UserRequest,
+};
 
 #[derive(Debug)]
 pub struct Orchestrator<P> {
@@ -392,14 +393,17 @@ where
     };
     let _iter_entered = iter_span.enter();
     let iteration_sequence_no = state.iterations.len().saturating_sub(1) as u64;
-    let context = Context::new(OpenInferenceContext {
-        root_span: crate::observability::oi_iteration_chain_span(
-            &iter_span,
-            &run_id_str,
-            &iter_id_str,
-            iteration_sequence_no,
-        ),
-    });
+    let context = Context::new(
+        OpenInferenceContext {
+            root_span: crate::observability::oi_iteration_chain_span(
+                &iter_span,
+                &run_id_str,
+                &iter_id_str,
+                iteration_sequence_no,
+            ),
+        },
+        current_iteration_golden_question(state),
+    );
 
     let outcome = drive_to_outcome_loop(
         policy,
@@ -459,6 +463,15 @@ where
     }
 
     outcome
+}
+
+fn current_iteration_golden_question(state: &RunState) -> Option<crate::shared_types::GoldenQuestion> {
+    let iteration = RunStateView::new(state).last_iteration()?;
+    let user_input = iteration.finished_step(StepKind::UserInputReceived)?;
+    match user_input.result() {
+        Ok(StepResultEnvelope::UserInputReceived(request)) => request.golden_question.clone(),
+        _ => None,
+    }
 }
 
 async fn drive_to_outcome_loop<P, E, R>(
@@ -1011,6 +1024,7 @@ mod tests {
     fn user_request(query: &str) -> UserRequest {
         UserRequest {
             query: query.to_string(),
+            golden_question: None,
         }
     }
 
@@ -1491,6 +1505,7 @@ mod tests {
                             completion_tokens: Some(1),
                             total_tokens: Some(2),
                         },
+                        metrics: Some(crate::shared_types::QueryStructuringMetrics::default()),
                     },
                 )),
             ],

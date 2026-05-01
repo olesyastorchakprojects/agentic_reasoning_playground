@@ -2,6 +2,7 @@ use thiserror::Error;
 
 pub use crate::api_clients::ApiClientError;
 pub use crate::config::ConfigError;
+pub use crate::golden_eval_input::GoldenEvalInputError;
 pub use crate::observability::ObservabilityError;
 pub use crate::startup::StartupError;
 
@@ -9,6 +10,8 @@ pub use crate::startup::StartupError;
 pub enum RuntimeError {
     #[error("config: {0}")]
     Config(#[from] ConfigError),
+    #[error("golden eval input: {0}")]
+    GoldenEvalInput(#[from] GoldenEvalInputError),
     #[error("observability: {0}")]
     Observability(#[from] ObservabilityError),
     #[error("api clients: {0}")]
@@ -66,5 +69,17 @@ mod tests {
         } else {
             panic!("expected ApiClients variant");
         }
+    }
+
+    #[test]
+    fn golden_eval_input_error_converts_to_runtime_error_variant() {
+        let input_err = GoldenEvalInputError::InvalidJson {
+            message: "expected array".into(),
+        };
+        let runtime_err = RuntimeError::from(input_err);
+        assert!(
+            matches!(runtime_err, RuntimeError::GoldenEvalInput(_)),
+            "expected RuntimeError::GoldenEvalInput, got: {runtime_err}"
+        );
     }
 }

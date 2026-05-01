@@ -34,6 +34,9 @@ Shared request and response types are defined by:
 Shared model-client behavior is defined by:
 - `Specification/runtime/api_clients/model/model_client.md`
 
+OpenInference span behavior for the context-aware execution path is defined by:
+- `Specification/runtime/observability/open_inference_spans.md`
+
 The generated Rust module file for the current version is:
 - `src/request_pipeline/query_structuring.rs`
 
@@ -53,6 +56,9 @@ This module must use the shared runtime types:
 - `NormalizedUserRequest`
 - `StructuredUserQuery`
 - `QueryStructuringOutput`
+- `QueryStructuringControlledVocabulary`
+- `QueryStructuringMetrics`
+- `Context`
 
 These shared types are defined in:
 - `Specification/runtime/runtime.md`
@@ -80,6 +86,21 @@ pub struct StructuredUserQuery {
 pub struct QueryStructuringOutput {
     pub structured_query: StructuredUserQuery,
     pub token_usage: ModelTokenUsage,
+    pub metrics: Option<QueryStructuringMetrics>,
+}
+
+pub struct QueryStructuringControlledVocabulary {
+    pub canonical_symptoms: Vec<String>,
+    pub affected_components: Vec<String>,
+    pub failure_mode_candidates: Vec<String>,
+    pub violated_properties: Vec<String>,
+}
+
+pub struct QueryStructuringMetrics {
+    pub top_level: QueryStructuringTopLevelMetrics,
+    pub vocab_fields: QueryStructuringVocabularyFieldMetrics,
+    pub non_vocab_fields: QueryStructuringNonVocabularyFieldMetrics,
+    pub aggregates: QueryStructuringAggregateMetrics,
 }
 
 pub struct ModelTokenUsage {
@@ -120,6 +141,19 @@ Shared-type rules:
 - `QueryStructuringOutput` is the shared cross-module output of `query_structuring`;
 - `QueryStructuringOutput.structured_query` contains the domain result;
 - `QueryStructuringOutput.token_usage` contains model-call token usage mapped from `ModelGenerationResponse`;
+- `QueryStructuringOutput.metrics` contains request-local query-structuring
+  metrics in the shared `QueryStructuringMetrics` shape when such metrics were
+  computed for the current execution;
+- `QueryStructuringOutput.metrics = None` is allowed when no matching golden
+  query-structuring targets are available in the current execution context;
+- `QueryStructuringControlledVocabulary` is the shared typed controlled-
+  vocabulary asset shape used by this module and by the dedicated query-
+  structuring metrics helper;
+- `QueryStructuringMetrics` is the shared request-local metric bundle attached to
+  `QueryStructuringOutput`;
+- `Context` is the execution-time companion that carries request-local
+  observability state and optional golden-eval metadata for context-aware
+  execution;
 - `ModelTokenUsage.prompt_tokens`, `completion_tokens`, and `total_tokens` remain optional because model providers may omit them;
 - `StructuredUserQueryTerm.term` is the selected normalized term string returned by the model;
 - `StructuredUserQueryTerm.evidence_span` is the short query-grounded evidence string returned by the model;
@@ -133,7 +167,11 @@ Shared-type rules:
   - `"high"`
 
 Import rule for the generated Rust module:
-- shared output and metadata types used by this module, including `StructuredUserQuery`, `QueryStructuringOutput`, and `ModelTokenUsage`, must be imported from `crate::shared_types`;
+- shared output and metadata types used by this module, including
+  `StructuredUserQuery`, `QueryStructuringOutput`,
+  `QueryStructuringControlledVocabulary`, `QueryStructuringMetrics`,
+  `ModelTokenUsage`, and `Context`, must be imported from
+  `crate::shared_types`;
 - `ModelFinishReason` must be imported through the canonical crate path `crate::api_clients::model::ModelFinishReason`.
 
 ## 4) Settings Dependency
@@ -165,17 +203,10 @@ The module must load two module-owned JSON assets:
 - a controlled vocabulary asset;
 - a prompt asset.
 
-The generated Rust module must define module-owned asset types equivalent in
-ownership to:
+The generated Rust module must use the shared controlled-vocabulary asset type
+and define one module-owned prompt asset type equivalent in ownership to:
 
 ```rust
-pub struct QueryStructuringControlledVocabulary {
-    pub canonical_symptoms: Vec<String>,
-    pub affected_components: Vec<String>,
-    pub failure_mode_candidates: Vec<String>,
-    pub violated_properties: Vec<String>,
-}
-
 pub struct QueryStructuringPromptAsset {
     pub version: String,
     pub system_prompt: String,
@@ -183,8 +214,17 @@ pub struct QueryStructuringPromptAsset {
 }
 ```
 
-These asset types are module-private and must not be promoted to shared runtime
-types in the current version.
+Ownership rules:
+- `QueryStructuringControlledVocabulary` is a shared runtime type defined in
+  `crate::shared_types`;
+- `QueryStructuringPromptAsset` remains module-private in the current version.
+
+Vocabulary naming note:
+- the structured output field `affected_subsystems` intentionally maps to the
+  shared controlled-vocabulary field `affected_components`;
+- this name mismatch is deliberate because the structured query uses a user-
+  facing subsystem-oriented label while the shared vocabulary asset preserves
+  the existing component-oriented source taxonomy.
 
 ## 6) Public Interface
 
@@ -206,6 +246,12 @@ impl QueryStructuring {
         &self,
         request: &NormalizedUserRequest,
     ) -> Result<QueryStructuringOutput, QueryStructuringError>;
+
+    pub async fn structure_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        context: &Context,
+    ) -> Result<QueryStructuringOutput, QueryStructuringError>;
 }
 ```
 
@@ -217,8 +263,17 @@ For the current version, the implementation-owned fields must contain exactly:
 
 Rules:
 - `new(...)` must load and validate both JSON assets from disk once and retain them for reuse;
-- `structure(...)` must not reread asset files from disk on each request;
-- `structure(...)` must call the shared `ModelClient` asynchronously;
+- `structure(...)` must delegate to
+  `structure_with_context(request, &Context::noop())`;
+- `structure_with_context(...)` is the context-aware execution path used by the
+  orchestrator;
+- `structure_with_context(...)` must treat `context.open_inference.root_span` as
+  the parent span for the module-owned OpenInference LLM span
+  `oi.llm.query_structuring`;
+- `structure_with_context(...)` must not reread asset files from disk on each
+  request;
+- `structure_with_context(...)` must call the shared `ModelClient`
+  asynchronously;
 - this module must store the model client behind `Arc<dyn ModelClient>`;
 - the current version must not require callers to pass raw prompt strings or raw vocabulary JSON per request.
 
@@ -238,6 +293,11 @@ Rules:
 Constructor validation rules:
 - `QueryStructuringControlledVocabulary` arrays must all be present;
 - controlled-vocabulary arrays must not be empty in the current version;
+- each controlled-vocabulary term string must be non-empty after trimming;
+- duplicate controlled-vocabulary terms within the same field array are invalid
+  and must be rejected after trimming;
+- controlled-vocabulary validation must preserve the original left-to-right
+  order of distinct accepted terms and must not sort the asset;
 - the prompt asset must contain non-empty `version`, `system_prompt`, and `user_template`;
 - `user_template` must contain exactly these placeholders:
   - `{{normalized_query}}`
@@ -257,7 +317,9 @@ Rules:
 - this module must load the controlled vocabulary asset by reading the JSON file from the local filesystem path stored in `QueryStructuringSettings.controlled_vocabulary_path`;
 - this module must not query PostgreSQL to rebuild or refresh the vocabulary;
 - this module must not mutate, deduplicate, sort, or regenerate the asset contents at request time;
-- this module may trust that the asset was pre-cleaned before runtime, but it must still validate presence and JSON shape at construction time.
+- this module may trust that the asset was pre-cleaned before runtime, but it must still validate presence, JSON shape, trimmed non-empty strings, and per-field uniqueness at construction time;
+- equality against controlled-vocabulary terms is exact string equality after the
+  constructor-time trimming validation described above.
 
 The current controlled vocabulary JSON shape is:
 
@@ -295,7 +357,8 @@ Rules:
 
 ## 10) Prompt Assembly Rules
 
-`structure(request)` must assemble the model request in the following order:
+`structure_with_context(request, context)` must assemble the model request in
+the following order:
 
 1. serialize the loaded `QueryStructuringControlledVocabulary` into compact JSON;
 2. substitute `request.query` into the single placeholder position reserved for `{{normalized_query}}`;
@@ -314,7 +377,39 @@ Rules:
 - user-provided query text must be treated as opaque data during substitution;
 - placeholder substitution must not rescan inserted user text for additional placeholder patterns.
 
-## 11) Model Call Rules
+## 11) Metrics Attachment Rules
+
+This module must compute request-local query-structuring metrics after
+successfully parsing and validating the model output into `StructuredUserQuery`.
+
+Rules:
+- `structure_with_context(...)` must derive golden query-structuring targets
+  only from `context.golden_question`;
+- when `context.golden_question = Some(golden_question)`,
+  `structure_with_context(...)` must call the dedicated helper
+  `compute_query_structuring_metrics(...)` using:
+  - the parsed `StructuredUserQuery`;
+  - `golden_question.expected_query_structuring`;
+  - the loaded `QueryStructuringControlledVocabulary`;
+  - `request.query` as the raw user query string for grounding checks;
+- when `context.golden_question = Some(golden_question)`, the returned
+  `QueryStructuringOutput.metrics` must be `Some(computed_metrics)`;
+- when `context.golden_question = None`, the returned
+  `QueryStructuringOutput.metrics` must be `None`;
+- the module must not attempt to synthesize golden targets when
+  `context.golden_question = None`;
+- the OpenInference input/output payload and LLM attribute semantics for
+  `structure_with_context(...)` are owned by
+  `Specification/runtime/observability/open_inference_spans.md`;
+- helper failures from `compute_query_structuring_metrics(...)` must be wrapped
+  into `QueryStructuringError` through the module's typed error boundary;
+- failure of the helper computation itself is fatal for
+  `structure_with_context(...)`;
+- failure that occurs only while serializing or recording the already computed
+  metric bundle into observability spans or events is non-fatal and must not
+  change the returned `QueryStructuringOutput.metrics`.
+
+## 12) Model Call Rules
 
 This module must call the shared `ModelClient` trait defined by:
 - `Specification/runtime/api_clients/model/model_client.md`
@@ -379,7 +474,7 @@ Token-usage mapping rules at this module boundary:
 - `ModelGenerationResponse.total_tokens` maps to `QueryStructuringOutput.token_usage.total_tokens`;
 - successful output must preserve token-usage values exactly as returned by `ModelClient` without recomputation by this module.
 
-## 12) Output Parsing And Mapping Rules
+## 13) Output Parsing And Mapping Rules
 
 The module must treat the model output as strict JSON and parse it into
 `StructuredUserQuery`, then wrap it into `QueryStructuringOutput`.
@@ -488,14 +583,14 @@ Example model JSON response accepted by the current version:
 }
 ```
 
-## 13) Error Boundary
+## 14) Error Boundary
 
 This module must define a module-owned direct error type equivalent in
 ownership to:
 
 ```rust
 pub enum QueryStructuringError {
-    InvalidConfig(&'static str),
+    InvalidConfig(String),
     AssetRead {
         path: String,
         message: String,
@@ -504,11 +599,14 @@ pub enum QueryStructuringError {
         path: String,
         message: String,
     },
-    InvalidPromptAsset(&'static str),
-    InvalidControlledVocabulary(&'static str),
+    InvalidPromptAsset(String),
+    InvalidControlledVocabulary(String),
     Model(#[from] ModelClientError),
+    MetricsComputation {
+        message: String,
+    },
     InvalidModelOutput {
-        reason: &'static str,
+        reason: String,
         token_usage: ModelTokenUsage,
         finish_reason: Option<ModelFinishReason>,
     },
@@ -518,25 +616,39 @@ pub enum QueryStructuringError {
 Variant rules:
 - `InvalidConfig`
   - covers invalid constructor settings such as empty asset paths or `max_output_tokens = 0`;
+  - the payload is `String` rather than `&'static str` because the current
+    runtime error type is serializable and deserializable;
 - `AssetRead`
   - covers file-reading failures while reading prompt and vocabulary JSON files from disk;
 - `AssetParse`
   - covers invalid JSON in prompt and vocabulary assets;
 - `InvalidPromptAsset`
   - covers syntactically valid JSON that violates the prompt-asset contract;
+  - the payload is `String` rather than `&'static str` because the current
+    runtime error type is serializable and deserializable;
 - `InvalidControlledVocabulary`
   - covers syntactically valid JSON that violates the controlled-vocabulary contract;
+  - the payload is `String` rather than `&'static str` because the current
+    runtime error type is serializable and deserializable;
 - `Model(ModelClientError)`
   - wraps failures returned by the shared model client;
+- `MetricsComputation`
+  - wraps failures returned by the dedicated query-structuring metrics helper;
+  - must preserve enough diagnostic detail to identify the failing metric input
+    category and field when available;
 - `InvalidModelOutput`
   - covers JSON parse failures, missing required fields, invalid enum values,
     invalid top-level shape, or unusable stop reasons returned by the model;
+  - `reason` is `String` rather than `&'static str` because the current runtime
+    error type is serializable and deserializable;
   - must preserve any available token-usage metadata from the model response;
   - must preserve the parsed `finish_reason` value when it was available from the model response.
 
 Rules:
 - this module must not flatten model or asset failures into string-only results;
 - this module must wrap model-client failure through one typed dependency variant;
+- this module must wrap query-structuring metrics-helper failures through
+  `MetricsComputation` rather than flattening them into `InvalidModelOutput`;
 - `InvalidModelOutput.token_usage` must use the same `ModelTokenUsage` shape as successful output;
 - `InvalidModelOutput.finish_reason` must reflect the parsed `ModelGenerationResponse.finish_reason` when available;
 - this module must not expose raw serde or filesystem error types through its public boundary.

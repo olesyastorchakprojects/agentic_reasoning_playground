@@ -11,17 +11,23 @@ The current version exists to define:
 - how the runtime crate-level specification relates to existing runtime slice specifications.
 
 This document does not define:
-- detailed observability spans, metrics, or dashboards;
+- detailed observability spans, OpenInference spans, metrics, or dashboards;
 - domain logic;
 - detailed behavior of individual API-client modules already specified elsewhere;
-- pre-ingest incident-card chunk generation from PostgreSQL.
+- pre-ingest incident-card chunk generation from PostgreSQL;
+- detailed orchestration-loop internals already owned by
+  `Specification/runtime/orchestrator/`.
 
-The current version must be minimal.
-It must define only the crate structure, error-model rules, and configuration rules required to generate a clean Rust crate skeleton that can be extended later.
+The current version must remain focused.
+It must define only the crate structure, startup/CLI entry behavior,
+error-model rules, and configuration rules required to generate a clean Rust
+runtime skeleton that can be extended later.
 
 This document is the crate-level source of truth for:
 - `src/lib.rs`
 - `src/main.rs`
+- `src/golden_eval_input.rs`
+- `src/startup.rs`
 - `src/errors/mod.rs`
 - `src/shared_types.rs`
 - `src/api_clients/mod.rs`
@@ -50,6 +56,8 @@ The generated runtime must be a Rust crate that includes both:
 The current crate-level structure consists of:
 - `lib.rs`
 - `main.rs`
+- `golden_eval_input`
+- `startup`
 - `errors`
 - `config`
 - `observability`
@@ -61,6 +69,8 @@ The current crate-level structure consists of:
 The current required crate-level module tree is:
 
 - crate root
+  - `golden_eval_input`
+  - `startup`
   - `errors`
   - `config`
   - `observability`
@@ -72,6 +82,8 @@ The current required crate-level module tree is:
   - `request_pipeline`
     - `input_normalization`
     - `query_structuring`
+    - `query_structuring_metrics`
+    - `retrieval_metrics`
     - `candidate_card_retrieval`
     - `card_hydration`
     - `incident_evidence_retrieval`
@@ -96,6 +108,10 @@ The current required crate-level module tree is:
 Structure rules:
 - `lib.rs` is the primary public crate boundary;
 - `main.rs` is a thin binary entrypoint;
+- `golden_eval_input` owns startup-time golden batch input validation, typed
+  parsing, and conversion into runtime request inputs;
+- `startup` owns typed runtime wiring from resolved `Settings` into the
+  dependency graph required to construct the orchestrator and its leaf modules;
 - `errors` owns only crate-level root error definitions and root error re-exports;
 - `config` owns runtime config loading, resolved settings, and configuration errors;
 - `observability` owns observability initialization and lifetime management;
@@ -111,6 +127,8 @@ Structure rules:
 Current request-pipeline file-layout rule:
 - `request_pipeline::input_normalization` is generated as `src/request_pipeline/input_normalization.rs`;
 - `request_pipeline::query_structuring` is generated as `src/request_pipeline/query_structuring.rs`;
+- `request_pipeline::query_structuring_metrics` is generated as `src/request_pipeline/query_structuring_metrics.rs`;
+- `request_pipeline::retrieval_metrics` is generated as `src/request_pipeline/retrieval_metrics.rs`;
 - `request_pipeline::candidate_card_retrieval` is generated as `src/request_pipeline/candidate_card_retrieval.rs`;
 - `request_pipeline::card_hydration` is generated as `src/request_pipeline/card_hydration.rs`;
 - `request_pipeline::incident_evidence_retrieval` is generated as `src/request_pipeline/incident_evidence_retrieval.rs`;
@@ -129,6 +147,11 @@ Current orchestrator file-layout rule:
 - other orchestrator modules and parent module files are owned by
   `Specification/runtime/generated_artifacts.md`.
 
+Current golden-eval-input file-layout rule:
+- `golden_eval_input` is generated as `src/golden_eval_input.rs`;
+- `golden_eval_input` is a dedicated crate-level module and must not be folded
+  into `lib.rs`, `main.rs`, `config`, or `orchestrator`.
+
 ## 3) Module Boundary Rules
 
 ### `lib.rs`
@@ -141,6 +164,7 @@ Current orchestrator file-layout rule:
 `lib.rs` must not:
 - contain concrete API-client implementation logic;
 - contain application bootstrapping logic beyond what is required to expose the crate boundary;
+- contain inline golden-file schema validation or golden batch parsing logic;
 - duplicate type or error definitions owned by child modules.
 
 ### `main.rs`
@@ -149,6 +173,8 @@ Current orchestrator file-layout rule:
 - provide the binary crate entrypoint;
 - remain thin;
 - parse CLI arguments that provide config-file paths for startup;
+- select interactive versus golden-backed batch-eval startup mode from typed
+  CLI arguments;
 - delegate into library-owned code rather than owning runtime logic itself.
 
 `main.rs` must not:
@@ -156,6 +182,63 @@ Current orchestrator file-layout rule:
 - become the ownership boundary for shared runtime types;
 - define a parallel error hierarchy separate from the library crate.
 - perform ad hoc config parsing outside the `config` module.
+- own schema validation, golden-file parsing, or orchestration-specific
+  `UserRequest` construction inline.
+
+### `golden_eval_input`
+
+`golden_eval_input` must:
+- define the startup-time boundary for golden-backed batch input loading;
+- validate the supplied golden-cases JSON file against the supplied JSON
+  schema;
+- parse validated golden JSON into typed runtime structures;
+- convert validated parsed golden-case items directly into `UserRequest`
+  values for batch runtime execution;
+- expose a typed entrypoint that accepts the supplied golden-cases file path
+  and golden-cases schema path and returns `Vec<UserRequest>`;
+- define a typed parent error boundary `GoldenEvalInputError` for file
+  loading, schema validation, JSON parsing, and typed parsing failures.
+
+The generated Rust module must define an entrypoint equivalent in ownership to:
+
+```rust
+pub fn load_golden_eval_requests(
+    golden_cases_file: &std::path::Path,
+    golden_cases_schema: &std::path::Path,
+) -> Result<Vec<UserRequest>, GoldenEvalInputError>;
+```
+
+Interface rules:
+- `golden_cases_file` is the path supplied through `--golden-cases-file`;
+- `golden_cases_schema` is the path supplied through `--golden-cases-schema`;
+- on success, the returned vector must contain exactly one `UserRequest` per
+  validated golden-case item from the file;
+- on failure, the function must return `GoldenEvalInputError` rather than
+  panicking, exiting the process, or returning untyped string errors.
+
+`golden_eval_input` must not:
+- own orchestration-loop logic;
+- create or mutate `RunState`;
+- assemble execution-time `Context`;
+- absorb generic config loading responsibilities owned by `config`.
+
+### `startup`
+
+`startup` must:
+- define the typed runtime-wiring boundary that builds the orchestrator from
+  resolved `Settings`;
+- construct configured API clients, request-pipeline modules, transition policy,
+  `StepExecutor`, `RunRepository`, and the root `Orchestrator`;
+- expose a typed startup entrypoint for orchestration wiring;
+- define a typed parent error boundary `StartupError` for dependency-wiring and
+  leaf-module-construction failures that occur after config loading and before
+  runtime request execution begins.
+
+`startup` must not:
+- parse CLI arguments;
+- load or merge config files directly;
+- validate or parse golden input files;
+- own interactive-loop or batch-loop control flow.
 
 ### `errors`
 
@@ -225,10 +308,13 @@ Error hierarchy rule:
 The current required parent error types are:
 - `RuntimeError`
 - `ConfigError`
+- `GoldenEvalInputError`
+- `ObservabilityError`
 - `ApiClientError`
 - `ModelApiClientError`
 - `QdrantApiClientError`
 - `PostgresApiClientError`
+- `StartupError`
 
 ### `RuntimeError`
 
@@ -239,7 +325,10 @@ The generated Rust module must define a crate-level enum equivalent in ownership
 ```rust
 pub enum RuntimeError {
     Config(ConfigError),
+    GoldenEvalInput(GoldenEvalInputError),
+    Observability(ObservabilityError),
     ApiClients(ApiClientError),
+    Startup(StartupError),
 }
 ```
 
@@ -247,6 +336,52 @@ Rules:
 - `RuntimeError` must include only top-level subsystem errors;
 - `RuntimeError` must not directly include leaf API-client errors when an intermediate parent error exists;
 - future top-level subsystems may be added as additional `RuntimeError` variants in later iterations.
+
+### `GoldenEvalInputError`
+
+`GoldenEvalInputError` is the parent error type for the `golden_eval_input`
+module boundary.
+
+The generated Rust module must define a golden-input-owned enum equivalent in
+ownership to:
+
+```rust
+pub enum GoldenEvalInputError {
+    GoldenCasesRead { path: String, message: String },
+    GoldenCasesSchemaRead { path: String, message: String },
+    InvalidJson { message: String },
+    SchemaValidation { message: String },
+    TypedParse { message: String },
+}
+```
+
+Rules:
+- `GoldenEvalInputError` must be defined in `src/golden_eval_input.rs`;
+- golden batch input loading must return `GoldenEvalInputError` before
+  conversion into `RuntimeError`;
+- raw filesystem, JSON, or schema-validation library errors must not leak
+  through the public crate boundary.
+
+### `ObservabilityError`
+
+`ObservabilityError` is the parent error type for the `observability` module
+boundary.
+
+The generated Rust module must define an observability-owned enum equivalent in
+ownership to:
+
+```rust
+pub enum ObservabilityError {
+    Initialization { message: String },
+}
+```
+
+Rules:
+- `ObservabilityError` must be defined in `src/observability/mod.rs`;
+- startup-time observability initialization must return `ObservabilityError`
+  before conversion into `RuntimeError`;
+- raw exporter and OTEL initialization errors must not leak through the public
+  crate boundary.
 
 ### `ConfigError`
 
@@ -335,6 +470,23 @@ Rules:
 - generated code must preserve typed child errors through the parent hierarchy;
 - raw third-party, transport, parser, or library errors must not leak through public module interfaces;
 - error variants must preserve available diagnostic information owned by the failure point.
+
+### `StartupError`
+
+`StartupError` is the parent error type for the `startup` module boundary.
+
+The generated Rust module must define a startup-owned enum that wraps typed
+construction failures from the runtime wiring phase.
+
+Rules:
+- `StartupError` must be defined in `src/startup.rs`;
+- `StartupError` must wrap typed module-construction failures through explicit
+  variants rather than flattening them into strings;
+- startup wiring must return `StartupError` before conversion into
+  `RuntimeError`;
+- `StartupError` must not absorb CLI parsing, config loading, observability
+  initialization, or golden-file validation failures that belong to other
+  top-level boundaries.
 
 ### Boundary Rules
 
@@ -445,6 +597,26 @@ Types that are private to a single module must be defined in that module specifi
 
 For the current request-pipeline stage, the required shared types are:
 - `UserRequest`
+- `GoldenQuestion`
+- `GoldenQuestionQuery`
+- `GoldenQueryStructuringTargets`
+- `GoldenVocabularyFieldTargets`
+- `GoldenTermRelevance`
+- `GoldenCandidateCardSection`
+- `GoldenCardRetrievalTargets`
+- `GoldenCardRelevance`
+- `GoldenIncidentEvidenceTargets`
+- `GoldenChunkRetrievalCallTargets`
+- `GoldenTheoryEvidenceTargets`
+- `GoldenChunkRetrievalTargets`
+- `GoldenChunkRelevance`
+- `RetrievalEvaluationMetrics`
+- `CandidateCardRetrievalMetrics`
+- `IncidentEvidenceBranchRetrievalMetrics`
+- `IncidentEvidenceRetrievalMetrics`
+- `TheoryEvidenceRetrievalMetrics`
+- `OpenInferenceContext`
+- `Context`
 - `IncidentCard`
 - `IncidentPhase`
 - `DiscriminatingCheck`
@@ -452,6 +624,9 @@ For the current request-pipeline stage, the required shared types are:
 - `NormalizedUserRequest`
 - `StructuredUserQuery`
 - `QueryStructuringOutput`
+- `QueryStructuringControlledVocabulary`
+- `QueryStructuringMetrics`
+- `ModelTokenUsage`
 - `CandidateCard`
 - `CandidateCardRetrievalOutput`
 - `CardHydrationOutput`
@@ -470,6 +645,117 @@ The generated Rust runtime must define shared types equivalent in ownership to:
 ```rust
 pub struct UserRequest {
     pub query: String,
+    pub golden_question: Option<GoldenQuestion>,
+}
+
+pub struct GoldenQuestion {
+    pub case_id: String,
+    pub query: GoldenQuestionQuery,
+    pub expected_query_structuring: GoldenQueryStructuringTargets,
+    pub expected_candidate_cards: GoldenCandidateCardSection,
+    pub expected_incident_evidence: GoldenIncidentEvidenceTargets,
+    pub expected_theory_evidence: GoldenTheoryEvidenceTargets,
+}
+
+pub struct GoldenQuestionQuery {
+    pub raw: String,
+}
+
+pub struct GoldenQueryStructuringTargets {
+    pub symptoms: GoldenVocabularyFieldTargets,
+    pub affected_subsystems: GoldenVocabularyFieldTargets,
+    pub failure_modes: GoldenVocabularyFieldTargets,
+    pub system_properties: GoldenVocabularyFieldTargets,
+}
+
+pub struct GoldenVocabularyFieldTargets {
+    pub strict_vocabulary_terms: Vec<String>,
+    pub soft_vocabulary_terms: Vec<String>,
+    pub graded_relevance: Vec<GoldenTermRelevance>,
+}
+
+pub struct GoldenTermRelevance {
+    pub term: String,
+    pub score: f32,
+}
+
+pub struct GoldenCandidateCardSection {
+    pub retrieval_relevant_cards: GoldenCardRetrievalTargets,
+}
+
+pub struct GoldenCardRetrievalTargets {
+    pub strict_card_ids: Vec<String>,
+    pub soft_card_ids: Vec<String>,
+    pub graded_relevance: Vec<GoldenCardRelevance>,
+}
+
+pub struct GoldenCardRelevance {
+    pub card_id: String,
+    pub score: f32,
+}
+
+pub struct GoldenIncidentEvidenceTargets {
+    pub primary_card_evidence_query: GoldenChunkRetrievalCallTargets,
+    pub alternative_cards_evidence_query: GoldenChunkRetrievalCallTargets,
+}
+
+pub struct GoldenChunkRetrievalCallTargets {
+    pub retrieval_call_id: String,
+    pub relevance_judgments: GoldenChunkRetrievalTargets,
+}
+
+pub struct GoldenTheoryEvidenceTargets {
+    pub mechanism_explanation: GoldenChunkRetrievalTargets,
+}
+
+pub struct GoldenChunkRetrievalTargets {
+    pub strict_chunk_ids: Vec<String>,
+    pub soft_chunk_ids: Vec<String>,
+    pub graded_relevance: Vec<GoldenChunkRelevance>,
+}
+
+pub struct GoldenChunkRelevance {
+    pub chunk_id: String,
+    pub score: f32,
+}
+
+pub struct RetrievalEvaluationMetrics {
+    pub evaluated_k: u32,
+    pub recall_soft: f32,
+    pub recall_strict: f32,
+    pub rr_soft: f32,
+    pub rr_strict: f32,
+    pub ndcg: f32,
+    pub first_relevant_rank_soft: Option<u32>,
+    pub first_relevant_rank_strict: Option<u32>,
+    pub num_relevant_soft: u32,
+    pub num_relevant_strict: u32,
+}
+
+pub struct CandidateCardRetrievalMetrics {
+    pub retrieval_relevant_cards: RetrievalEvaluationMetrics,
+}
+
+pub struct IncidentEvidenceBranchRetrievalMetrics {
+    pub relevance_judgments: RetrievalEvaluationMetrics,
+}
+
+pub struct IncidentEvidenceRetrievalMetrics {
+    pub primary_card_evidence_query: IncidentEvidenceBranchRetrievalMetrics,
+    pub alternative_cards_evidence_query: IncidentEvidenceBranchRetrievalMetrics,
+}
+
+pub struct TheoryEvidenceRetrievalMetrics {
+    pub mechanism_explanation: RetrievalEvaluationMetrics,
+}
+
+pub struct OpenInferenceContext {
+    pub root_span: tracing::Span,
+}
+
+pub struct Context {
+    pub open_inference: OpenInferenceContext,
+    pub golden_question: Option<GoldenQuestion>,
 }
 
 pub struct IncidentPhase {
@@ -550,6 +836,79 @@ pub struct StructuredUserQuery {
 pub struct QueryStructuringOutput {
     pub structured_query: StructuredUserQuery,
     pub token_usage: ModelTokenUsage,
+    pub metrics: Option<QueryStructuringMetrics>,
+}
+
+pub struct QueryStructuringControlledVocabulary {
+    pub canonical_symptoms: Vec<String>,
+    pub affected_components: Vec<String>,
+    pub failure_mode_candidates: Vec<String>,
+    pub violated_properties: Vec<String>,
+}
+
+pub struct QueryStructuringMetrics {
+    pub top_level: QueryStructuringTopLevelMetrics,
+    pub vocab_fields: QueryStructuringVocabularyFieldMetrics,
+    pub non_vocab_fields: QueryStructuringNonVocabularyFieldMetrics,
+    pub aggregates: QueryStructuringAggregateMetrics,
+}
+
+pub struct QueryStructuringTopLevelMetrics {
+    pub macro_precision_soft: f32,
+    pub macro_recall_strict: f32,
+    pub macro_recall_soft: f32,
+    pub overall_grounded_strict_recall: f32,
+    pub all_fields_core_success_rate: f32,
+}
+
+pub struct QueryStructuringVocabularyFieldMetrics {
+    pub symptoms: QueryStructuringVocabularyFieldMetricSet,
+    pub affected_subsystems: QueryStructuringVocabularyFieldMetricSet,
+    pub failure_modes: QueryStructuringVocabularyFieldMetricSet,
+    pub system_properties: QueryStructuringVocabularyFieldMetricSet,
+}
+
+pub struct QueryStructuringVocabularyFieldMetricSet {
+    pub invalid_vocab_count: u32,
+    pub duplicate_term_count: u32,
+    pub precision_soft: f32,
+    pub recall_strict: f32,
+    pub recall_soft: f32,
+    pub num_false_positive: u32,
+    pub num_false_negative_strict: u32,
+    pub num_predicted_terms: u32,
+    pub graded_coverage: f32,
+    pub average_selected_score: f32,
+    pub zero_score_selection_count: u32,
+    pub grounded_strict_recall: f32,
+    pub unsupported_selected_term_rate: f32,
+    pub missing_evidence_span_count: u32,
+    pub invalid_evidence_span_count: u32,
+    pub evidence_span_near_substring_rate: f32,
+    pub weak_inference_rate: f32,
+    pub strict_terms_weak_inference_rate: f32,
+    pub weak_false_positive_rate: f32,
+    pub field_core_success: bool,
+    pub field_grounded_success: bool,
+    pub empty_when_gold_exists: bool,
+}
+
+pub struct QueryStructuringNonVocabularyFieldMetrics {
+    pub entities_count: u32,
+    pub constraints_count: u32,
+    pub triggers_count: u32,
+    pub observability_signals_count: u32,
+    pub unresolved_terms_count: u32,
+    pub intent_present: bool,
+    pub scenario_present: bool,
+}
+
+pub struct QueryStructuringAggregateMetrics {
+    pub macro_precision_soft: f32,
+    pub macro_recall_strict: f32,
+    pub macro_recall_soft: f32,
+    pub overall_grounded_strict_recall: f32,
+    pub all_fields_core_success_rate: f32,
 }
 
 pub struct CandidateCard {
@@ -560,6 +919,7 @@ pub struct CandidateCard {
 pub struct CandidateCardRetrievalOutput {
     pub primary: Option<CandidateCard>,
     pub alternatives: Vec<CandidateCard>,
+    pub metrics: Option<CandidateCardRetrievalMetrics>,
 }
 
 pub struct CardHydrationOutput {
@@ -580,6 +940,7 @@ pub struct IncidentEvidenceChunk {
 pub struct IncidentEvidenceRetrievalOutput {
     pub primary_chunks: Vec<IncidentEvidenceChunk>,
     pub alternative_chunks: Vec<IncidentEvidenceChunk>,
+    pub metrics: Option<IncidentEvidenceRetrievalMetrics>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -592,6 +953,7 @@ pub struct TheoryEvidenceChunk {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TheoryEvidenceRetrievalOutput {
     pub chunks: Vec<TheoryEvidenceChunk>,
+    pub metrics: Option<TheoryEvidenceRetrievalMetrics>,
 }
 
 #[derive(
@@ -702,30 +1064,140 @@ Shared type rules:
 
 1. `UserRequest`
    - `UserRequest` is the raw request received by the runtime from the caller;
-   - `UserRequest` must contain exactly one field:
+   - `UserRequest` must contain:
      - `query: String`
+     - `golden_question: Option<GoldenQuestion>`
    - `query` is the raw user-provided request text before normalization;
-   - `UserRequest` must not contain normalized fields, token counts, config values, derived values, or module-private processing metadata.
+   - `golden_question` is optional eval companion input carried only for
+     golden-backed batch execution;
+   - in interactive mode, `golden_question` must be `None`;
+   - in batch-eval mode, `golden_question` must be `Some(...)` for each
+     request created from one validated golden case;
+   - `UserRequest` must not contain normalized fields, token counts, config
+     values, or derived values unrelated to one request's runtime execution.
 
-2. `IncidentCard`
+2. `GoldenQuestion`
+   - `GoldenQuestion` is the shared typed representation of one golden-case
+     item from the runtime-eval dataset consumed by golden-backed batch mode;
+   - it must preserve the case-level structure needed by:
+     - query structuring metrics;
+     - candidate-card retrieval metrics;
+     - incident-evidence retrieval metrics;
+     - theory-evidence retrieval metrics;
+   - `GoldenQuestion` is shared because it crosses the runtime entry boundary,
+     `UserRequest`, orchestration, and context-aware request-pipeline modules.
+
+3. `GoldenQuestionQuery`
+   - `GoldenQuestionQuery` is the shared nested query section of
+     `GoldenQuestion`;
+   - `raw` is the canonical input query text for that golden case.
+
+4. `GoldenQueryStructuringTargets`
+   - `GoldenQueryStructuringTargets` is the shared grouped target set for the
+     four vocabulary-backed query-structuring fields;
+   - each field must use `GoldenVocabularyFieldTargets`.
+
+5. `GoldenVocabularyFieldTargets`
+   - `GoldenVocabularyFieldTargets` is the shared target structure for one
+     vocabulary-backed query-structuring field;
+   - it must preserve:
+     - `strict_vocabulary_terms`
+     - `soft_vocabulary_terms`
+     - `graded_relevance`
+
+6. `GoldenTermRelevance`
+   - `GoldenTermRelevance` is one graded vocabulary relevance item;
+   - `score` must preserve the explicit runtime-eval score as `f32`.
+
+7. `GoldenCandidateCardSection`
+   - `GoldenCandidateCardSection` is the shared top-level target section for
+     candidate-card retrieval;
+   - it must preserve the `retrieval_relevant_cards` nested structure.
+
+8. `GoldenCardRetrievalTargets`
+   - `GoldenCardRetrievalTargets` is the shared target structure for candidate
+     card retrieval;
+   - it must preserve:
+     - `strict_card_ids`
+     - `soft_card_ids`
+     - `graded_relevance`
+
+9. `GoldenCardRelevance`
+   - `GoldenCardRelevance` is one graded card-relevance item;
+   - `score` must preserve the explicit runtime-eval score as `f32`.
+
+10. `GoldenIncidentEvidenceTargets`
+   - `GoldenIncidentEvidenceTargets` is the shared grouped target set for the
+     incident-evidence retrieval boundary;
+   - it must preserve both retrieval calls separately:
+     - `primary_card_evidence_query`
+     - `alternative_cards_evidence_query`
+
+11. `GoldenChunkRetrievalCallTargets`
+   - `GoldenChunkRetrievalCallTargets` is the shared target structure for one
+     named retrieval call;
+   - it must preserve:
+     - `retrieval_call_id`
+     - `relevance_judgments`
+
+12. `GoldenTheoryEvidenceTargets`
+   - `GoldenTheoryEvidenceTargets` is the shared grouped target set for theory
+     evidence retrieval;
+   - it must preserve the `mechanism_explanation` target structure.
+
+13. `GoldenChunkRetrievalTargets`
+   - `GoldenChunkRetrievalTargets` is the shared target structure for one
+     chunk-based retrieval output;
+   - it must preserve:
+     - `strict_chunk_ids`
+     - `soft_chunk_ids`
+     - `graded_relevance`
+
+14. `GoldenChunkRelevance`
+   - `GoldenChunkRelevance` is one graded chunk-relevance item;
+   - `score` must preserve the explicit runtime-eval score as `f32`.
+
+15. `OpenInferenceContext`
+   - `OpenInferenceContext` is the execution-time observability companion used
+     by context-aware runtime modules;
+   - it is shared because it crosses orchestration and leaf-module boundaries.
+   - detailed OpenInference span semantics, hierarchy, and payload contracts are
+     owned by
+     `Specification/runtime/observability/open_inference_spans.md`.
+
+16. `Context`
+   - `Context` is the execution-time companion object passed to context-aware
+     request-pipeline modules;
+   - it must contain:
+     - `open_inference: OpenInferenceContext`
+     - `golden_question: Option<GoldenQuestion>`
+   - in interactive mode, `golden_question` must be `None`;
+   - in batch-eval mode, `golden_question` must contain the per-request
+     validated golden case companion.
+   - `open_inference.root_span` is normally the iteration-scoped
+     `oi.chain.diagnostic_iteration` span provided by the orchestrator and
+     defined in
+     `Specification/runtime/observability/open_inference_spans.md`.
+
+17. `IncidentCard`
    - `IncidentCard` is the canonical full-card runtime representation shared across PostgreSQL storage, hydration, and downstream request-pipeline modules;
    - `IncidentCard` must remain structurally aligned with the canonical card contract in `Specification/contracts/storage/incident_card.md`;
    - `IncidentCard.case_id` is the stable unique identity of the card;
    - `IncidentCard` must not be owned privately by one API-client module once it is used across module boundaries.
 
-3. `IncidentPhase`
+18. `IncidentPhase`
    - `IncidentPhase` is a shared nested component type used by `IncidentCard`;
    - it must be defined in `src/shared_types.rs` together with `IncidentCard`.
 
-4. `DiscriminatingCheck`
+19. `DiscriminatingCheck`
    - `DiscriminatingCheck` is a shared nested component type used by `IncidentCard`;
    - it must be defined in `src/shared_types.rs` together with `IncidentCard`.
 
-5. `ExpectedObservation`
+20. `ExpectedObservation`
    - `ExpectedObservation` is a shared nested component type used by `IncidentCard`;
    - it must be defined in `src/shared_types.rs` together with `IncidentCard`.
 
-6. `NormalizedUserRequest`
+21. `NormalizedUserRequest`
    - `NormalizedUserRequest` is the normalized request produced by the input-normalization boundary;
    - `NormalizedUserRequest` must contain exactly two fields:
      - `query: String`
@@ -734,7 +1206,7 @@ Shared type rules:
    - `input_token_count` is the token count computed for `NormalizedUserRequest.query` using the tokenizer defined by the input-normalization contract;
    - `NormalizedUserRequest` must not contain raw input copies, config values, or module-private processing metadata.
 
-7. `StructuredUserQuery`
+22. `StructuredUserQuery`
    - `StructuredUserQuery` is the shared structured interpretation produced by the `query_structuring` boundary;
    - it must contain only cross-module data needed by downstream runtime modules;
    - it must not contain raw prompt text, raw model responses, file paths, or module-private parsing metadata;
@@ -742,18 +1214,45 @@ Shared type rules:
    - rejected nearby candidates must be represented through `RejectedNearbyTerm`;
    - confidence must be represented through `StructuredUserQueryConfidence` rather than raw string values.
 
-8. `QueryStructuringOutput`
+23. `QueryStructuringOutput`
    - `QueryStructuringOutput` is the shared runtime output of the `query_structuring` boundary;
    - it wraps the semantic result plus execution metadata from the model call;
    - `structured_query` must contain the parsed domain interpretation;
-   - `token_usage` must contain model token-usage metadata and must not be merged into `StructuredUserQuery`.
+   - `token_usage` must contain model token-usage metadata and must not be merged into `StructuredUserQuery`;
+   - `metrics` must contain request-local query-structuring metrics in the
+     shared `QueryStructuringMetrics` shape when such metrics were computed for
+     the current execution;
+   - `metrics = None` is allowed for executions that do not carry matching
+     golden query-structuring targets.
 
-9. `ModelTokenUsage`
+24. `QueryStructuringControlledVocabulary`
+   - `QueryStructuringControlledVocabulary` is the shared typed controlled-
+     vocabulary asset shape used by `query_structuring` and the query-
+     structuring metrics helper;
+   - it must preserve:
+     - `canonical_symptoms`
+     - `affected_components`
+     - `failure_mode_candidates`
+     - `violated_properties`
+   - it is shared because the loaded and validated vocabulary asset crosses the
+     `query_structuring` module boundary into a dedicated internal metrics
+     helper module.
+
+25. `QueryStructuringMetrics`
+   - `QueryStructuringMetrics` is the shared request-local metric bundle for one
+     query-structuring output;
+   - it must contain:
+     - `top_level`
+     - `vocab_fields`
+     - `non_vocab_fields`
+     - `aggregates`
+
+26. `ModelTokenUsage`
    - `ModelTokenUsage` is shared execution metadata for one model call;
    - `prompt_tokens`, `completion_tokens`, and `total_tokens` must remain `Option<usize>` because providers may omit some or all usage fields;
    - this type is metadata-only and must not be treated as part of the semantic query structure.
 
-10. `CandidateCard`
+27. `CandidateCard`
    - `CandidateCard` is the shared runtime representation of one candidate incident card selected by the `candidate_card_retrieval` boundary;
    - `CandidateCard` must contain exactly two fields:
      - `case_id: String`
@@ -763,7 +1262,7 @@ Shared type rules:
    - `score` must preserve the original retrieval `f32` value without rounding, bucketing, normalization, or rescaling;
    - `CandidateCard` must not contain collection-layer request types, Qdrant payloads, hydration data, or module-private ranking metadata.
 
-11. `CandidateCardRetrievalOutput`
+28. `CandidateCardRetrievalOutput`
    - `CandidateCardRetrievalOutput` is the shared runtime output of the `candidate_card_retrieval` boundary;
    - it must contain exactly two fields:
      - `primary: Option<CandidateCard>`
@@ -772,7 +1271,7 @@ Shared type rules:
    - `primary` must be `None` when retrieval returns zero candidates;
    - `alternatives` contains the remaining selected candidates after excluding `primary`, in retrieval order.
 
-12. `CardHydrationOutput`
+29. `CardHydrationOutput`
    - `CardHydrationOutput` is the shared runtime output of the `card_hydration` boundary;
    - it must contain exactly two fields:
      - `primary: Option<IncidentCard>`
@@ -781,7 +1280,7 @@ Shared type rules:
    - `primary` must be `None` when there is no primary candidate to hydrate;
    - `alternatives` contains the hydrated full-card forms of the alternative candidates in preserved retrieval order.
 
-13. `IncidentEvidenceChunk`
+30. `IncidentEvidenceChunk`
    - `IncidentEvidenceChunk` is the shared runtime representation of one retrieved practice chunk selected by the `incident_evidence_retrieval` boundary;
    - it must contain exactly five fields:
      - `chunk_id: String`
@@ -797,7 +1296,7 @@ Shared type rules:
      - `Clone`
      - `PartialEq`
 
-14. `IncidentEvidenceRetrievalOutput`
+29. `IncidentEvidenceRetrievalOutput`
    - `IncidentEvidenceRetrievalOutput` is the shared runtime output of the `incident_evidence_retrieval` boundary;
    - it must contain exactly two fields:
      - `primary_chunks: Vec<IncidentEvidenceChunk>`
@@ -810,7 +1309,7 @@ Shared type rules:
      - `Clone`
      - `PartialEq`
 
-15. `TheoryEvidenceChunk`
+30. `TheoryEvidenceChunk`
    - `TheoryEvidenceChunk` is the shared runtime representation of one retrieved theory chunk selected by the `theory_evidence_retrieval` boundary;
    - it must contain exactly three fields:
      - `chunk_id: String`
@@ -823,7 +1322,7 @@ Shared type rules:
      - `Clone`
      - `PartialEq`
 
-16. `TheoryEvidenceRetrievalOutput`
+31. `TheoryEvidenceRetrievalOutput`
    - `TheoryEvidenceRetrievalOutput` is the shared runtime output of the `theory_evidence_retrieval` boundary;
    - it must contain exactly one field:
      - `chunks: Vec<TheoryEvidenceChunk>`
@@ -834,7 +1333,7 @@ Shared type rules:
      - `Clone`
      - `PartialEq`
 
-17. `IncidentChunkTag`
+32. `IncidentChunkTag`
    - `IncidentChunkTag` is the shared typed representation of the finite canonical incident chunk tag vocabulary;
    - it must be defined in `src/shared_types.rs`, not in `src/config/mod.rs`;
    - it must use `strum_macros::EnumString`, `strum_macros::Display`, and `strum_macros::AsRefStr`;
@@ -849,7 +1348,7 @@ Shared type rules:
      - `Eq`
      - `Hash`
 
-18. `PromptEvidenceRole`
+33. `PromptEvidenceRole`
    - `PromptEvidenceRole` is the shared prompt-facing role assigned to a selected evidence chunk by the `prompt_context_assembly` boundary;
    - `PromptEvidenceRole` must not derive `serde::Serialize` in the current version;
    - prompt JSON serialization of this enum is owned by `prompt_context_assembly` through module-private DTO mapping;
@@ -867,7 +1366,7 @@ Shared type rules:
      - `Eq`
      - `Hash`
 
-19. `PromptIncidentEvidenceChunk`
+34. `PromptIncidentEvidenceChunk`
    - `PromptIncidentEvidenceChunk` is the shared prompt-facing representation of one selected incident evidence chunk;
    - it must preserve selected chunk ids, case ids, scores, tags, and text from `IncidentEvidenceChunk`;
    - `role` must contain the role assigned by `prompt_context_assembly`;
@@ -877,7 +1376,7 @@ Shared type rules:
      - `Clone`
      - `PartialEq`
 
-20. `PromptTheoryEvidenceChunk`
+35. `PromptTheoryEvidenceChunk`
    - `PromptTheoryEvidenceChunk` is the shared prompt-facing representation of one selected theory chunk;
    - it must preserve selected chunk ids, scores, and text from `TheoryEvidenceChunk`;
    - `role` must be `PromptEvidenceRole::MechanismExplanation` in the current version;
@@ -886,7 +1385,7 @@ Shared type rules:
      - `Clone`
      - `PartialEq`
 
-21. `PromptContextAssemblyOutput`
+36. `PromptContextAssemblyOutput`
    - `PromptContextAssemblyOutput` is the shared runtime output of the `prompt_context_assembly` boundary;
    - it must contain exactly three fields:
      - `prompt: String`
@@ -901,7 +1400,19 @@ Shared type rules:
      - `PartialEq`
 
 Shared type export rule:
-- all shared types defined in this section, including `StructuredUserQuery`, `QueryStructuringOutput`, and `ModelTokenUsage`, must be defined in `src/shared_types.rs`;
+- all shared types defined in this section, including `StructuredUserQuery`,
+  `QueryStructuringOutput`, `QueryStructuringControlledVocabulary`,
+  `QueryStructuringMetrics`, and `ModelTokenUsage`, must be defined in
+  `src/shared_types.rs`;
+- all shared types defined in this section, including `GoldenQuestion`,
+  `GoldenQuestionQuery`, `GoldenQueryStructuringTargets`,
+  `GoldenVocabularyFieldTargets`, `GoldenTermRelevance`,
+  `GoldenCandidateCardSection`, `GoldenCardRetrievalTargets`,
+  `GoldenCardRelevance`, `GoldenIncidentEvidenceTargets`,
+  `GoldenChunkRetrievalCallTargets`, `GoldenTheoryEvidenceTargets`,
+  `GoldenChunkRetrievalTargets`, `GoldenChunkRelevance`,
+  `OpenInferenceContext`, and `Context`, must be defined in
+  `src/shared_types.rs`;
 - all shared types defined in this section, including `CandidateCard` and `CandidateCardRetrievalOutput`, must be defined in `src/shared_types.rs`;
 - all shared types defined in this section, including `IncidentCard`, `IncidentPhase`, `DiscriminatingCheck`, and `ExpectedObservation`, must be defined in `src/shared_types.rs`;
 - all shared types defined in this section, including `CardHydrationOutput`, must be defined in `src/shared_types.rs`;
@@ -1279,7 +1790,9 @@ Rules:
 - non-bootstrap runtime modules must receive only the typed settings slices they require;
 - leaf API clients must not depend on the crate-level `Settings` type;
 - future parent runtime modules may convert crate-level typed settings slices into module-owned config types before constructing leaf API clients;
-- the current minimal crate-skeleton stage does not require production runtime wiring that constructs leaf API clients from top-level `Settings`;
+- the current runtime stage requires typed startup wiring that constructs the
+  orchestrator dependency graph from top-level `Settings` through the dedicated
+  `startup` module;
 - propagation of configuration into concrete module interfaces must be defined by the corresponding child module specifications rather than by ad hoc crate-level wiring logic.
 
 ### Observability Initialization Contract
@@ -1325,21 +1838,76 @@ Required CLI arguments:
 - `--config`: path to the runtime TOML file
 - `--ingest-config`: path to the ingest TOML file
 
+Optional paired CLI arguments:
+- `--golden-cases-file`: path to one golden-cases JSON file
+- `--golden-cases-schema`: path to the JSON schema used to validate that file
+
 CLI rules:
 - `--config` is required;
 - `--ingest-config` is required;
+- `--golden-cases-file` and `--golden-cases-schema` must be supplied together
+  or omitted together;
+- when both optional golden arguments are absent, the runtime must start in
+  interactive mode;
+- when both optional golden arguments are present, the runtime must start in
+  golden-backed batch-eval mode;
+- when exactly one optional golden argument is supplied, startup must fail
+  before config loading or runtime wiring begins;
 - invalid CLI arguments are a startup error;
 - CLI startup must delegate config loading to the library-owned `config` module rather than parsing TOML or environment values inside `main.rs`;
 - startup may load the repository-owned `.env` file through `dotenvy` before environment-based config merge begins;
 - `.env` loading must happen exactly once on the startup path;
 - if a required environment variable is absent after `.env` loading and environment merge, startup must fail before any later runtime initialization begins;
 - the CLI must construct resolved `Settings` from the CLI-supplied config paths before any later runtime wiring is attempted;
-- the current minimal crate-skeleton stage does not require the CLI to construct or execute higher-level runtime flows after settings have been loaded successfully.
+- the runtime entry layer owns golden-file startup validation and typed parsing
+  in golden-backed batch-eval mode;
+- the runtime entry layer must delegate golden-file validation and parsing to
+  the dedicated `golden_eval_input` module rather than implementing that logic
+  inline in `main.rs` or `lib.rs`;
+- in golden-backed batch-eval mode, the runtime entry layer must construct one
+  `UserRequest` per validated golden-case item, using the values returned by
+  `golden_eval_input`;
+- in interactive mode, the runtime entry layer must construct
+  `UserRequest { query, golden_question: None }`;
+- in golden-backed batch-eval mode, the runtime entry layer must invoke the
+  orchestrator once per returned `UserRequest`, in source-file order;
+- each golden-backed batch item must create a separate run rather than being
+  merged into one multi-question run;
+- the current runtime stage may reuse one resolved `Settings` object, one
+  observability runtime, and one built orchestrator instance across the whole
+  batch;
+- a per-request orchestrator failure in golden-backed batch mode is scoped to
+  that run outcome and must not retroactively invalidate already completed
+  earlier runs;
+- the current runtime stage requires the CLI entry layer to execute either the
+  interactive loop or golden-backed batch-eval run creation after settings have
+  been loaded successfully.
 
 CLI path rules:
 - `--config` supplies the source path for the runtime config contract defined by `Specification/contracts/runtime/runtime_config.md`;
 - `--ingest-config` supplies the source path for the ingest config contract defined by `Specification/contracts/runtime/ingest_config.md`;
+- `--golden-cases-file` supplies the source path for one runtime-eval
+  golden-cases JSON file;
+- `--golden-cases-schema` supplies the source path for the JSON schema used to
+  validate that golden-cases file;
 - the environment contract defined by `Specification/contracts/runtime/env.md` is sourced from the standard repository `.env` file and the resulting process environment.
+
+Golden-backed batch-eval startup rules:
+- the runtime entry layer must validate the golden JSON file against the
+  supplied schema before constructing any batch request;
+- the validation and typed parsing steps must be implemented inside the
+  dedicated `golden_eval_input` module;
+- if the golden schema path does not exist, startup must fail before any run is
+  created;
+- if the golden file path does not exist, startup must fail before any run is
+  created;
+- if the golden JSON cannot be parsed as JSON, startup must fail before any run
+  is created;
+- if schema validation fails, startup must fail before any run is created;
+- if typed parsing into the runtime-owned golden-case model fails after schema
+  validation, startup must fail before any run is created;
+- no partial batch execution is allowed after any startup-time golden input
+  validation or parsing failure.
 
 ## 6) Composition Rules
 

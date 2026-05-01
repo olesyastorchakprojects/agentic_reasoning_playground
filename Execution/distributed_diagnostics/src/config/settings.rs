@@ -13,6 +13,7 @@ pub struct Settings {
     pub embedding_model: EmbeddingModelSettings,
     pub observability: ObservabilitySettings,
     pub postgres: PostgresSettings,
+    pub chunk_audit_log_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

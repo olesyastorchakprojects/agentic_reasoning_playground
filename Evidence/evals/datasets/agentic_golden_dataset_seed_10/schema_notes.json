@@ -1,0 +1,48 @@
+{
+  "graded_relevance_shape": {
+    "chunk_based_sections": [
+      "expected_incident_evidence.primary_card_evidence_query.relevance_judgments.graded_relevance",
+      "expected_incident_evidence.alternative_cards_evidence_query.relevance_judgments.graded_relevance",
+      "expected_theory_evidence.mechanism_explanation.graded_relevance"
+    ],
+    "chunk_item": {
+      "chunk_id": "string",
+      "score": "1.0 | 0.5 | 0.0"
+    },
+    "vocabulary_based_sections": [
+      "expected_query_structuring.symptoms.graded_relevance",
+      "expected_query_structuring.affected_subsystems.graded_relevance",
+      "expected_query_structuring.failure_modes.graded_relevance",
+      "expected_query_structuring.system_properties.graded_relevance"
+    ],
+    "term_item": {
+      "term": "string",
+      "score": "1.0 | 0.5 | 0.0"
+    },
+    "card_based_sections": [
+      "expected_candidate_cards.retrieval_relevant_cards.graded_relevance"
+    ],
+    "card_item": {
+      "card_id": "string",
+      "score": "1.0 | 0.5 | 0.0"
+    }
+  },
+  "scoring_rule": "For nDCG, use the explicit score if present; otherwise default to 0.0.",
+  "strict_soft_rule": "strict ids/terms are a subset of soft ids/terms. Strict items score 1.0; soft-only items score 0.5; explicit negatives score 0.0.",
+  "theory_corpus_source": "Evidence/parsing/understanding_distributed_systems/chunks/chunks.jsonl from the structural chunker.",
+  "query_structuring_vocab_closure": {
+    "status": "compact_sample",
+    "meaning": "Vocabulary-backed query-structuring graded relevance is capped for readability.",
+    "max_items_per_field": 10,
+    "sort_order": "score_desc",
+    "item_shape": {
+      "term": "string",
+      "score": "1.0 | 0.5 | 0.0"
+    },
+    "scoring": {
+      "1.0": "strict expected vocabulary term",
+      "0.5": "soft acceptable vocabulary term",
+      "0.0": "explicit non-relevant vocabulary term sample for this query"
+    }
+  }
+}

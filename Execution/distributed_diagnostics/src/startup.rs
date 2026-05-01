@@ -206,7 +206,7 @@ pub async fn build_orchestrator(
 
     let response_validation_and_normalization = ResponseValidationAndNormalization::new();
 
-    let executor = StepExecutor::new(StepExecutorModules {
+    let mut executor = StepExecutor::new(StepExecutorModules {
         input_normalization,
         query_structuring,
         candidate_card_retrieval,
@@ -217,6 +217,18 @@ pub async fn build_orchestrator(
         llm_structured_generation,
         response_validation_and_normalization,
     });
+
+    if let Some(path) = &settings.chunk_audit_log_path {
+        match crate::chunk_audit_log::ChunkAuditLog::open(path) {
+            Ok(log) => {
+                executor = executor.with_chunk_audit_log(log);
+                tracing::info!("chunk audit log enabled: {path}");
+            }
+            Err(e) => {
+                tracing::warn!("chunk audit log: failed to open '{path}': {e}");
+            }
+        }
+    }
 
     let run_repository = RunRepository::new(run_state_store);
     let policy = LinearPipelineTransitionPolicy::new();

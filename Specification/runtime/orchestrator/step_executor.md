@@ -48,7 +48,7 @@ use crate::request_pipeline::prompt_context_assembly::PromptContextAssembly;
 use crate::request_pipeline::query_structuring::QueryStructuring;
 use crate::request_pipeline::response_validation_and_normalization::ResponseValidationAndNormalization;
 use crate::request_pipeline::theory_evidence_retrieval::TheoryEvidenceRetrieval;
-use crate::shared_types::UserRequest;
+use crate::shared_types::{Context, UserRequest};
 ```
 
 Exact import paths may be adjusted by the generator to match the generated
@@ -118,6 +118,13 @@ impl StepExecutor {
         step: StepKind,
         state: RunStateView<'_>,
     ) -> Result<StepResultEnvelope, StepError>;
+
+    pub async fn execute_with_context(
+        &self,
+        step: StepKind,
+        state: RunStateView<'_>,
+        context: &Context,
+    ) -> Result<StepResultEnvelope, StepError>;
 }
 ```
 
@@ -126,6 +133,12 @@ API rules:
 - `execute` must not mutate `RunState`;
 - `execute` must read only from the current run state supplied via
   `RunStateView`;
+- `execute` must delegate to `execute_with_context(step, state, &Context::noop())`;
+- `execute_with_context` must not mutate `RunState`;
+- `execute_with_context` must read only from the current run state supplied via
+  `RunStateView`;
+- `execute_with_context` must treat the supplied `Context` as an
+  orchestration-owned execution-time companion and must not mutate it;
 - `execute` must inspect only the current iteration;
 - `execute` must return `StepError::MissingRequiredInput` when required
   finished-step inputs are absent from the current iteration;
@@ -207,14 +220,14 @@ Required lookup paths and execution mapping:
 | Requested `StepKind` | Required reads from current iteration | Leaf-module call | Success result |
 | --- | --- | --- | --- |
 | `InputNormalization` | `finished_step(StepKind::UserInputReceived)` | `input_normalization.normalize(user_request)` | `StepResultEnvelope::InputNormalization(...)` |
-| `QueryStructuring` | `finished_step(StepKind::InputNormalization)` | `query_structuring.structure(&normalized_request).await` | `StepResultEnvelope::QueryStructuring(...)` |
-| `CandidateCardRetrieval` | `finished_step(StepKind::InputNormalization)` | `candidate_card_retrieval.retrieve(&normalized_request).await` | `StepResultEnvelope::CandidateCardRetrieval(...)` |
+| `QueryStructuring` | `finished_step(StepKind::InputNormalization)` | `query_structuring.structure_with_context(&normalized_request, context).await` | `StepResultEnvelope::QueryStructuring(...)` |
+| `CandidateCardRetrieval` | `finished_step(StepKind::InputNormalization)` | `candidate_card_retrieval.retrieve_with_context(&normalized_request, context).await` | `StepResultEnvelope::CandidateCardRetrieval(...)` |
 | `CardHydration` | `finished_step(StepKind::CandidateCardRetrieval)` | `card_hydration.hydrate(&candidates).await` | `StepResultEnvelope::CardHydration(...)` |
-| `IncidentEvidenceRetrieval` | `finished_step(StepKind::InputNormalization)` and `finished_step(StepKind::CandidateCardRetrieval)` | `incident_evidence_retrieval.retrieve(&normalized_request, &candidates).await` | `StepResultEnvelope::IncidentEvidenceRetrieval(...)` |
-| `TheoryEvidenceRetrieval` | `finished_step(StepKind::InputNormalization)` | `theory_evidence_retrieval.retrieve(&normalized_request).await` | `StepResultEnvelope::TheoryEvidenceRetrieval(...)` |
-| `PromptContextAssembly` | `finished_step(StepKind::InputNormalization)`, `finished_step(StepKind::QueryStructuring)`, `finished_step(StepKind::CardHydration)`, `finished_step(StepKind::IncidentEvidenceRetrieval)`, and `finished_step(StepKind::TheoryEvidenceRetrieval)` | `prompt_context_assembly.assemble(&normalized_request, &structured_query, &hydrated_cards, &incident_evidence, &theory_evidence)` | `StepResultEnvelope::PromptContextAssembly(...)` |
-| `LlmStructuredGeneration` | `finished_step(StepKind::PromptContextAssembly)` | `llm_structured_generation.generate(&prompt_context).await` | `StepResultEnvelope::LlmStructuredGeneration(...)` |
-| `ResponseValidationAndNormalization` | `finished_step(StepKind::LlmStructuredGeneration)` | `response_validation_and_normalization.validate_and_normalize(&llm_output)` | `StepResultEnvelope::ResponseValidationAndNormalization(...)` |
+| `IncidentEvidenceRetrieval` | `finished_step(StepKind::InputNormalization)` and `finished_step(StepKind::CandidateCardRetrieval)` | `incident_evidence_retrieval.retrieve_with_context(&normalized_request, &candidates, context).await` | `StepResultEnvelope::IncidentEvidenceRetrieval(...)` |
+| `TheoryEvidenceRetrieval` | `finished_step(StepKind::InputNormalization)` | `theory_evidence_retrieval.retrieve_with_context(&normalized_request, context).await` | `StepResultEnvelope::TheoryEvidenceRetrieval(...)` |
+| `PromptContextAssembly` | `finished_step(StepKind::InputNormalization)`, `finished_step(StepKind::QueryStructuring)`, `finished_step(StepKind::CardHydration)`, `finished_step(StepKind::IncidentEvidenceRetrieval)`, and `finished_step(StepKind::TheoryEvidenceRetrieval)` | `prompt_context_assembly.assemble_with_context(&normalized_request, &structured_query, &hydrated_cards, &incident_evidence, &theory_evidence, context)` | `StepResultEnvelope::PromptContextAssembly(...)` |
+| `LlmStructuredGeneration` | `finished_step(StepKind::PromptContextAssembly)` | `llm_structured_generation.generate_with_context(&prompt_context, context).await` | `StepResultEnvelope::LlmStructuredGeneration(...)` |
+| `ResponseValidationAndNormalization` | `finished_step(StepKind::LlmStructuredGeneration)` | `response_validation_and_normalization.validate_and_normalize_with_context(&llm_output, context)` | `StepResultEnvelope::ResponseValidationAndNormalization(...)` |
 
 ## 11) Finished-Step Decoding Rules
 
@@ -284,6 +297,8 @@ Cloning rules:
 - `execute` must not clone unrelated step payloads;
 - `execute` must not materialize an owned iteration snapshot solely for
   convenience.
+- `execute_with_context` must prefer passing the borrowed `Context` unchanged to
+  context-aware leaf-module calls rather than cloning it.
 
 ## 14) Ordering And Pending-Step Rules
 

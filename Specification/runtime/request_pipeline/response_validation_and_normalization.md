@@ -27,6 +27,7 @@ type.
 
 This module depends on:
 - `Specification/runtime/runtime.md`
+- `Specification/runtime/observability/open_inference_spans.md`
 
 Required shared runtime input type:
 - `LlmStructuredGenerationOutput`
@@ -99,13 +100,27 @@ impl ResponseValidationAndNormalization {
         &self,
         input: &LlmStructuredGenerationOutput,
     ) -> Result<ResponseValidationAndNormalizationOutput, ResponseValidationAndNormalizationError>;
+
+    pub fn validate_and_normalize_with_context(
+        &self,
+        input: &LlmStructuredGenerationOutput,
+        context: &Context,
+    ) -> Result<ResponseValidationAndNormalizationOutput, ResponseValidationAndNormalizationError>;
 }
 ```
 
 Rules:
 - the current version has no module settings;
 - `new()` must not read files or environment variables;
-- `validate_and_normalize(...)` must be deterministic and side-effect-free.
+- `validate_and_normalize(...)` must delegate to
+  `validate_and_normalize_with_context(input, &Context::noop())`;
+- `validate_and_normalize_with_context(...)` is the context-aware request-time
+  entrypoint used by the orchestrator;
+- `validate_and_normalize_with_context(...)` must treat
+  `context.open_inference.root_span` as the parent span for the module-owned
+  OpenInference guardrail span `oi.guardrail.response_validation`;
+- `validate_and_normalize_with_context(...)` must be deterministic and
+  side-effect-free.
 
 ## 6) Input Rules
 
@@ -115,7 +130,10 @@ Rules:
 Rules:
 - the module must not inspect `input.token_usage` for validation decisions;
 - the module must not mutate `input.response_json`;
-- the module must not accept any alternate raw JSON input in the current version.
+- the module must not accept any alternate raw JSON input in the current version;
+- the OpenInference input/output payload contract for
+  `validate_and_normalize_with_context(...)` is owned by
+  `Specification/runtime/observability/open_inference_spans.md`.
 
 ## 7) Shape Validation Rules
 
@@ -161,8 +179,9 @@ The module must enforce these MVP business rules after shape validation:
 
 - all string fields must be non-empty after trimming;
 - string values must be normalized by trimming leading and trailing whitespace;
+- `active_hypotheses` items that become empty after trimming must be dropped
+  before hypothesis-count validation;
 - `active_hypotheses.len()` must be `2` or `3`;
-- every `active_hypotheses` item must be non-empty after trimming;
 - `first_check` must be one compact next check, not an empty value;
 - `competing_interpretation = Some(value)` must contain a non-empty trimmed
   string;
@@ -181,7 +200,8 @@ Rules:
 - when a nullable string field is present and contains only whitespace,
   validation must fail;
 - when a required string field contains only whitespace, validation must fail;
-- when an active hypothesis contains only whitespace, validation must fail;
+- when the remaining trimmed active hypotheses violate the `2..=3` rule after
+  dropping whitespace-only items, validation must fail;
 - the module must not rewrite wording beyond leading/trailing whitespace
   trimming in the current version;
 - the module must not synthesize missing hypotheses or missing interpretations.
@@ -197,7 +217,8 @@ Field mapping rules:
 - `response.similar_practical_context` <- trimmed
   `response_json.similar_practical_context`;
 - `response.active_hypotheses` <- each trimmed item from
-  `response_json.active_hypotheses` in original order;
+  `response_json.active_hypotheses` in original order, excluding items that
+  become empty after trimming;
 - `response.first_check` <- trimmed `response_json.first_check`;
 - `response.result_interpretation.supports_primary_if` <- trimmed nested value;
 - `response.result_interpretation.supports_competing_if` <- trimmed nested value;

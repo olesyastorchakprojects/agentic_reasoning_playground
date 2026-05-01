@@ -983,6 +983,7 @@ mod tests {
     fn user_input_envelope() -> StepResultEnvelope {
         StepResultEnvelope::UserInputReceived(UserRequest {
             query: "service down".to_string(),
+            golden_question: None,
         })
     }
 
@@ -997,6 +998,7 @@ mod tests {
         StepResultEnvelope::CandidateCardRetrieval(CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![],
+            metrics: None,
         })
     }
 

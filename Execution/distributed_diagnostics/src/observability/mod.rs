@@ -334,6 +334,7 @@ pub(crate) fn oi_llm_query_structuring_span(parent: &tracing::Span) -> tracing::
         input.mime_type = field::Empty,
         output.value = field::Empty,
         output.mime_type = field::Empty,
+        llm.raw_response = field::Empty,
         llm.model_name = field::Empty,
         llm.provider = field::Empty,
         llm.invocation_parameters = field::Empty,
@@ -361,6 +362,7 @@ pub(crate) fn oi_llm_diagnostic_response_span(parent: &tracing::Span) -> tracing
         llm.token_count.prompt = field::Empty,
         llm.token_count.completion = field::Empty,
         llm.token_count.total = field::Empty,
+        llm.raw_response = field::Empty,
         status = field::Empty,
         error.type = field::Empty,
         error.message = field::Empty,
@@ -432,6 +434,80 @@ pub(crate) fn oi_retriever_theory_span(parent: &tracing::Span) -> tracing::Span 
         parent: parent,
         "oi.retriever.theory_evidence",
         openinference.span.kind = "RETRIEVER",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_chain_query_structuring_metrics_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.chain.query_structuring_metrics",
+        openinference.span.kind = "CHAIN",
+        qs.metrics.present = true,
+        qs.metrics.version = "v1",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_chain_candidate_card_retrieval_metrics_span(
+    parent: &tracing::Span,
+) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.chain.candidate_card_retrieval_metrics",
+        openinference.span.kind = "CHAIN",
+        rt.metrics.present = true,
+        rt.metrics.version = "v1",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_chain_incident_evidence_retrieval_metrics_span(
+    parent: &tracing::Span,
+) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.chain.incident_evidence_retrieval_metrics",
+        openinference.span.kind = "CHAIN",
+        rt.metrics.present = true,
+        rt.metrics.version = "v1",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_chain_theory_evidence_retrieval_metrics_span(
+    parent: &tracing::Span,
+) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.chain.theory_evidence_retrieval_metrics",
+        openinference.span.kind = "CHAIN",
+        rt.metrics.present = true,
+        rt.metrics.version = "v1",
         input.value = field::Empty,
         input.mime_type = field::Empty,
         output.value = field::Empty,

@@ -26,6 +26,7 @@ mod tests {
     fn user_req() -> UserRequest {
         UserRequest {
             query: "test query".to_string(),
+            golden_question: None,
         }
     }
 

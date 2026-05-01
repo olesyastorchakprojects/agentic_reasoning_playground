@@ -1,0 +1,32 @@
+[
+  {
+    "case_id": "easy_q001",
+    "query": {
+      "raw": "Our Amazon RDS for PostgreSQL reader endpoint misses writes that are already visible on the writer endpoint, even though there was no failover. What should we check first?"
+    }
+  },
+  {
+    "case_id": "easy_q002",
+    "query": {
+      "raw": "Two etcd clients both think they hold the same lock after a short lease TTL, and updates to the protected external set are lost. What should we check first?"
+    }
+  },
+  {
+    "case_id": "easy_q003",
+    "query": {
+      "raw": "In RavenDB single-node transactions, two sessions both read the same version and both commit appends, but one write disappears while optimistic concurrency is off. What should we check first?"
+    }
+  },
+  {
+    "case_id": "easy_q004",
+    "query": {
+      "raw": "In MySQL 8.0 Repeatable Read, two transactions both read a missing key and append the first value, but one update disappears. What should we check first?"
+    }
+  },
+  {
+    "case_id": "easy_q005",
+    "query": {
+      "raw": "In a CockroachDB monotonic test, cross-range transactions sometimes create duplicate writes with the same timestamp while clock offset stays below the threshold. What should we check first?"
+    }
+  }
+]
