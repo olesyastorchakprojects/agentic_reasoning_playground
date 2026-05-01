@@ -1,0 +1,82 @@
+[
+  {
+    "question_id": "q01_tcp_reliable_over_ip",
+    "tags": ["causal", "failure"]
+  },
+  {
+    "question_id": "q02_connection_setup_reuse_cost",
+    "tags": ["causal", "tradeoff"]
+  },
+  {
+    "question_id": "q03_flow_vs_congestion_control",
+    "tags": ["contrast"]
+  },
+  {
+    "question_id": "q04_udp_for_realtime_protocols",
+    "tags": ["contrast", "tradeoff"]
+  },
+  {
+    "question_id": "q05_tls_authentication_certificate_chain",
+    "tags": ["causal", "failure"]
+  },
+  {
+    "question_id": "q06_tls_integrity_hmac_vs_tcp_checksum",
+    "tags": ["causal", "failure"]
+  },
+  {
+    "question_id": "q07_dns_ttl_tradeoff_and_stale_entries",
+    "tags": ["tradeoff", "failure"]
+  },
+  {
+    "question_id": "q08_http_versions_head_of_line_blocking",
+    "tags": ["contrast", "failure"]
+  },
+  {
+    "question_id": "q09_idempotency_keys_and_atomicity",
+    "tags": ["failure"]
+  },
+  {
+    "question_id": "q10_partial_synchrony_realism",
+    "tags": ["causal", "contrast"]
+  },
+  {
+    "question_id": "q11_lamport_vs_vector_clocks",
+    "tags": ["causal", "contrast"]
+  },
+  {
+    "question_id": "q12_raft_leader_election",
+    "tags": ["causal", "failure"]
+  },
+  {
+    "question_id": "q13_consistency_tradeoffs_and_cap",
+    "tags": ["tradeoff", "failure"]
+  },
+  {
+    "question_id": "q14_causal_vs_eventual_consistency",
+    "tags": ["contrast", "tradeoff"]
+  },
+  {
+    "question_id": "q15_isolation_atomicity_and_2pc",
+    "tags": ["contrast"]
+  },
+  {
+    "question_id": "q16_outbox_pattern_dual_writes",
+    "tags": ["failure"]
+  },
+  {
+    "question_id": "q17_sagas_and_lack_of_isolation",
+    "tags": ["tradeoff", "failure"]
+  },
+  {
+    "question_id": "q18_range_vs_hash_partitioning",
+    "tags": ["contrast", "tradeoff"]
+  },
+  {
+    "question_id": "q19_l4_vs_l7_load_balancing",
+    "tags": ["contrast"]
+  },
+  {
+    "question_id": "q20_exactly_once_processing_is_an_illusion",
+    "tags": ["failure", "tradeoff"]
+  }
+]

@@ -1,0 +1,12 @@
+[judge]
+provider = "together"
+model_name = "openai/gpt-oss-20b"
+tokenizer_source = "Qwen/Qwen2.5-1.5B-Instruct"
+input_cost_per_million_tokens = 0.05
+output_cost_per_million_tokens = 0.20
+
+[judge.ollama]
+timeout_sec = 120
+
+[judge.together]
+timeout_sec = 120

@@ -1,0 +1,52 @@
+{
+  "generation_suites": {
+    "answer_completeness": {
+      "id": "evals.generation.answer_completeness",
+      "version": "v1",
+      "prompt_template": "You are evaluating a RAG system answer.\n\nYour task is to classify the answer as complete, partial, or incomplete.\nYou must be conservative and consistent.\n\nLabel definitions:\n- complete:\n  The answer directly addresses the user question, is relevant, factually usable, and covers the main requested information with no important omissions.\n- partial:\n  The answer is relevant and somewhat useful, but it is missing important details, is too vague, only answers part of the question, or gives a weak summary instead of a solid answer.\n- incomplete:\n  The answer fails to address the question, is mostly irrelevant, is too shallow to be useful, or does not provide a meaningful answer.\n\nDecision rules:\n- Prefer complete only when the answer is clearly sufficient on its own.\n- Use partial when the answer is directionally correct but noticeably incomplete.\n- Use incomplete when the user would still not have a usable answer after reading it.\n- If you are uncertain between complete and partial, choose partial.\n- If you are uncertain between partial and incomplete, choose incomplete.\n- Do not reward fluency alone. A smooth but vague answer is partial or incomplete.\n- Do not infer missing details that are not present in the answer.\n- Judge only the answer that is written, not what the model may have intended.\n\nReturn valid JSON with exactly these keys:\n{\"label\": \"complete|partial|incomplete\", \"explanation\": \"short explanation\"}\nDo not return any other text.\n\nUser question:\n{{normalized_query}}\n\nSystem answer:\n{{final_answer}}\n",
+      "input_variables": [
+        "normalized_query",
+        "final_answer"
+      ]
+    },
+    "groundedness": {
+      "id": "evals.generation.groundedness",
+      "version": "v1",
+      "prompt_template": "You are evaluating whether a RAG system answer is grounded in the provided retrieved context.\n\nYour task is to classify the answer as grounded, partially_grounded, or ungrounded.\nYou must be conservative and consistent.\n\nLabel definitions:\n- grounded:\n  The answer's substantive claims are supported by the provided retrieved context.\n- partially_grounded:\n  The answer is partly supported by the provided context, but some important claims are weakly supported, incomplete, or not clearly grounded.\n- ungrounded:\n  The answer contains important claims that are not supported by the provided context, or it goes beyond the context in a material way.\n\nDecision rules:\n- Judge only against the provided retrieved context.\n- Do not use outside knowledge.\n- If the answer makes a claim that is not supported by the provided context, do not treat it as grounded.\n- If you are uncertain between grounded and partially_grounded, choose partially_grounded.\n- If you are uncertain between partially_grounded and ungrounded, choose ungrounded.\n- Minor paraphrasing is acceptable if the underlying claim is supported.\n\nReturn valid JSON with exactly these keys:\n{\"label\": \"grounded|partially_grounded|ungrounded\", \"explanation\": \"short explanation\"}\nDo not return any other text.\n\nUser question:\n{{normalized_query}}\n\nSystem answer:\n{{final_answer}}\n\nRetrieved context chunks used for generation:\n{{selected_context_chunks}}\n",
+      "input_variables": [
+        "normalized_query",
+        "final_answer",
+        "selected_context_chunks"
+      ]
+    },
+    "answer_relevance": {
+      "id": "evals.generation.answer_relevance",
+      "version": "v1",
+      "prompt_template": "You are evaluating whether a RAG system answer is relevant to the user's question.\n\nYour task is to classify the answer as relevant, partially_relevant, or irrelevant.\nYou must be conservative and consistent.\n\nLabel definitions:\n- relevant:\n  The answer directly addresses the user's question and stays on topic.\n- partially_relevant:\n  The answer is related to the question but only addresses it partially, indirectly, or with noticeable drift.\n- irrelevant:\n  The answer does not meaningfully address the user's question.\n\nDecision rules:\n- Judge relevance, not completeness.\n- A short but directly on-topic answer may still be relevant.\n- A fluent answer that avoids the user's actual request is partially_relevant or irrelevant.\n- If you are uncertain between relevant and partially_relevant, choose partially_relevant.\n- If you are uncertain between partially_relevant and irrelevant, choose irrelevant.\n\nReturn valid JSON with exactly these keys:\n{\"label\": \"relevant|partially_relevant|irrelevant\", \"explanation\": \"short explanation\"}\nDo not return any other text.\n\nUser question:\n{{normalized_query}}\n\nSystem answer:\n{{final_answer}}\n",
+      "input_variables": [
+        "normalized_query",
+        "final_answer"
+      ]
+    },
+    "correct_refusal": {
+      "id": "evals.generation.correct_refusal",
+      "version": "v1",
+      "prompt_template": "You are evaluating whether a RAG system answer is a correct refusal.\n\nYour task is to classify the answer as correct_refusal, unnecessary_refusal, or non_refusal.\nYou must be conservative and consistent.\n\nLabel definitions:\n- correct_refusal:\n  The answer appropriately refuses or abstains because the request cannot be answered safely or cannot be answered from the available context.\n- unnecessary_refusal:\n  The answer refuses or abstains even though it should have answered the user's question.\n- non_refusal:\n  The answer is not a refusal or abstention.\n\nDecision rules:\n- Judge only whether the refusal behavior is appropriate for the question-answer pair and the RAG setting.\n- Do not reward generic safety disclaimers if they avoid a question that should have been answered.\n- If the answer is clearly not a refusal, choose non_refusal.\n- If you are uncertain between correct_refusal and unnecessary_refusal, choose unnecessary_refusal.\n\nReturn valid JSON with exactly these keys:\n{\"label\": \"correct_refusal|unnecessary_refusal|non_refusal\", \"explanation\": \"short explanation\"}\nDo not return any other text.\n\nUser question:\n{{normalized_query}}\n\nSystem answer:\n{{final_answer}}\n",
+      "input_variables": [
+        "normalized_query",
+        "final_answer"
+      ]
+    }
+  },
+  "retrieval_suites": {
+    "retrieval_relevance": {
+      "id": "evals.retrieval.retrieval_relevance",
+      "version": "v1",
+      "prompt_template": "You are evaluating retrieval relevance for a RAG system.\n\nYour task is to classify the retrieved chunk as relevant, partial, or irrelevant for answering the user's question.\nYou must be conservative and consistent.\n\nLabel definitions:\n- relevant:\n  The chunk contains information that clearly helps answer the question.\n- partial:\n  The chunk is somewhat related and may help indirectly, but it is incomplete, weakly connected, or only partially useful.\n- irrelevant:\n  The chunk does not meaningfully help answer the question.\n\nDecision rules:\n- If you are uncertain between relevant and partial, choose partial.\n- If you are uncertain between partial and irrelevant, choose irrelevant.\n- Do not reward topic similarity alone.\n- Judge only whether this chunk is useful for answering the question.\n\nReturn valid JSON with exactly these keys:\n{\"label\": \"relevant|partial|irrelevant\", \"explanation\": \"short explanation\"}\nDo not return any other text.\n\nUser question:\n{{normalized_query}}\n\nRetrieved chunk:\n{{chunk_text}}\n",
+      "input_variables": [
+        "normalized_query",
+        "chunk_text"
+      ]
+    }
+  }
+}

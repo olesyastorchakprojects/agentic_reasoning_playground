@@ -1,0 +1,49 @@
+{
+  "eval_run_id": "1bfc954f-e1d1-4e85-9070-bea54bcf242e",
+  "run_type": "golden_dataset",
+  "status": "running",
+  "started_at": "2026-05-01T21:24:33.637011839Z",
+  "completed_at": null,
+  "stages": [
+    "judge_request_suites",
+    "build_eval_summary"
+  ],
+  "judge_provider": "together",
+  "judge_base_url": "https://api.together.xyz",
+  "judge_model": "openai/gpt-oss-20b",
+  "suite_versions": {
+    "final_no_root_cause_claim": "enabled_from_config"
+  },
+  "runtime_run_count": 5,
+  "run_scope_runtime_run_ids": [
+    "06954dd1-2512-4d1d-9d72-17e4822dc9ad",
+    "098f0ae3-5323-47cc-9035-47fa45075776",
+    "4fc639f2-7d29-4b64-a4f6-7ecf84874438",
+    "81fe7cf0-226f-49a1-8165-4060f357c3f5",
+    "8590b0ea-4acc-4f54-9dae-df979df02447"
+  ],
+  "subject_count": 5,
+  "run_scope_subjects": [
+    {
+      "runtime_run_id": "098f0ae3-5323-47cc-9035-47fa45075776",
+      "iteration_id": "28e4a969-d0b4-4d23-9293-7e0ce4e3662d"
+    },
+    {
+      "runtime_run_id": "8590b0ea-4acc-4f54-9dae-df979df02447",
+      "iteration_id": "cc99049c-a6d5-4234-aaf2-b8c4a81a94c5"
+    },
+    {
+      "runtime_run_id": "81fe7cf0-226f-49a1-8165-4060f357c3f5",
+      "iteration_id": "a7a6d08b-98ad-4a71-8311-8c5e1d0521d2"
+    },
+    {
+      "runtime_run_id": "4fc639f2-7d29-4b64-a4f6-7ecf84874438",
+      "iteration_id": "1aa7a364-8b40-4a11-9cc8-db9fa9961cc5"
+    },
+    {
+      "runtime_run_id": "06954dd1-2512-4d1d-9d72-17e4822dc9ad",
+      "iteration_id": "9b7f81ee-1914-4623-af01-fac8130436a1"
+    }
+  ],
+  "last_error": null
+}

@@ -63,6 +63,16 @@ impl RunRepository {
                 Box::pin(async move {
                     tx.insert_iteration(run.run_id, iteration_sequence_no, &iteration)
                         .await?;
+                    for (step_sequence_no, step_record) in
+                        iteration.step_records.iter().enumerate()
+                    {
+                        tx.insert_step_record(
+                            iteration.iteration_id,
+                            step_sequence_no as u64,
+                            step_record,
+                        )
+                        .await?;
+                    }
                     tx.update_run_header(run.run_id, run.status, run.updated_at, run.revision)
                         .await?;
                     Ok(())
