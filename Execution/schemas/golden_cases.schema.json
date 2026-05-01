@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "execution/schemas/golden_cases.schema.json",
+  "title": "Distributed Diagnostics Golden Cases",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/golden_case"
+  },
+  "$defs": {
+    "score": {
+      "type": "number",
+      "enum": [0.0, 0.5, 1.0]
+    },
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "string_array": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/non_empty_string"
+      }
+    },
+    "term_relevance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "term",
+        "score"
+      ],
+      "properties": {
+        "term": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "score": {
+          "$ref": "#/$defs/score"
+        }
+      }
+    },
+    "card_relevance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "card_id",
+        "score"
+      ],
+      "properties": {
+        "card_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "score": {
+          "$ref": "#/$defs/score"
+        }
+      }
+    },
+    "chunk_relevance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chunk_id",
+        "score"
+      ],
+      "properties": {
+        "chunk_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "score": {
+          "$ref": "#/$defs/score"
+        }
+      }
+    },
+    "vocabulary_field_targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strict_vocabulary_terms",
+        "soft_vocabulary_terms",
+        "graded_relevance"
+      ],
+      "properties": {
+        "strict_vocabulary_terms": {
+          "$ref": "#/$defs/string_array"
+        },
+        "soft_vocabulary_terms": {
+          "$ref": "#/$defs/string_array"
+        },
+        "graded_relevance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/term_relevance"
+          }
+        }
+      }
+    },
+    "query_structuring_targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "symptoms",
+        "affected_subsystems",
+        "failure_modes",
+        "system_properties"
+      ],
+      "properties": {
+        "symptoms": {
+          "$ref": "#/$defs/vocabulary_field_targets"
+        },
+        "affected_subsystems": {
+          "$ref": "#/$defs/vocabulary_field_targets"
+        },
+        "failure_modes": {
+          "$ref": "#/$defs/vocabulary_field_targets"
+        },
+        "system_properties": {
+          "$ref": "#/$defs/vocabulary_field_targets"
+        }
+      }
+    },
+    "candidate_card_targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strict_card_ids",
+        "soft_card_ids",
+        "graded_relevance"
+      ],
+      "properties": {
+        "strict_card_ids": {
+          "$ref": "#/$defs/string_array"
+        },
+        "soft_card_ids": {
+          "$ref": "#/$defs/string_array"
+        },
+        "graded_relevance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/card_relevance"
+          }
+        }
+      }
+    },
+    "candidate_cards_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retrieval_relevant_cards"
+      ],
+      "properties": {
+        "retrieval_relevant_cards": {
+          "$ref": "#/$defs/candidate_card_targets"
+        }
+      }
+    },
+    "chunk_retrieval_targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "strict_chunk_ids",
+        "soft_chunk_ids",
+        "graded_relevance"
+      ],
+      "properties": {
+        "strict_chunk_ids": {
+          "$ref": "#/$defs/string_array"
+        },
+        "soft_chunk_ids": {
+          "$ref": "#/$defs/string_array"
+        },
+        "graded_relevance": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/chunk_relevance"
+          }
+        }
+      }
+    },
+    "chunk_retrieval_call_targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retrieval_call_id",
+        "relevance_judgments"
+      ],
+      "properties": {
+        "retrieval_call_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "relevance_judgments": {
+          "$ref": "#/$defs/chunk_retrieval_targets"
+        }
+      }
+    },
+    "incident_evidence_targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_card_evidence_query",
+        "alternative_cards_evidence_query"
+      ],
+      "properties": {
+        "primary_card_evidence_query": {
+          "$ref": "#/$defs/chunk_retrieval_call_targets"
+        },
+        "alternative_cards_evidence_query": {
+          "$ref": "#/$defs/chunk_retrieval_call_targets"
+        }
+      }
+    },
+    "theory_evidence_targets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mechanism_explanation"
+      ],
+      "properties": {
+        "mechanism_explanation": {
+          "$ref": "#/$defs/chunk_retrieval_targets"
+        }
+      }
+    },
+    "golden_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw"
+      ],
+      "properties": {
+        "raw": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    },
+    "golden_case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "case_id",
+        "query",
+        "expected_query_structuring",
+        "expected_candidate_cards",
+        "expected_incident_evidence",
+        "expected_theory_evidence"
+      ],
+      "properties": {
+        "case_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "query": {
+          "$ref": "#/$defs/golden_query"
+        },
+        "expected_query_structuring": {
+          "$ref": "#/$defs/query_structuring_targets"
+        },
+        "expected_candidate_cards": {
+          "$ref": "#/$defs/candidate_cards_section"
+        },
+        "expected_incident_evidence": {
+          "$ref": "#/$defs/incident_evidence_targets"
+        },
+        "expected_theory_evidence": {
+          "$ref": "#/$defs/theory_evidence_targets"
+        }
+      }
+    }
+  }
+}

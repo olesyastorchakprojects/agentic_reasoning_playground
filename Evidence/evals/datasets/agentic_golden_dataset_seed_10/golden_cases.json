@@ -1,0 +1,4416 @@
+[
+  {
+    "case_id": "q001",
+    "query": {
+      "raw": "In our Amazon RDS for PostgreSQL Multi-AZ cluster, the writer endpoint and reader endpoint sometimes return inconsistent snapshots under normal load. There was no failover or fault injection. Read-only transactions through the reader endpoint appear to miss writes that were already visible through the primary endpoint. What should I check first?"
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "inconsistent_reads_between_primary_and_reader",
+          "snapshot_isolation_violation"
+        ],
+        "soft_vocabulary_terms": [
+          "inconsistent_reads_between_primary_and_reader",
+          "snapshot_isolation_violation",
+          "healthy_cluster_anomaly",
+          "long_fork",
+          "stale_or_out_of_order_reads"
+        ],
+        "graded_relevance": [
+          {
+            "term": "inconsistent_reads_between_primary_and_reader",
+            "score": 1.0
+          },
+          {
+            "term": "snapshot_isolation_violation",
+            "score": 1.0
+          },
+          {
+            "term": "healthy_cluster_anomaly",
+            "score": 0.5
+          },
+          {
+            "term": "long_fork",
+            "score": 0.5
+          },
+          {
+            "term": "stale_or_out_of_order_reads",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "clock_sensitivity",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "primary_endpoint",
+          "reader_endpoint"
+        ],
+        "soft_vocabulary_terms": [
+          "primary_endpoint",
+          "reader_endpoint",
+          "transaction_visibility_order",
+          "wal_replication",
+          "sharded_or_replicated_cluster_behavior"
+        ],
+        "graded_relevance": [
+          {
+            "term": "primary_endpoint",
+            "score": 1.0
+          },
+          {
+            "term": "reader_endpoint",
+            "score": 1.0
+          },
+          {
+            "term": "sharded_or_replicated_cluster_behavior",
+            "score": 0.5
+          },
+          {
+            "term": "transaction_visibility_order",
+            "score": 0.5
+          },
+          {
+            "term": "wal_replication",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "external_critical_sections",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "reader_endpoint_visibility_divergence"
+        ],
+        "soft_vocabulary_terms": [
+          "reader_endpoint_visibility_divergence",
+          "primary_vs_secondary_order_disagreement",
+          "long_fork",
+          "snapshot_read_without_majority_write",
+          "strict_serializability_gap"
+        ],
+        "graded_relevance": [
+          {
+            "term": "reader_endpoint_visibility_divergence",
+            "score": 1.0
+          },
+          {
+            "term": "long_fork",
+            "score": 0.5
+          },
+          {
+            "term": "primary_vs_secondary_order_disagreement",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot_read_without_majority_write",
+            "score": 0.5
+          },
+          {
+            "term": "strict_serializability_gap",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.0
+          },
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 0.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "Snapshot Isolation across primary and reader endpoints"
+        ],
+        "soft_vocabulary_terms": [
+          "Snapshot Isolation across primary and reader endpoints",
+          "snapshot isolation",
+          "strict serializability",
+          "strict serializability / external consistency",
+          "snapshot-consistent reads across transaction modes"
+        ],
+        "graded_relevance": [
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 1.0
+          },
+          {
+            "term": "snapshot isolation",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot-consistent reads across transaction modes",
+            "score": 0.5
+          },
+          {
+            "term": "strict serializability",
+            "score": 0.5
+          },
+          {
+            "term": "strict serializability / external consistency",
+            "score": 0.5
+          },
+          {
+            "term": "Monotonic Atomic View",
+            "score": 0.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate-free processing under defaults",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29"
+        ],
+        "soft_card_ids": [
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "mysql_8_0_34_jepsen_2023_12_19",
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "etcd_3_4_3_jepsen_2020_01_30",
+          "mongodb_4_2_6_jepsen_2020_05_15"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 1.0
+          },
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 0.5
+          },
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 0.5
+          },
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 0.5
+          },
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+            "00d3dc34-fd44-475a-8ca5-ce768468834f"
+          ],
+          "soft_chunk_ids": [
+            "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+            "00d3dc34-fd44-475a-8ca5-ce768468834f",
+            "1598d6bc-74fe-4400-b270-e1193dcfeda6",
+            "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+            "5b2377a7-c2f4-4ba3-932d-08274d446e4e",
+            "28c38c45-72b1-461b-888d-2a96e3f81344",
+            "6dfb3be2-fb14-4a06-b993-972c60f38292"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "00d3dc34-fd44-475a-8ca5-ce768468834f",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "1598d6bc-74fe-4400-b270-e1193dcfeda6",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "5b2377a7-c2f4-4ba3-932d-08274d446e4e",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "28c38c45-72b1-461b-888d-2a96e3f81344",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "6dfb3be2-fb14-4a06-b993-972c60f38292",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "df2c3a96-1f4a-4667-a772-731058686ea4",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "df2c3a96-1f4a-4667-a772-731058686ea4"
+          ],
+          "soft_chunk_ids": [
+            "df2c3a96-1f4a-4667-a772-731058686ea4",
+            "5970f830-e9e9-4554-9cc1-3a36ea28dcbf",
+            "214307bc-c581-4598-bd2f-4eeb0741726a",
+            "26f874c3-5fd0-4e86-80bb-77df16456ff2",
+            "05e9ab72-dc9f-4ac3-9096-ae3509e7f179"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "df2c3a96-1f4a-4667-a772-731058686ea4",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "5970f830-e9e9-4554-9cc1-3a36ea28dcbf",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "26f874c3-5fd0-4e86-80bb-77df16456ff2",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "00d3dc34-fd44-475a-8ca5-ce768468834f",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "5b2377a7-c2f4-4ba3-932d-08274d446e4e",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "6dfb3be2-fb14-4a06-b993-972c60f38292",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e"
+        ],
+        "soft_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+          "a3ea0060-2409-43f0-852c-75b486a2faf6",
+          "684bcec6-3c0b-4b7b-85be-f26b51768392",
+          "62776b28-7a12-475d-b8b4-7a7466032ada"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "a3ea0060-2409-43f0-852c-75b486a2faf6",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "684bcec6-3c0b-4b7b-85be-f26b51768392",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "q002",
+    "query": {
+      "raw": "We are investigating a PostgreSQL-compatible managed cluster where transactions committed on the primary seem to become visible in a different order on read replicas. The anomaly happens in healthy conditions and looks like a Long Fork rather than a failover issue. What practical precedent and first diagnostic check fit this?"
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "long_fork"
+        ],
+        "soft_vocabulary_terms": [
+          "long_fork",
+          "healthy_cluster_anomaly",
+          "stale_or_out_of_order_reads",
+          "snapshot_isolation_violation",
+          "strict_serializability_gap"
+        ],
+        "graded_relevance": [
+          {
+            "term": "long_fork",
+            "score": 1.0
+          },
+          {
+            "term": "healthy_cluster_anomaly",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot_isolation_violation",
+            "score": 0.5
+          },
+          {
+            "term": "stale_or_out_of_order_reads",
+            "score": 0.5
+          },
+          {
+            "term": "strict_serializability_gap",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "clock_sensitivity",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "primary_endpoint",
+          "reader_endpoint",
+          "transaction_visibility_order"
+        ],
+        "soft_vocabulary_terms": [
+          "primary_endpoint",
+          "reader_endpoint",
+          "transaction_visibility_order",
+          "wal_replication",
+          "sharded_or_replicated_cluster_behavior"
+        ],
+        "graded_relevance": [
+          {
+            "term": "primary_endpoint",
+            "score": 1.0
+          },
+          {
+            "term": "reader_endpoint",
+            "score": 1.0
+          },
+          {
+            "term": "transaction_visibility_order",
+            "score": 1.0
+          },
+          {
+            "term": "sharded_or_replicated_cluster_behavior",
+            "score": 0.5
+          },
+          {
+            "term": "wal_replication",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "external_critical_sections",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "long_fork",
+          "primary_vs_secondary_order_disagreement"
+        ],
+        "soft_vocabulary_terms": [
+          "long_fork",
+          "primary_vs_secondary_order_disagreement",
+          "reader_endpoint_visibility_divergence",
+          "strict_serializability_gap",
+          "database_wide_external_consistency_gap"
+        ],
+        "graded_relevance": [
+          {
+            "term": "long_fork",
+            "score": 1.0
+          },
+          {
+            "term": "primary_vs_secondary_order_disagreement",
+            "score": 1.0
+          },
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 0.5
+          },
+          {
+            "term": "reader_endpoint_visibility_divergence",
+            "score": 0.5
+          },
+          {
+            "term": "strict_serializability_gap",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate_write_without_idempotence",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "Snapshot Isolation across primary and reader endpoints"
+        ],
+        "soft_vocabulary_terms": [
+          "Snapshot Isolation across primary and reader endpoints",
+          "snapshot isolation",
+          "strict serializability",
+          "strict serializability / external consistency",
+          "snapshot-consistent reads across transaction modes"
+        ],
+        "graded_relevance": [
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 1.0
+          },
+          {
+            "term": "snapshot isolation",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot-consistent reads across transaction modes",
+            "score": 0.5
+          },
+          {
+            "term": "strict serializability",
+            "score": 0.5
+          },
+          {
+            "term": "strict serializability / external consistency",
+            "score": 0.5
+          },
+          {
+            "term": "Monotonic Atomic View",
+            "score": 0.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate-free processing under defaults",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29"
+        ],
+        "soft_card_ids": [
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "mysql_8_0_34_jepsen_2023_12_19",
+          "etcd_3_4_3_jepsen_2020_01_30",
+          "mongodb_4_2_6_jepsen_2020_05_15"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 1.0
+          },
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 0.5
+          },
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 0.5
+          },
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 0.5
+          },
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "28c38c45-72b1-461b-888d-2a96e3f81344",
+            "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+            "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a"
+          ],
+          "soft_chunk_ids": [
+            "28c38c45-72b1-461b-888d-2a96e3f81344",
+            "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+            "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+            "1598d6bc-74fe-4400-b270-e1193dcfeda6",
+            "00d3dc34-fd44-475a-8ca5-ce768468834f",
+            "5b2377a7-c2f4-4ba3-932d-08274d446e4e",
+            "6dfb3be2-fb14-4a06-b993-972c60f38292"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "28c38c45-72b1-461b-888d-2a96e3f81344",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "1598d6bc-74fe-4400-b270-e1193dcfeda6",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "00d3dc34-fd44-475a-8ca5-ce768468834f",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "5b2377a7-c2f4-4ba3-932d-08274d446e4e",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "6dfb3be2-fb14-4a06-b993-972c60f38292",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "df2c3a96-1f4a-4667-a772-731058686ea4",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "214307bc-c581-4598-bd2f-4eeb0741726a"
+          ],
+          "soft_chunk_ids": [
+            "214307bc-c581-4598-bd2f-4eeb0741726a",
+            "c6aa7b2d-ab47-43ee-9048-2305c8f9ccb2",
+            "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+            "df2c3a96-1f4a-4667-a772-731058686ea4",
+            "26f874c3-5fd0-4e86-80bb-77df16456ff2"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "c6aa7b2d-ab47-43ee-9048-2305c8f9ccb2",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "df2c3a96-1f4a-4667-a772-731058686ea4",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "26f874c3-5fd0-4e86-80bb-77df16456ff2",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "28c38c45-72b1-461b-888d-2a96e3f81344",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "00d3dc34-fd44-475a-8ca5-ce768468834f",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "5b2377a7-c2f4-4ba3-932d-08274d446e4e",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "66498746-7f34-4bdd-a2c2-ec0166ada39b"
+        ],
+        "soft_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+          "a3ea0060-2409-43f0-852c-75b486a2faf6",
+          "684bcec6-3c0b-4b7b-85be-f26b51768392",
+          "62776b28-7a12-475d-b8b4-7a7466032ada"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "a3ea0060-2409-43f0-852c-75b486a2faf6",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "684bcec6-3c0b-4b7b-85be-f26b51768392",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "q003",
+    "query": {
+      "raw": "Our service uses etcd locks to guard writes to an external in-memory set. Under short lease TTLs and occasional process pauses, two clients sometimes believe they hold the same lock, and the protected set loses acknowledged updates. Plain etcd key-value operations still look consistent. What should we check first?"
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "unsafe_locking",
+          "duplicate_lock_holders",
+          "lost_updates"
+        ],
+        "soft_vocabulary_terms": [
+          "unsafe_locking",
+          "duplicate_lock_holders",
+          "lost_updates",
+          "coordination_anomalies",
+          "lost_writes"
+        ],
+        "graded_relevance": [
+          {
+            "term": "duplicate_lock_holders",
+            "score": 1.0
+          },
+          {
+            "term": "lost_updates",
+            "score": 1.0
+          },
+          {
+            "term": "unsafe_locking",
+            "score": 1.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.5
+          },
+          {
+            "term": "lost_writes",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "clock_sensitivity",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          },
+          {
+            "term": "cyclic_information_flow",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "lock_service",
+          "lease_validation",
+          "external_critical_sections"
+        ],
+        "soft_vocabulary_terms": [
+          "lock_service",
+          "lease_validation",
+          "external_critical_sections",
+          "key_value_api",
+          "watch_api"
+        ],
+        "graded_relevance": [
+          {
+            "term": "external_critical_sections",
+            "score": 1.0
+          },
+          {
+            "term": "lease_validation",
+            "score": 1.0
+          },
+          {
+            "term": "lock_service",
+            "score": 1.0
+          },
+          {
+            "term": "key_value_api",
+            "score": 0.5
+          },
+          {
+            "term": "watch_api",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          },
+          {
+            "term": "hybrid_logical_clocks",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "lock_ownership_violation",
+          "stale_lock_after_lease_change",
+          "missing_lease_validity_recheck"
+        ],
+        "soft_vocabulary_terms": [
+          "lock_ownership_violation",
+          "stale_lock_after_lease_change",
+          "missing_lease_validity_recheck",
+          "coordination_primitive_unsound_for_external_state",
+          "lost_update_under_buggy_execution"
+        ],
+        "graded_relevance": [
+          {
+            "term": "lock_ownership_violation",
+            "score": 1.0
+          },
+          {
+            "term": "missing_lease_validity_recheck",
+            "score": 1.0
+          },
+          {
+            "term": "stale_lock_after_lease_change",
+            "score": 1.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.5
+          },
+          {
+            "term": "lost_update_under_buggy_execution",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 0.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate_write_without_idempotence",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "safe mutual exclusion for distributed locks"
+        ],
+        "soft_vocabulary_terms": [
+          "safe mutual exclusion for distributed locks",
+          "exclusive ownership semantics for external critical sections",
+          "basic correctness in some healthy-cluster modes",
+          "lost-update prevention by default",
+          "strict serializability"
+        ],
+        "graded_relevance": [
+          {
+            "term": "safe mutual exclusion for distributed locks",
+            "score": 1.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.5
+          },
+          {
+            "term": "exclusive ownership semantics for external critical sections",
+            "score": 0.5
+          },
+          {
+            "term": "lost-update prevention by default",
+            "score": 0.5
+          },
+          {
+            "term": "strict serializability",
+            "score": 0.5
+          },
+          {
+            "term": "Monotonic Atomic View",
+            "score": 0.0
+          },
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate-free processing under defaults",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "etcd_3_4_3_jepsen_2020_01_30"
+        ],
+        "soft_card_ids": [
+          "etcd_3_4_3_jepsen_2020_01_30",
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "mongodb_4_2_6_jepsen_2020_05_15",
+          "mysql_8_0_34_jepsen_2023_12_19"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 1.0
+          },
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 0.5
+          },
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 0.5
+          },
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 0.5
+          },
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "972c73e2-4119-4483-9549-dadeddbe5880",
+            "a28db739-8d2e-4ba3-8253-825261804bc7"
+          ],
+          "soft_chunk_ids": [
+            "972c73e2-4119-4483-9549-dadeddbe5880",
+            "a28db739-8d2e-4ba3-8253-825261804bc7",
+            "2a52dae1-be87-427b-bfc2-243ccaae38c3",
+            "775dcb51-7327-47ab-8452-b55a8b912de5",
+            "88cd8953-a618-400d-8d08-e4c87de5f656",
+            "1a2d2b35-9fba-46f7-818f-81bafe6ddb91",
+            "99143512-4c6a-4abb-9698-766cfba305d5"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "a28db739-8d2e-4ba3-8253-825261804bc7",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "2a52dae1-be87-427b-bfc2-243ccaae38c3",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "775dcb51-7327-47ab-8452-b55a8b912de5",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "88cd8953-a618-400d-8d08-e4c87de5f656",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "1a2d2b35-9fba-46f7-818f-81bafe6ddb91",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "99143512-4c6a-4abb-9698-766cfba305d5",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "df2c3a96-1f4a-4667-a772-731058686ea4",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "de1196cc-3d5c-4c3d-8503-14b71f73b727"
+          ],
+          "soft_chunk_ids": [
+            "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+            "7c7cc8e2-dec3-48d0-bb2c-b18ca4eac9f8",
+            "214307bc-c581-4598-bd2f-4eeb0741726a",
+            "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+            "3865681d-8201-493c-bfba-5d48a23ed05f"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "7c7cc8e2-dec3-48d0-bb2c-b18ca4eac9f8",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "3865681d-8201-493c-bfba-5d48a23ed05f",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "a28db739-8d2e-4ba3-8253-825261804bc7",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "2a52dae1-be87-427b-bfc2-243ccaae38c3",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "775dcb51-7327-47ab-8452-b55a8b912de5",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "1a2d2b35-9fba-46f7-818f-81bafe6ddb91",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "62776b28-7a12-475d-b8b4-7a7466032ada",
+          "668400b0-ac64-4b95-a60f-b8fa40b6a6ab"
+        ],
+        "soft_chunk_ids": [
+          "62776b28-7a12-475d-b8b4-7a7466032ada",
+          "668400b0-ac64-4b95-a60f-b8fa40b6a6ab",
+          "ea78cd17-1aef-44be-9cda-6e52d764acc7",
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "684bcec6-3c0b-4b7b-85be-f26b51768392"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "668400b0-ac64-4b95-a60f-b8fa40b6a6ab",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "ea78cd17-1aef-44be-9cda-6e52d764acc7",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "684bcec6-3c0b-4b7b-85be-f26b51768392",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "q004",
+    "query": {
+      "raw": "The etcd cluster passes our regular register and watch checks, but workflows protected by etcd mutexes still overlap during lock contention. Conflicts cluster around lease expiry and clients that waited for a lock. We need to know whether this is core KV inconsistency or lock semantics. What first check separates them?"
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "unsafe_locking",
+          "duplicate_lock_holders"
+        ],
+        "soft_vocabulary_terms": [
+          "unsafe_locking",
+          "duplicate_lock_holders",
+          "coordination_anomalies",
+          "lost_updates",
+          "healthy_cluster_anomaly"
+        ],
+        "graded_relevance": [
+          {
+            "term": "duplicate_lock_holders",
+            "score": 1.0
+          },
+          {
+            "term": "unsafe_locking",
+            "score": 1.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.5
+          },
+          {
+            "term": "healthy_cluster_anomaly",
+            "score": 0.5
+          },
+          {
+            "term": "lost_updates",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "clock_sensitivity",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          },
+          {
+            "term": "cyclic_information_flow",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "lock_service",
+          "lease_validation",
+          "watch_api"
+        ],
+        "soft_vocabulary_terms": [
+          "lock_service",
+          "lease_validation",
+          "watch_api",
+          "key_value_api",
+          "external_critical_sections"
+        ],
+        "graded_relevance": [
+          {
+            "term": "lease_validation",
+            "score": 1.0
+          },
+          {
+            "term": "lock_service",
+            "score": 1.0
+          },
+          {
+            "term": "watch_api",
+            "score": 1.0
+          },
+          {
+            "term": "external_critical_sections",
+            "score": 0.5
+          },
+          {
+            "term": "key_value_api",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          },
+          {
+            "term": "hybrid_logical_clocks",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "missing_lease_validity_recheck",
+          "lock_ownership_violation"
+        ],
+        "soft_vocabulary_terms": [
+          "missing_lease_validity_recheck",
+          "lock_ownership_violation",
+          "coordination_primitive_unsound_for_external_state",
+          "stale_lock_after_lease_change",
+          "lost_update_under_buggy_execution"
+        ],
+        "graded_relevance": [
+          {
+            "term": "lock_ownership_violation",
+            "score": 1.0
+          },
+          {
+            "term": "missing_lease_validity_recheck",
+            "score": 1.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.5
+          },
+          {
+            "term": "lost_update_under_buggy_execution",
+            "score": 0.5
+          },
+          {
+            "term": "stale_lock_after_lease_change",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 0.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate_write_without_idempotence",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "safe mutual exclusion for distributed locks"
+        ],
+        "soft_vocabulary_terms": [
+          "safe mutual exclusion for distributed locks",
+          "exclusive ownership semantics for external critical sections",
+          "basic correctness in some healthy-cluster modes",
+          "strict serializability",
+          "lost-update prevention by default"
+        ],
+        "graded_relevance": [
+          {
+            "term": "safe mutual exclusion for distributed locks",
+            "score": 1.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.5
+          },
+          {
+            "term": "exclusive ownership semantics for external critical sections",
+            "score": 0.5
+          },
+          {
+            "term": "lost-update prevention by default",
+            "score": 0.5
+          },
+          {
+            "term": "strict serializability",
+            "score": 0.5
+          },
+          {
+            "term": "Monotonic Atomic View",
+            "score": 0.0
+          },
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate-free processing under defaults",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "etcd_3_4_3_jepsen_2020_01_30"
+        ],
+        "soft_card_ids": [
+          "etcd_3_4_3_jepsen_2020_01_30",
+          "mongodb_4_2_6_jepsen_2020_05_15",
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "mysql_8_0_34_jepsen_2023_12_19"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 1.0
+          },
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 0.5
+          },
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 0.5
+          },
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 0.5
+          },
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "972c73e2-4119-4483-9549-dadeddbe5880",
+            "1a2d2b35-9fba-46f7-818f-81bafe6ddb91",
+            "a28db739-8d2e-4ba3-8253-825261804bc7"
+          ],
+          "soft_chunk_ids": [
+            "972c73e2-4119-4483-9549-dadeddbe5880",
+            "1a2d2b35-9fba-46f7-818f-81bafe6ddb91",
+            "a28db739-8d2e-4ba3-8253-825261804bc7",
+            "2a52dae1-be87-427b-bfc2-243ccaae38c3",
+            "775dcb51-7327-47ab-8452-b55a8b912de5",
+            "88cd8953-a618-400d-8d08-e4c87de5f656",
+            "99143512-4c6a-4abb-9698-766cfba305d5"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "1a2d2b35-9fba-46f7-818f-81bafe6ddb91",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "a28db739-8d2e-4ba3-8253-825261804bc7",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "2a52dae1-be87-427b-bfc2-243ccaae38c3",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "775dcb51-7327-47ab-8452-b55a8b912de5",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "88cd8953-a618-400d-8d08-e4c87de5f656",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "99143512-4c6a-4abb-9698-766cfba305d5",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "df2c3a96-1f4a-4667-a772-731058686ea4",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "e7c5ee8b-b957-47c5-a783-a4a67d29a08d"
+          ],
+          "soft_chunk_ids": [
+            "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+            "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+            "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+            "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+            "214307bc-c581-4598-bd2f-4eeb0741726a"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "1a2d2b35-9fba-46f7-818f-81bafe6ddb91",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "a28db739-8d2e-4ba3-8253-825261804bc7",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "775dcb51-7327-47ab-8452-b55a8b912de5",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "99143512-4c6a-4abb-9698-766cfba305d5",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "62776b28-7a12-475d-b8b4-7a7466032ada"
+        ],
+        "soft_chunk_ids": [
+          "62776b28-7a12-475d-b8b4-7a7466032ada",
+          "668400b0-ac64-4b95-a60f-b8fa40b6a6ab",
+          "ea78cd17-1aef-44be-9cda-6e52d764acc7",
+          "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "668400b0-ac64-4b95-a60f-b8fa40b6a6ab",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "ea78cd17-1aef-44be-9cda-6e52d764acc7",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "44c47048-7758-4e9d-9854-a40b5d1bdf82",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "q005",
+    "query": {
+      "raw": "In MongoDB 4.2-style transactions, developers set read concern snapshot but did not set transaction-level write concern majority. During a network partition, read-only transactions observed divergent timelines and some transactional effects appeared both visible and not visible. Is this likely a snapshot isolation configuration trap or a deeper transaction bug?"
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "dirty_reads",
+          "read_skew",
+          "snapshot_isolation_violation"
+        ],
+        "soft_vocabulary_terms": [
+          "dirty_reads",
+          "read_skew",
+          "snapshot_isolation_violation",
+          "downgraded_transaction_safety",
+          "transactional_anomalies"
+        ],
+        "graded_relevance": [
+          {
+            "term": "dirty_reads",
+            "score": 1.0
+          },
+          {
+            "term": "read_skew",
+            "score": 1.0
+          },
+          {
+            "term": "snapshot_isolation_violation",
+            "score": 1.0
+          },
+          {
+            "term": "downgraded_transaction_safety",
+            "score": 0.5
+          },
+          {
+            "term": "transactional_anomalies",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "clock_sensitivity",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "transaction_api",
+          "read_concern",
+          "write_concern"
+        ],
+        "soft_vocabulary_terms": [
+          "transaction_api",
+          "read_concern",
+          "write_concern",
+          "session_defaults",
+          "session_transaction_api"
+        ],
+        "graded_relevance": [
+          {
+            "term": "read_concern",
+            "score": 1.0
+          },
+          {
+            "term": "transaction_api",
+            "score": 1.0
+          },
+          {
+            "term": "write_concern",
+            "score": 1.0
+          },
+          {
+            "term": "session_defaults",
+            "score": 0.5
+          },
+          {
+            "term": "session_transaction_api",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "external_critical_sections",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "weak_default_read_write_concerns",
+          "snapshot_read_without_majority_write"
+        ],
+        "soft_vocabulary_terms": [
+          "weak_default_read_write_concerns",
+          "snapshot_read_without_majority_write",
+          "transaction_level_settings_override_safer_handles",
+          "network_partition_exposes_transactional_anomalies",
+          "lack_of_true_interactive_transactions"
+        ],
+        "graded_relevance": [
+          {
+            "term": "snapshot_read_without_majority_write",
+            "score": 1.0
+          },
+          {
+            "term": "weak_default_read_write_concerns",
+            "score": 1.0
+          },
+          {
+            "term": "lack_of_true_interactive_transactions",
+            "score": 0.5
+          },
+          {
+            "term": "network_partition_exposes_transactional_anomalies",
+            "score": 0.5
+          },
+          {
+            "term": "transaction_level_settings_override_safer_handles",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.0
+          },
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 0.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "snapshot isolation"
+        ],
+        "soft_vocabulary_terms": [
+          "snapshot isolation",
+          "fully isolated transactional behavior",
+          "intuitive transactional isolation",
+          "durability of acknowledged writes under weak or surprising concern configurations",
+          "snapshot-consistent reads across transaction modes"
+        ],
+        "graded_relevance": [
+          {
+            "term": "snapshot isolation",
+            "score": 1.0
+          },
+          {
+            "term": "durability of acknowledged writes under weak or surprising concern configurations",
+            "score": 0.5
+          },
+          {
+            "term": "fully isolated transactional behavior",
+            "score": 0.5
+          },
+          {
+            "term": "intuitive transactional isolation",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot-consistent reads across transaction modes",
+            "score": 0.5
+          },
+          {
+            "term": "Monotonic Atomic View",
+            "score": 0.0
+          },
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 0.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "mongodb_4_2_6_jepsen_2020_05_15"
+        ],
+        "soft_card_ids": [
+          "mongodb_4_2_6_jepsen_2020_05_15",
+          "mysql_8_0_34_jepsen_2023_12_19",
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "etcd_3_4_3_jepsen_2020_01_30"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 1.0
+          },
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 0.5
+          },
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 0.5
+          },
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 0.5
+          },
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "024c9314-19bd-4c72-9238-6f9110e45abe",
+            "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+            "620e83a4-e4fe-4efd-8de8-43f17ee4b08b",
+            "8fa37139-d7e2-4b5b-b827-d7b91ffb395c"
+          ],
+          "soft_chunk_ids": [
+            "024c9314-19bd-4c72-9238-6f9110e45abe",
+            "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+            "620e83a4-e4fe-4efd-8de8-43f17ee4b08b",
+            "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+            "45b4ec32-9c8b-4360-98b1-41497aa7d2dd",
+            "fb71f4e5-c99f-467a-b178-beb2e42e348b",
+            "02f40f5d-2688-42c3-9624-3c6f9dbeec2b",
+            "00fed28a-36d6-4251-a52e-d977c613d162",
+            "86eba861-b830-4787-9e9f-b075b9dab748"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "024c9314-19bd-4c72-9238-6f9110e45abe",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "620e83a4-e4fe-4efd-8de8-43f17ee4b08b",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "45b4ec32-9c8b-4360-98b1-41497aa7d2dd",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "fb71f4e5-c99f-467a-b178-beb2e42e348b",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "02f40f5d-2688-42c3-9624-3c6f9dbeec2b",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "00fed28a-36d6-4251-a52e-d977c613d162",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "86eba861-b830-4787-9e9f-b075b9dab748",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "75febaea-50a6-45e5-8ada-d4f41eb69878"
+          ],
+          "soft_chunk_ids": [
+            "75febaea-50a6-45e5-8ada-d4f41eb69878",
+            "31b6a7fa-61f2-4101-891d-fd9a579c827a",
+            "df2c3a96-1f4a-4667-a772-731058686ea4",
+            "214307bc-c581-4598-bd2f-4eeb0741726a",
+            "ef311d53-18cf-41a8-aa8d-e5b94d2e5263"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "75febaea-50a6-45e5-8ada-d4f41eb69878",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "31b6a7fa-61f2-4101-891d-fd9a579c827a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "df2c3a96-1f4a-4667-a772-731058686ea4",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "ef311d53-18cf-41a8-aa8d-e5b94d2e5263",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "024c9314-19bd-4c72-9238-6f9110e45abe",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "620e83a4-e4fe-4efd-8de8-43f17ee4b08b",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "45b4ec32-9c8b-4360-98b1-41497aa7d2dd",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "ac94eb25-0c35-44fb-826a-d1eaa21f52fb"
+        ],
+        "soft_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+          "d3cf9d74-745b-4a7d-82a2-16e1fe92c9ca",
+          "a3ea0060-2409-43f0-852c-75b486a2faf6",
+          "62776b28-7a12-475d-b8b4-7a7466032ada"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "d3cf9d74-745b-4a7d-82a2-16e1fe92c9ca",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "a3ea0060-2409-43f0-852c-75b486a2faf6",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "44c47048-7758-4e9d-9854-a40b5d1bdf82",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "q006",
+    "query": {
+      "raw": "A MongoDB transactional workload uses read concern snapshot and write concern majority, but under network partitions arrays sometimes contain duplicate copies of the same element after transaction retries or ambiguous errors. We need a first check to separate retry-path duplication from weak default concern settings."
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "duplicate_writes",
+          "transaction_retry_anomalies"
+        ],
+        "soft_vocabulary_terms": [
+          "duplicate_writes",
+          "transaction_retry_anomalies",
+          "snapshot_isolation_violation",
+          "cyclic_information_flow",
+          "transactional_anomalies"
+        ],
+        "graded_relevance": [
+          {
+            "term": "duplicate_writes",
+            "score": 1.0
+          },
+          {
+            "term": "transaction_retry_anomalies",
+            "score": 1.0
+          },
+          {
+            "term": "cyclic_information_flow",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot_isolation_violation",
+            "score": 0.5
+          },
+          {
+            "term": "transactional_anomalies",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "clock_sensitivity",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "transaction_api",
+          "retry_mechanism",
+          "read_concern",
+          "write_concern"
+        ],
+        "soft_vocabulary_terms": [
+          "transaction_api",
+          "retry_mechanism",
+          "read_concern",
+          "write_concern",
+          "session_transaction_api"
+        ],
+        "graded_relevance": [
+          {
+            "term": "read_concern",
+            "score": 1.0
+          },
+          {
+            "term": "retry_mechanism",
+            "score": 1.0
+          },
+          {
+            "term": "transaction_api",
+            "score": 1.0
+          },
+          {
+            "term": "write_concern",
+            "score": 1.0
+          },
+          {
+            "term": "session_transaction_api",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "external_critical_sections",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "transaction_retry_bug"
+        ],
+        "soft_vocabulary_terms": [
+          "transaction_retry_bug",
+          "network_partition_exposes_transactional_anomalies",
+          "weak_default_read_write_concerns",
+          "duplicate_write_without_idempotence",
+          "reentrancy_bug"
+        ],
+        "graded_relevance": [
+          {
+            "term": "transaction_retry_bug",
+            "score": 1.0
+          },
+          {
+            "term": "duplicate_write_without_idempotence",
+            "score": 0.5
+          },
+          {
+            "term": "network_partition_exposes_transactional_anomalies",
+            "score": 0.5
+          },
+          {
+            "term": "reentrancy_bug",
+            "score": 0.5
+          },
+          {
+            "term": "weak_default_read_write_concerns",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.0
+          },
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 0.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "snapshot isolation"
+        ],
+        "soft_vocabulary_terms": [
+          "snapshot isolation",
+          "fully isolated transactional behavior",
+          "duplicate-free processing under defaults",
+          "intuitive transactional isolation",
+          "durability of acknowledged writes under weak or surprising concern configurations"
+        ],
+        "graded_relevance": [
+          {
+            "term": "snapshot isolation",
+            "score": 1.0
+          },
+          {
+            "term": "duplicate-free processing under defaults",
+            "score": 0.5
+          },
+          {
+            "term": "durability of acknowledged writes under weak or surprising concern configurations",
+            "score": 0.5
+          },
+          {
+            "term": "fully isolated transactional behavior",
+            "score": 0.5
+          },
+          {
+            "term": "intuitive transactional isolation",
+            "score": 0.5
+          },
+          {
+            "term": "Monotonic Atomic View",
+            "score": 0.0
+          },
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 0.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "mongodb_4_2_6_jepsen_2020_05_15"
+        ],
+        "soft_card_ids": [
+          "mongodb_4_2_6_jepsen_2020_05_15",
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "mysql_8_0_34_jepsen_2023_12_19",
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "etcd_3_4_3_jepsen_2020_01_30"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 1.0
+          },
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 0.5
+          },
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 0.5
+          },
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 0.5
+          },
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+            "024c9314-19bd-4c72-9238-6f9110e45abe"
+          ],
+          "soft_chunk_ids": [
+            "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+            "024c9314-19bd-4c72-9238-6f9110e45abe",
+            "620e83a4-e4fe-4efd-8de8-43f17ee4b08b",
+            "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+            "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+            "02f40f5d-2688-42c3-9624-3c6f9dbeec2b",
+            "00fed28a-36d6-4251-a52e-d977c613d162"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "024c9314-19bd-4c72-9238-6f9110e45abe",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "620e83a4-e4fe-4efd-8de8-43f17ee4b08b",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "02f40f5d-2688-42c3-9624-3c6f9dbeec2b",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "00fed28a-36d6-4251-a52e-d977c613d162",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "29d98710-1808-40d0-b749-6c4ef25a0822",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "29d98710-1808-40d0-b749-6c4ef25a0822"
+          ],
+          "soft_chunk_ids": [
+            "29d98710-1808-40d0-b749-6c4ef25a0822",
+            "9ed1e436-59bf-4f73-a8cc-fdf3678ab2b5",
+            "f68f5ec4-c214-478d-bacc-9bb4c799fc50",
+            "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+            "de1196cc-3d5c-4c3d-8503-14b71f73b727"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "29d98710-1808-40d0-b749-6c4ef25a0822",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "9ed1e436-59bf-4f73-a8cc-fdf3678ab2b5",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "f68f5ec4-c214-478d-bacc-9bb4c799fc50",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "024c9314-19bd-4c72-9238-6f9110e45abe",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "620e83a4-e4fe-4efd-8de8-43f17ee4b08b",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "ac94eb25-0c35-44fb-826a-d1eaa21f52fb"
+        ],
+        "soft_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+          "d3cf9d74-745b-4a7d-82a2-16e1fe92c9ca",
+          "a3ea0060-2409-43f0-852c-75b486a2faf6",
+          "62776b28-7a12-475d-b8b4-7a7466032ada"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "d3cf9d74-745b-4a7d-82a2-16e1fe92c9ca",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "a3ea0060-2409-43f0-852c-75b486a2faf6",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "44c47048-7758-4e9d-9854-a40b5d1bdf82",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "q007",
+    "query": {
+      "raw": "On a single healthy MySQL 8.0.34 node using InnoDB Repeatable Read, two concurrent transactions read the same missing key and both append what they think is the first value. One update effectively disappears, even though there is no network fault or failover. What first check confirms whether this is a Repeatable Read lost-update issue?"
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "repeatable_read_anomaly",
+          "lost_update"
+        ],
+        "soft_vocabulary_terms": [
+          "repeatable_read_anomaly",
+          "lost_update",
+          "healthy_single_node_anomaly",
+          "transactional_anomalies",
+          "lost_updates"
+        ],
+        "graded_relevance": [
+          {
+            "term": "lost_update",
+            "score": 1.0
+          },
+          {
+            "term": "repeatable_read_anomaly",
+            "score": 1.0
+          },
+          {
+            "term": "healthy_single_node_anomaly",
+            "score": 0.5
+          },
+          {
+            "term": "lost_updates",
+            "score": 0.5
+          },
+          {
+            "term": "transactional_anomalies",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "clock_sensitivity",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "repeatable_read_isolation_level",
+          "interactive_transactions",
+          "innodb_concurrency_control"
+        ],
+        "soft_vocabulary_terms": [
+          "repeatable_read_isolation_level",
+          "interactive_transactions",
+          "innodb_concurrency_control",
+          "transaction_api",
+          "session_transaction_api"
+        ],
+        "graded_relevance": [
+          {
+            "term": "innodb_concurrency_control",
+            "score": 1.0
+          },
+          {
+            "term": "interactive_transactions",
+            "score": 1.0
+          },
+          {
+            "term": "repeatable_read_isolation_level",
+            "score": 1.0
+          },
+          {
+            "term": "session_transaction_api",
+            "score": 0.5
+          },
+          {
+            "term": "transaction_api",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "external_critical_sections",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "lost_update_under_repeatable_read"
+        ],
+        "soft_vocabulary_terms": [
+          "lost_update_under_repeatable_read",
+          "weaker_than_expected_repeatable_read",
+          "lost_update_under_buggy_execution",
+          "snapshot_isolation_under_repeatable_read",
+          "lack_of_true_interactive_transactions"
+        ],
+        "graded_relevance": [
+          {
+            "term": "lost_update_under_repeatable_read",
+            "score": 1.0
+          },
+          {
+            "term": "lack_of_true_interactive_transactions",
+            "score": 0.5
+          },
+          {
+            "term": "lost_update_under_buggy_execution",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot_isolation_under_repeatable_read",
+            "score": 0.5
+          },
+          {
+            "term": "weaker_than_expected_repeatable_read",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.0
+          },
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 0.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "commonly expected Repeatable Read protections"
+        ],
+        "soft_vocabulary_terms": [
+          "commonly expected Repeatable Read protections",
+          "intuitive transactional isolation",
+          "lost-update prevention by default",
+          "fully isolated transactional behavior",
+          "snapshot isolation"
+        ],
+        "graded_relevance": [
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 1.0
+          },
+          {
+            "term": "fully isolated transactional behavior",
+            "score": 0.5
+          },
+          {
+            "term": "intuitive transactional isolation",
+            "score": 0.5
+          },
+          {
+            "term": "lost-update prevention by default",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot isolation",
+            "score": 0.5
+          },
+          {
+            "term": "Monotonic Atomic View",
+            "score": 0.0
+          },
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 0.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate-free processing under defaults",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "mysql_8_0_34_jepsen_2023_12_19"
+        ],
+        "soft_card_ids": [
+          "mysql_8_0_34_jepsen_2023_12_19",
+          "mongodb_4_2_6_jepsen_2020_05_15",
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "etcd_3_4_3_jepsen_2020_01_30"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 1.0
+          },
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 0.5
+          },
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 0.5
+          },
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 0.5
+          },
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+            "40aab382-5520-4253-bf8d-ab77eb6aad5f",
+            "98c1c419-9baa-4deb-8c51-81b8e8bde996",
+            "702f8846-7a23-47e8-b8ee-4e8e7d6eb2a7"
+          ],
+          "soft_chunk_ids": [
+            "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+            "40aab382-5520-4253-bf8d-ab77eb6aad5f",
+            "98c1c419-9baa-4deb-8c51-81b8e8bde996",
+            "702f8846-7a23-47e8-b8ee-4e8e7d6eb2a7",
+            "75febaea-50a6-45e5-8ada-d4f41eb69878",
+            "31b6a7fa-61f2-4101-891d-fd9a579c827a",
+            "ef311d53-18cf-41a8-aa8d-e5b94d2e5263",
+            "0be1388b-9e68-4f2b-82c2-b30925e67cbc"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "40aab382-5520-4253-bf8d-ab77eb6aad5f",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "98c1c419-9baa-4deb-8c51-81b8e8bde996",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "702f8846-7a23-47e8-b8ee-4e8e7d6eb2a7",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "75febaea-50a6-45e5-8ada-d4f41eb69878",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "31b6a7fa-61f2-4101-891d-fd9a579c827a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "ef311d53-18cf-41a8-aa8d-e5b94d2e5263",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "0be1388b-9e68-4f2b-82c2-b30925e67cbc",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "8fa37139-d7e2-4b5b-b827-d7b91ffb395c"
+          ],
+          "soft_chunk_ids": [
+            "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+            "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+            "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+            "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+            "214307bc-c581-4598-bd2f-4eeb0741726a"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "98c1c419-9baa-4deb-8c51-81b8e8bde996",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "702f8846-7a23-47e8-b8ee-4e8e7d6eb2a7",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "75febaea-50a6-45e5-8ada-d4f41eb69878",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "31b6a7fa-61f2-4101-891d-fd9a579c827a",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e"
+        ],
+        "soft_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+          "a3ea0060-2409-43f0-852c-75b486a2faf6",
+          "62776b28-7a12-475d-b8b4-7a7466032ada",
+          "ea3a3a61-e8f1-476f-9de9-c316d26d8504"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "a3ea0060-2409-43f0-852c-75b486a2faf6",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "ea3a3a61-e8f1-476f-9de9-c316d26d8504",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "q008",
+    "query": {
+      "raw": "In a MySQL Repeatable Read transaction, a reader first sees row 0 before a writer's update, then after a harmless update to row 1 sees the writer's new value for row 1 but still misses the corresponding new value for row 0. It looks like partial visibility of another transaction's effects. What should be checked first?"
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "repeatable_read_anomaly",
+          "monotonic_atomic_view_violation",
+          "read_skew"
+        ],
+        "soft_vocabulary_terms": [
+          "repeatable_read_anomaly",
+          "monotonic_atomic_view_violation",
+          "read_skew",
+          "internal_consistency_violation",
+          "fractured_read"
+        ],
+        "graded_relevance": [
+          {
+            "term": "monotonic_atomic_view_violation",
+            "score": 1.0
+          },
+          {
+            "term": "read_skew",
+            "score": 1.0
+          },
+          {
+            "term": "repeatable_read_anomaly",
+            "score": 1.0
+          },
+          {
+            "term": "fractured_read",
+            "score": 0.5
+          },
+          {
+            "term": "internal_consistency_violation",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "clock_sensitivity",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "repeatable_read_isolation_level",
+          "interactive_transactions",
+          "innodb_concurrency_control"
+        ],
+        "soft_vocabulary_terms": [
+          "repeatable_read_isolation_level",
+          "interactive_transactions",
+          "innodb_concurrency_control",
+          "transaction_visibility_order",
+          "transaction_api"
+        ],
+        "graded_relevance": [
+          {
+            "term": "innodb_concurrency_control",
+            "score": 1.0
+          },
+          {
+            "term": "interactive_transactions",
+            "score": 1.0
+          },
+          {
+            "term": "repeatable_read_isolation_level",
+            "score": 1.0
+          },
+          {
+            "term": "transaction_api",
+            "score": 0.5
+          },
+          {
+            "term": "transaction_visibility_order",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "external_critical_sections",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "partial_visibility_of_transaction_effects"
+        ],
+        "soft_vocabulary_terms": [
+          "partial_visibility_of_transaction_effects",
+          "weaker_than_expected_repeatable_read",
+          "snapshot_isolation_under_repeatable_read",
+          "fractured_read",
+          "database_wide_external_consistency_gap"
+        ],
+        "graded_relevance": [
+          {
+            "term": "partial_visibility_of_transaction_effects",
+            "score": 1.0
+          },
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 0.5
+          },
+          {
+            "term": "fractured_read",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot_isolation_under_repeatable_read",
+            "score": 0.5
+          },
+          {
+            "term": "weaker_than_expected_repeatable_read",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate_write_without_idempotence",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "Monotonic Atomic View",
+          "commonly expected Repeatable Read protections"
+        ],
+        "soft_vocabulary_terms": [
+          "Monotonic Atomic View",
+          "commonly expected Repeatable Read protections",
+          "snapshot-consistent reads across transaction modes",
+          "intuitive transactional isolation",
+          "snapshot isolation"
+        ],
+        "graded_relevance": [
+          {
+            "term": "Monotonic Atomic View",
+            "score": 1.0
+          },
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 1.0
+          },
+          {
+            "term": "intuitive transactional isolation",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot isolation",
+            "score": 0.5
+          },
+          {
+            "term": "snapshot-consistent reads across transaction modes",
+            "score": 0.5
+          },
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 0.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate-free processing under defaults",
+            "score": 0.0
+          },
+          {
+            "term": "durability of acknowledged writes under weak or surprising concern configurations",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "mysql_8_0_34_jepsen_2023_12_19"
+        ],
+        "soft_card_ids": [
+          "mysql_8_0_34_jepsen_2023_12_19",
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "mongodb_4_2_6_jepsen_2020_05_15",
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "etcd_3_4_3_jepsen_2020_01_30"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 1.0
+          },
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 0.5
+          },
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 0.5
+          },
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 0.5
+          },
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "df2c3a96-1f4a-4667-a772-731058686ea4",
+            "5970f830-e9e9-4554-9cc1-3a36ea28dcbf",
+            "68bc5a3a-a81d-4762-a905-3c671d7c18fb",
+            "3ed247f1-62a8-4513-8f7b-bbc018e49f80"
+          ],
+          "soft_chunk_ids": [
+            "df2c3a96-1f4a-4667-a772-731058686ea4",
+            "5970f830-e9e9-4554-9cc1-3a36ea28dcbf",
+            "68bc5a3a-a81d-4762-a905-3c671d7c18fb",
+            "3ed247f1-62a8-4513-8f7b-bbc018e49f80",
+            "522ba768-2369-452d-a705-e1b91b81b450",
+            "31b6a7fa-61f2-4101-891d-fd9a579c827a",
+            "8a09bf12-10d0-45d4-9ddd-f79077deecf2",
+            "702f8846-7a23-47e8-b8ee-4e8e7d6eb2a7",
+            "26f874c3-5fd0-4e86-80bb-77df16456ff2"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "df2c3a96-1f4a-4667-a772-731058686ea4",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "5970f830-e9e9-4554-9cc1-3a36ea28dcbf",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "68bc5a3a-a81d-4762-a905-3c671d7c18fb",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "3ed247f1-62a8-4513-8f7b-bbc018e49f80",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "522ba768-2369-452d-a705-e1b91b81b450",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "31b6a7fa-61f2-4101-891d-fd9a579c827a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "8a09bf12-10d0-45d4-9ddd-f79077deecf2",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "702f8846-7a23-47e8-b8ee-4e8e7d6eb2a7",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "26f874c3-5fd0-4e86-80bb-77df16456ff2",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "cb85aab2-7a28-40b7-9b0c-0499aec49302"
+          ],
+          "soft_chunk_ids": [
+            "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+            "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+            "00d3dc34-fd44-475a-8ca5-ce768468834f",
+            "620e83a4-e4fe-4efd-8de8-43f17ee4b08b",
+            "5b2377a7-c2f4-4ba3-932d-08274d446e4e"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "00d3dc34-fd44-475a-8ca5-ce768468834f",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "620e83a4-e4fe-4efd-8de8-43f17ee4b08b",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "5b2377a7-c2f4-4ba3-932d-08274d446e4e",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "df2c3a96-1f4a-4667-a772-731058686ea4",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "5970f830-e9e9-4554-9cc1-3a36ea28dcbf",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "3ed247f1-62a8-4513-8f7b-bbc018e49f80",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "31b6a7fa-61f2-4101-891d-fd9a579c827a",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "702f8846-7a23-47e8-b8ee-4e8e7d6eb2a7",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e"
+        ],
+        "soft_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+          "a3ea0060-2409-43f0-852c-75b486a2faf6",
+          "684bcec6-3c0b-4b7b-85be-f26b51768392",
+          "62776b28-7a12-475d-b8b4-7a7466032ada"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "a3ea0060-2409-43f0-852c-75b486a2faf6",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "684bcec6-3c0b-4b7b-85be-f26b51768392",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "q009",
+    "query": {
+      "raw": "In an early CockroachDB-like distributed SQL system, single-key operations look linearizable, but a comments-style workload shows a later correction comment without the original comment when requests are load-balanced across nodes. Clock offsets are within the expected threshold. Is this a strict serializability gap rather than ordinary stale reads?"
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "strict_serializability_gap",
+          "stale_or_out_of_order_reads"
+        ],
+        "soft_vocabulary_terms": [
+          "strict_serializability_gap",
+          "stale_or_out_of_order_reads",
+          "clock_sensitivity",
+          "serializability_violation",
+          "stale_reads"
+        ],
+        "graded_relevance": [
+          {
+            "term": "stale_or_out_of_order_reads",
+            "score": 1.0
+          },
+          {
+            "term": "strict_serializability_gap",
+            "score": 1.0
+          },
+          {
+            "term": "clock_sensitivity",
+            "score": 0.5
+          },
+          {
+            "term": "serializability_violation",
+            "score": 0.5
+          },
+          {
+            "term": "stale_reads",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          },
+          {
+            "term": "cyclic_information_flow",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "hybrid_logical_clocks",
+          "multi_range_transactions",
+          "leaseholder_reads"
+        ],
+        "soft_vocabulary_terms": [
+          "hybrid_logical_clocks",
+          "multi_range_transactions",
+          "leaseholder_reads",
+          "transaction_protocol",
+          "sharded_or_replicated_cluster_behavior"
+        ],
+        "graded_relevance": [
+          {
+            "term": "hybrid_logical_clocks",
+            "score": 1.0
+          },
+          {
+            "term": "leaseholder_reads",
+            "score": 1.0
+          },
+          {
+            "term": "multi_range_transactions",
+            "score": 1.0
+          },
+          {
+            "term": "sharded_or_replicated_cluster_behavior",
+            "score": 0.5
+          },
+          {
+            "term": "transaction_protocol",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "external_critical_sections",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "strict_serializability_violation",
+          "database_wide_external_consistency_gap"
+        ],
+        "soft_vocabulary_terms": [
+          "strict_serializability_violation",
+          "database_wide_external_consistency_gap",
+          "timestamp_or_clock_offset_issue",
+          "read_path_optimization_breaks_real_time_order",
+          "transaction_protocol_bug"
+        ],
+        "graded_relevance": [
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 1.0
+          },
+          {
+            "term": "strict_serializability_violation",
+            "score": 1.0
+          },
+          {
+            "term": "read_path_optimization_breaks_real_time_order",
+            "score": 0.5
+          },
+          {
+            "term": "timestamp_or_clock_offset_issue",
+            "score": 0.5
+          },
+          {
+            "term": "transaction_protocol_bug",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate_write_without_idempotence",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "strict serializability / external consistency"
+        ],
+        "soft_vocabulary_terms": [
+          "strict serializability / external consistency",
+          "strict serializability",
+          "some serializability-related expectations in tested betas",
+          "serializability in serializable mode",
+          "basic correctness in some healthy-cluster modes"
+        ],
+        "graded_relevance": [
+          {
+            "term": "strict serializability / external consistency",
+            "score": 1.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.5
+          },
+          {
+            "term": "serializability in serializable mode",
+            "score": 0.5
+          },
+          {
+            "term": "some serializability-related expectations in tested betas",
+            "score": 0.5
+          },
+          {
+            "term": "strict serializability",
+            "score": 0.5
+          },
+          {
+            "term": "Monotonic Atomic View",
+            "score": 0.0
+          },
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate-free processing under defaults",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "cockroachdb_beta_20160829_jepsen_2017_02_16"
+        ],
+        "soft_card_ids": [
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "mysql_8_0_34_jepsen_2023_12_19",
+          "etcd_3_4_3_jepsen_2020_01_30",
+          "mongodb_4_2_6_jepsen_2020_05_15"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 1.0
+          },
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 0.5
+          },
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 0.5
+          },
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 0.5
+          },
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "214307bc-c581-4598-bd2f-4eeb0741726a",
+            "52fa5fe2-016d-4ada-a03f-44b54314f3db",
+            "de1196cc-3d5c-4c3d-8503-14b71f73b727"
+          ],
+          "soft_chunk_ids": [
+            "214307bc-c581-4598-bd2f-4eeb0741726a",
+            "52fa5fe2-016d-4ada-a03f-44b54314f3db",
+            "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+            "c6aa7b2d-ab47-43ee-9048-2305c8f9ccb2",
+            "c386a221-c1a5-4f46-9281-6c47e8cd6dc6",
+            "ca8f8898-5e91-41da-adad-b9e7407af978",
+            "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+            "da748cf7-5afe-484c-9e09-ebc73d085cea"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "52fa5fe2-016d-4ada-a03f-44b54314f3db",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "c6aa7b2d-ab47-43ee-9048-2305c8f9ccb2",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "c386a221-c1a5-4f46-9281-6c47e8cd6dc6",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "ca8f8898-5e91-41da-adad-b9e7407af978",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "da748cf7-5afe-484c-9e09-ebc73d085cea",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "cb85aab2-7a28-40b7-9b0c-0499aec49302"
+          ],
+          "soft_chunk_ids": [
+            "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+            "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+            "28c38c45-72b1-461b-888d-2a96e3f81344",
+            "26f874c3-5fd0-4e86-80bb-77df16456ff2",
+            "00d3dc34-fd44-475a-8ca5-ce768468834f"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "cb85aab2-7a28-40b7-9b0c-0499aec49302",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "a46d15dd-6b8b-41ee-aee6-e34c19c85b0a",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "28c38c45-72b1-461b-888d-2a96e3f81344",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "26f874c3-5fd0-4e86-80bb-77df16456ff2",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "00d3dc34-fd44-475a-8ca5-ce768468834f",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "214307bc-c581-4598-bd2f-4eeb0741726a",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "52fa5fe2-016d-4ada-a03f-44b54314f3db",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "da748cf7-5afe-484c-9e09-ebc73d085cea",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "66498746-7f34-4bdd-a2c2-ec0166ada39b"
+        ],
+        "soft_chunk_ids": [
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+          "684bcec6-3c0b-4b7b-85be-f26b51768392",
+          "a3ea0060-2409-43f0-852c-75b486a2faf6",
+          "62776b28-7a12-475d-b8b4-7a7466032ada"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "684bcec6-3c0b-4b7b-85be-f26b51768392",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "a3ea0060-2409-43f0-852c-75b486a2faf6",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  },
+  {
+    "case_id": "q010",
+    "query": {
+      "raw": "A CockroachDB beta-style monotonic test produces duplicate inserted values with the same transaction timestamp during cross-range transactions. The failure appears when timestamps collide below the clock-offset threshold, not during a broad outage. What precedent and first check should guide the diagnosis?"
+    },
+    "expected_query_structuring": {
+      "symptoms": {
+        "strict_vocabulary_terms": [
+          "serializability_violation",
+          "clock_sensitivity"
+        ],
+        "soft_vocabulary_terms": [
+          "serializability_violation",
+          "clock_sensitivity",
+          "transactional_anomalies",
+          "duplicate_writes",
+          "strict_serializability_gap"
+        ],
+        "graded_relevance": [
+          {
+            "term": "clock_sensitivity",
+            "score": 1.0
+          },
+          {
+            "term": "serializability_violation",
+            "score": 1.0
+          },
+          {
+            "term": "duplicate_writes",
+            "score": 0.5
+          },
+          {
+            "term": "strict_serializability_gap",
+            "score": 0.5
+          },
+          {
+            "term": "transactional_anomalies",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_reads",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_anomalies",
+            "score": 0.0
+          },
+          {
+            "term": "crash_during_reconfiguration",
+            "score": 0.0
+          },
+          {
+            "term": "crash_loop",
+            "score": 0.0
+          },
+          {
+            "term": "cyclic_information_flow",
+            "score": 0.0
+          }
+        ]
+      },
+      "affected_subsystems": {
+        "strict_vocabulary_terms": [
+          "hybrid_logical_clocks",
+          "multi_range_transactions",
+          "transaction_protocol"
+        ],
+        "soft_vocabulary_terms": [
+          "hybrid_logical_clocks",
+          "multi_range_transactions",
+          "transaction_protocol",
+          "sharded_or_replicated_cluster_behavior",
+          "single_partition_initiator"
+        ],
+        "graded_relevance": [
+          {
+            "term": "hybrid_logical_clocks",
+            "score": 1.0
+          },
+          {
+            "term": "multi_range_transactions",
+            "score": 1.0
+          },
+          {
+            "term": "transaction_protocol",
+            "score": 1.0
+          },
+          {
+            "term": "sharded_or_replicated_cluster_behavior",
+            "score": 0.5
+          },
+          {
+            "term": "single_partition_initiator",
+            "score": 0.5
+          },
+          {
+            "term": "batch_statements",
+            "score": 0.0
+          },
+          {
+            "term": "cluster_wide_transactions",
+            "score": 0.0
+          },
+          {
+            "term": "consumer_offsets",
+            "score": 0.0
+          },
+          {
+            "term": "external_critical_sections",
+            "score": 0.0
+          },
+          {
+            "term": "failover_behavior",
+            "score": 0.0
+          }
+        ]
+      },
+      "failure_modes": {
+        "strict_vocabulary_terms": [
+          "timestamp_or_clock_offset_issue",
+          "serializable_bug"
+        ],
+        "soft_vocabulary_terms": [
+          "timestamp_or_clock_offset_issue",
+          "serializable_bug",
+          "transaction_protocol_bug",
+          "double_applied_transaction",
+          "strict_serializability_violation"
+        ],
+        "graded_relevance": [
+          {
+            "term": "serializable_bug",
+            "score": 1.0
+          },
+          {
+            "term": "timestamp_or_clock_offset_issue",
+            "score": 1.0
+          },
+          {
+            "term": "double_applied_transaction",
+            "score": 0.5
+          },
+          {
+            "term": "strict_serializability_violation",
+            "score": 0.5
+          },
+          {
+            "term": "transaction_protocol_bug",
+            "score": 0.5
+          },
+          {
+            "term": "aborted_read_with_lwt",
+            "score": 0.0
+          },
+          {
+            "term": "acquire_strong_consistency_only_in_narrow_modes",
+            "score": 0.0
+          },
+          {
+            "term": "coordination_primitive_unsound_for_external_state",
+            "score": 0.0
+          },
+          {
+            "term": "database_wide_external_consistency_gap",
+            "score": 0.0
+          },
+          {
+            "term": "duplicate_write_without_idempotence",
+            "score": 0.0
+          }
+        ]
+      },
+      "system_properties": {
+        "strict_vocabulary_terms": [
+          "some serializability-related expectations in tested betas"
+        ],
+        "soft_vocabulary_terms": [
+          "some serializability-related expectations in tested betas",
+          "serializability in serializable mode",
+          "strict serializability / external consistency",
+          "strict serializability",
+          "fully isolated transactional behavior"
+        ],
+        "graded_relevance": [
+          {
+            "term": "some serializability-related expectations in tested betas",
+            "score": 1.0
+          },
+          {
+            "term": "fully isolated transactional behavior",
+            "score": 0.5
+          },
+          {
+            "term": "serializability in serializable mode",
+            "score": 0.5
+          },
+          {
+            "term": "strict serializability",
+            "score": 0.5
+          },
+          {
+            "term": "strict serializability / external consistency",
+            "score": 0.5
+          },
+          {
+            "term": "Monotonic Atomic View",
+            "score": 0.0
+          },
+          {
+            "term": "Snapshot Isolation across primary and reader endpoints",
+            "score": 0.0
+          },
+          {
+            "term": "basic correctness in some healthy-cluster modes",
+            "score": 0.0
+          },
+          {
+            "term": "claimed isolation for non-LWT operations",
+            "score": 0.0
+          },
+          {
+            "term": "commonly expected Repeatable Read protections",
+            "score": 0.0
+          }
+        ]
+      }
+    },
+    "expected_candidate_cards": {
+      "retrieval_relevant_cards": {
+        "strict_card_ids": [
+          "cockroachdb_beta_20160829_jepsen_2017_02_16"
+        ],
+        "soft_card_ids": [
+          "cockroachdb_beta_20160829_jepsen_2017_02_16",
+          "mongodb_4_2_6_jepsen_2020_05_15",
+          "mysql_8_0_34_jepsen_2023_12_19",
+          "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+          "etcd_3_4_3_jepsen_2020_01_30"
+        ],
+        "graded_relevance": [
+          {
+            "card_id": "cockroachdb_beta_20160829_jepsen_2017_02_16",
+            "score": 1.0
+          },
+          {
+            "card_id": "amazon_rds_postgresql_17_4_jepsen_2025_04_29",
+            "score": 0.5
+          },
+          {
+            "card_id": "etcd_3_4_3_jepsen_2020_01_30",
+            "score": 0.5
+          },
+          {
+            "card_id": "mongodb_4_2_6_jepsen_2020_05_15",
+            "score": 0.5
+          },
+          {
+            "card_id": "mysql_8_0_34_jepsen_2023_12_19",
+            "score": 0.5
+          }
+        ]
+      }
+    },
+    "expected_incident_evidence": {
+      "primary_card_evidence_query": {
+        "retrieval_call_id": "incident_evidence.primary",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "29d98710-1808-40d0-b749-6c4ef25a0822",
+            "9ed1e436-59bf-4f73-a8cc-fdf3678ab2b5",
+            "f68f5ec4-c214-478d-bacc-9bb4c799fc50"
+          ],
+          "soft_chunk_ids": [
+            "29d98710-1808-40d0-b749-6c4ef25a0822",
+            "9ed1e436-59bf-4f73-a8cc-fdf3678ab2b5",
+            "f68f5ec4-c214-478d-bacc-9bb4c799fc50",
+            "38198764-2888-425b-9fb1-4de1ff30f0ad",
+            "1352a2c7-d840-4520-b782-30f52499fffb",
+            "da748cf7-5afe-484c-9e09-ebc73d085cea",
+            "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+            "05e9ab72-dc9f-4ac3-9096-ae3509e7f179"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "29d98710-1808-40d0-b749-6c4ef25a0822",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "9ed1e436-59bf-4f73-a8cc-fdf3678ab2b5",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "f68f5ec4-c214-478d-bacc-9bb4c799fc50",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "38198764-2888-425b-9fb1-4de1ff30f0ad",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "1352a2c7-d840-4520-b782-30f52499fffb",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "da748cf7-5afe-484c-9e09-ebc73d085cea",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "de1196cc-3d5c-4c3d-8503-14b71f73b727",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "972c73e2-4119-4483-9549-dadeddbe5880",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+              "score": 0.0
+            }
+          ]
+        }
+      },
+      "alternative_cards_evidence_query": {
+        "retrieval_call_id": "incident_evidence.alternatives",
+        "relevance_judgments": {
+          "strict_chunk_ids": [
+            "e7c5ee8b-b957-47c5-a783-a4a67d29a08d"
+          ],
+          "soft_chunk_ids": [
+            "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+            "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+            "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+            "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+            "024c9314-19bd-4c72-9238-6f9110e45abe"
+          ],
+          "graded_relevance": [
+            {
+              "chunk_id": "e7c5ee8b-b957-47c5-a783-a4a67d29a08d",
+              "score": 1.0
+            },
+            {
+              "chunk_id": "c5546dda-f7aa-4272-828e-1c5d8bae6dda",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "8fa37139-d7e2-4b5b-b827-d7b91ffb395c",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "cd18cbf0-d643-4c33-99ff-ebaadd2c309c",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "024c9314-19bd-4c72-9238-6f9110e45abe",
+              "score": 0.5
+            },
+            {
+              "chunk_id": "29d98710-1808-40d0-b749-6c4ef25a0822",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "9ed1e436-59bf-4f73-a8cc-fdf3678ab2b5",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "f68f5ec4-c214-478d-bacc-9bb4c799fc50",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "da748cf7-5afe-484c-9e09-ebc73d085cea",
+              "score": 0.0
+            },
+            {
+              "chunk_id": "05e9ab72-dc9f-4ac3-9096-ae3509e7f179",
+              "score": 0.0
+            }
+          ]
+        }
+      }
+    },
+    "expected_theory_evidence": {
+      "mechanism_explanation": {
+        "strict_chunk_ids": [
+          "684bcec6-3c0b-4b7b-85be-f26b51768392",
+          "a3ea0060-2409-43f0-852c-75b486a2faf6",
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e"
+        ],
+        "soft_chunk_ids": [
+          "684bcec6-3c0b-4b7b-85be-f26b51768392",
+          "a3ea0060-2409-43f0-852c-75b486a2faf6",
+          "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+          "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+          "62776b28-7a12-475d-b8b4-7a7466032ada"
+        ],
+        "graded_relevance": [
+          {
+            "chunk_id": "684bcec6-3c0b-4b7b-85be-f26b51768392",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "a3ea0060-2409-43f0-852c-75b486a2faf6",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "c560c60a-7afb-4a2b-9191-54bea4a31a4e",
+            "score": 1.0
+          },
+          {
+            "chunk_id": "66498746-7f34-4bdd-a2c2-ec0166ada39b",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "62776b28-7a12-475d-b8b4-7a7466032ada",
+            "score": 0.5
+          },
+          {
+            "chunk_id": "20da7760-9ea3-4d67-8d4b-fcf885aba290",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "1d9c6a52-d6e5-4858-8040-cc60b53cd107",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "5cfc17db-ea37-46b2-80bb-cd36755ec0f9",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "ac94eb25-0c35-44fb-826a-d1eaa21f52fb",
+            "score": 0.0
+          },
+          {
+            "chunk_id": "b230230b-f87f-480b-9389-6e38cd5311c4",
+            "score": 0.0
+          }
+        ]
+      }
+    }
+  }
+]

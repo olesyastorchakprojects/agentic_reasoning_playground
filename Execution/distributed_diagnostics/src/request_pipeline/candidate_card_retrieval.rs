@@ -4,8 +4,13 @@ use crate::api_clients::qdrant::cards_collection::{
     CardSearchRequest, CardsCollection, CardsCollectionError,
 };
 use crate::api_clients::qdrant::shared_types::NormalizedUserQuery;
-use crate::request_pipeline::context::Context;
-use crate::shared_types::{CandidateCard, CandidateCardRetrievalOutput, NormalizedUserRequest};
+use crate::request_pipeline::retrieval_metrics::{
+    compute_retrieval_metrics, GoldenRetrievalRelevanceById, GoldenRetrievalTargetsById,
+};
+use crate::shared_types::{
+    CandidateCard, CandidateCardRetrievalMetrics, CandidateCardRetrievalOutput, Context,
+    NormalizedUserRequest,
+};
 use tracing::{info_span, field, Instrument};
 
 // ─── Error ────────────────────────────────────────────────────────────────────
@@ -16,6 +21,8 @@ pub enum CandidateCardRetrievalError {
     InvalidConfiguration(String),
     #[error("cards collection error: {0}")]
     Collection(#[from] CardsCollectionError),
+    #[error("retrieval metrics computation failed: {0}")]
+    MetricsComputation(String),
 }
 
 // ─── Public struct ────────────────────────────────────────────────────────────
@@ -133,7 +140,7 @@ impl CandidateCardRetrieval {
             error.message = field::Empty,
         );
 
-        self.retrieve_instrumented(request, &oi_span)
+        self.retrieve_instrumented(request, &oi_span, context)
             .instrument(span)
             .await
     }
@@ -142,6 +149,7 @@ impl CandidateCardRetrieval {
         &self,
         request: &NormalizedUserRequest,
         oi_span: &tracing::Span,
+        context: &Context,
     ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError> {
         let search_request = CardSearchRequest {
             user_query: NormalizedUserQuery(request.query.clone()),
@@ -229,6 +237,7 @@ impl CandidateCardRetrieval {
             return Ok(CandidateCardRetrievalOutput {
                 primary: None,
                 alternatives: vec![],
+                metrics: None,
             });
         }
 
@@ -296,10 +305,122 @@ impl CandidateCardRetrieval {
         tracing::Span::current().record("module.outcome", "success");
         tracing::Span::current().record("status", "ok");
 
+        let metrics = if let Some(golden_question) = &context.golden_question {
+            let golden = &golden_question.expected_candidate_cards.retrieval_relevant_cards;
+            if golden.strict_card_ids.is_empty() || golden.soft_card_ids.is_empty() {
+                None
+            } else {
+                let actual_ranked_ids: Vec<String> = primary
+                    .iter()
+                    .map(|card| card.case_id.clone())
+                    .chain(alternatives.iter().map(|card| card.case_id.clone()))
+                    .collect();
+                let golden_targets = GoldenRetrievalTargetsById {
+                    strict_positive_ids: golden.strict_card_ids.clone(),
+                    soft_positive_ids: golden.soft_card_ids.clone(),
+                    graded_relevance: golden
+                        .graded_relevance
+                        .iter()
+                        .map(|rel| GoldenRetrievalRelevanceById {
+                            id: rel.card_id.clone(),
+                            score: rel.score,
+                        })
+                        .collect(),
+                };
+                let computed = compute_retrieval_metrics(
+                    &golden_targets,
+                    &actual_ranked_ids,
+                    self.top_k,
+                )
+                .map_err(|e| CandidateCardRetrievalError::MetricsComputation(e.to_string()))?;
+                let metrics = CandidateCardRetrievalMetrics {
+                    retrieval_relevant_cards: computed,
+                };
+                oi_span.in_scope(|| emit_candidate_card_metrics_oi_span(&oi_span, &metrics));
+                Some(metrics)
+            }
+        } else {
+            None
+        };
+
         Ok(CandidateCardRetrievalOutput {
             primary,
             alternatives,
+            metrics,
         })
+    }
+}
+
+fn emit_candidate_card_metrics_oi_span(
+    oi_parent: &tracing::Span,
+    metrics: &CandidateCardRetrievalMetrics,
+) {
+    use opentelemetry::{Key, Value};
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+    let span = crate::observability::oi_chain_candidate_card_retrieval_metrics_span(oi_parent);
+    span.record(
+        "input.value",
+        r#"{"golden_backed":true,"source":"candidate_cards"}"#,
+    );
+    span.record("input.mime_type", "application/json");
+
+    let m = &metrics.retrieval_relevant_cards;
+    span.set_attribute(Key::from("rt.candidate_cards.recall_soft"), Value::F64(m.recall_soft as f64));
+    span.set_attribute(Key::from("rt.candidate_cards.recall_strict"), Value::F64(m.recall_strict as f64));
+    span.set_attribute(Key::from("rt.candidate_cards.rr_soft"), Value::F64(m.rr_soft as f64));
+    span.set_attribute(Key::from("rt.candidate_cards.rr_strict"), Value::F64(m.rr_strict as f64));
+    span.set_attribute(Key::from("rt.candidate_cards.ndcg"), Value::F64(m.ndcg as f64));
+    span.set_attribute(Key::from("rt.candidate_cards.evaluated_k"), Value::I64(m.evaluated_k as i64));
+    span.set_attribute(
+        Key::from("rt.candidate_cards.first_relevant_rank_soft"),
+        opt_u32_value(m.first_relevant_rank_soft),
+    );
+    span.set_attribute(
+        Key::from("rt.candidate_cards.first_relevant_rank_strict"),
+        opt_u32_value(m.first_relevant_rank_strict),
+    );
+    span.set_attribute(
+        Key::from("rt.candidate_cards.num_relevant_soft"),
+        Value::I64(m.num_relevant_soft as i64),
+    );
+    span.set_attribute(
+        Key::from("rt.candidate_cards.num_relevant_strict"),
+        Value::I64(m.num_relevant_strict as i64),
+    );
+
+    let payload = serde_json::json!({
+        "recall_soft": m.recall_soft,
+        "recall_strict": m.recall_strict,
+        "rr_soft": m.rr_soft,
+        "rr_strict": m.rr_strict,
+        "ndcg": m.ndcg,
+        "evaluated_k": m.evaluated_k,
+        "first_relevant_rank_soft": m.first_relevant_rank_soft,
+        "first_relevant_rank_strict": m.first_relevant_rank_strict,
+        "num_relevant_soft": m.num_relevant_soft,
+        "num_relevant_strict": m.num_relevant_strict,
+    })
+    .to_string();
+
+    let _guard = span.enter();
+    tracing::event!(
+        tracing::Level::INFO,
+        event.name = "retrieval_metrics.candidate_cards",
+        payload = %payload
+    );
+    drop(_guard);
+
+    let output_json = serde_json::to_string(metrics).unwrap_or_default();
+    span.record("output.value", output_json.as_str());
+    span.record("output.mime_type", "application/json");
+    span.record("status", "ok");
+}
+
+fn opt_u32_value(value: Option<u32>) -> opentelemetry::Value {
+    match value {
+        Some(v) => opentelemetry::Value::I64(v as i64),
+        None => opentelemetry::Value::String("null".into()),
     }
 }
 

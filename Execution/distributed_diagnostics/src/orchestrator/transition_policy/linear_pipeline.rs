@@ -336,6 +336,7 @@ mod tests {
             StepKind::UserInputReceived,
             StepResultEnvelope::UserInputReceived(UserRequest {
                 query: "service down".to_string(),
+                golden_question: None,
             }),
         )
     }
@@ -374,6 +375,7 @@ mod tests {
                     completion_tokens: None,
                     total_tokens: None,
                 },
+                metrics: Some(crate::shared_types::QueryStructuringMetrics::default()),
             }),
         )
     }
@@ -384,6 +386,7 @@ mod tests {
             StepResultEnvelope::CandidateCardRetrieval(CandidateCardRetrievalOutput {
                 primary: None,
                 alternatives: vec![],
+            metrics: None,
             }),
         )
     }
@@ -404,6 +407,7 @@ mod tests {
             StepResultEnvelope::IncidentEvidenceRetrieval(IncidentEvidenceRetrievalOutput {
                 primary_chunks: vec![],
                 alternative_chunks: vec![],
+            metrics: None,
             }),
         )
     }
@@ -413,6 +417,7 @@ mod tests {
             StepKind::TheoryEvidenceRetrieval,
             StepResultEnvelope::TheoryEvidenceRetrieval(TheoryEvidenceRetrievalOutput {
                 chunks: vec![],
+            metrics: None,
             }),
         )
     }
@@ -422,6 +427,7 @@ mod tests {
             StepKind::PromptContextAssembly,
             StepResultEnvelope::PromptContextAssembly(PromptContextAssemblyOutput {
                 prompt: "prompt".to_string(),
+                response_schema: serde_json::Value::Object(serde_json::Map::new()),
                 incident_evidence_chunks: vec![],
                 theory_chunks: vec![],
             }),
@@ -698,6 +704,7 @@ mod tests {
                         completion_tokens: None,
                         total_tokens: None,
                     },
+                    metrics: Some(crate::shared_types::QueryStructuringMetrics::default()),
                 }),
             ),
         ]);

@@ -45,7 +45,7 @@ idf_smoothing = 0.5
 
 [qdrant.collections.practice]
 kind = "hybrid"
-corpus_version = "v1"
+corpus_version = "v3"
 
 [qdrant.collections.practice.dense]
 name = "todo_practice_dense_collection"
@@ -73,17 +73,17 @@ query = "binary_presence"
 sparse_vocabulary_path = "Execution/artifacts/vocabularies/todo_practice__sparse_vocabulary.json"
 
 [qdrant.collections.practice.hybrid.sparse.bm25_like]
-name = "practice_failure_cases_bm25"
+name = "incident_reports_fixed_in_structural_qwen3_bm25"
 query = "bm25_query_weight"
-sparse_vocabulary_path = "Execution/artifacts/vocabularies/practice_failure_cases__sparse_vocabulary.json"
-bm25_term_stats_path = "Execution/artifacts/term_stats/practice_failure_cases_bm25__term_stats.json"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/incident_reports_fixed_in_structural_qwen3__sparse_vocabulary.json"
+bm25_term_stats_path = "Execution/artifacts/term_stats/incident_reports_fixed_in_structural_qwen3_bm25__term_stats.json"
 k1 = 1.2
 b = 0.75
 idf_smoothing = 0.5
 
 [qdrant.collections.theory]
 kind = "hybrid"
-corpus_version = "v1"
+corpus_version = "v3"
 
 [qdrant.collections.theory.dense]
 name = "chunks_dense_qwen3"
@@ -111,10 +111,10 @@ query = "binary_presence"
 sparse_vocabulary_path = "Execution/artifacts/vocabularies/chunks_hybrid_structural_qwen3__sparse_vocabulary.json"
 
 [qdrant.collections.theory.hybrid.sparse.bm25_like]
-name = "chunks_hybrid_structural_qwen3_bm25"
+name = "chunks_hybrid_fixed_in_structural_qwen3_bm25"
 query = "bm25_query_weight"
-sparse_vocabulary_path = "Execution/artifacts/vocabularies/chunks_hybrid_structural_qwen3__sparse_vocabulary.json"
-bm25_term_stats_path = "Execution/artifacts/term_stats/chunks_hybrid_structural_qwen3_bm25__term_stats.json"
+sparse_vocabulary_path = "Execution/artifacts/vocabularies/chunks_hybrid_fixed_in_structural_qwen3__sparse_vocabulary.json"
+bm25_term_stats_path = "Execution/artifacts/term_stats/chunks_hybrid_fixed_in_structural_qwen3_bm25__term_stats.json"
 k1 = 1.2
 b = 0.75
 idf_smoothing = 0.5

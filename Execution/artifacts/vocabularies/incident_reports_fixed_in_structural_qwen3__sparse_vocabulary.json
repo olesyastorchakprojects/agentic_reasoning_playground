@@ -1,0 +1,2120 @@
+{
+  "collection_name": "incident_reports_fixed_in_structural_qwen3",
+  "created_at": "2026-04-30T14:51:26Z",
+  "text_processing": {
+    "lowercase": true,
+    "min_token_length": 2,
+    "preprocessing_kind": "basic_word_v1"
+  },
+  "tokenizer": {
+    "library": "tokenizers",
+    "source": "Qwen/Qwen3-Embedding-0.6B"
+  },
+  "tokens": [
+    {
+      "token": "amazon",
+      "token_id": 0
+    },
+    {
+      "token": "\u0121r",
+      "token_id": 1
+    },
+    {
+      "token": "ds",
+      "token_id": 2
+    },
+    {
+      "token": "\u0121for",
+      "token_id": 3
+    },
+    {
+      "token": "\u0121postgresql",
+      "token_id": 4
+    },
+    {
+      "token": "\u0121kyle",
+      "token_id": 5
+    },
+    {
+      "token": "\u0121kings",
+      "token_id": 6
+    },
+    {
+      "token": "bury",
+      "token_id": 7
+    },
+    {
+      "token": "\u0121amazon",
+      "token_id": 8
+    },
+    {
+      "token": "\u0121is",
+      "token_id": 9
+    },
+    {
+      "token": "\u0121an",
+      "token_id": 10
+    },
+    {
+      "token": "\u0121web",
+      "token_id": 11
+    },
+    {
+      "token": "\u0121services",
+      "token_id": 12
+    },
+    {
+      "token": "\u0121of",
+      "token_id": 13
+    },
+    {
+      "token": "\u0121the",
+      "token_id": 14
+    },
+    {
+      "token": "\u0121database",
+      "token_id": 15
+    },
+    {
+      "token": "\u0121we",
+      "token_id": 16
+    },
+    {
+      "token": "\u0121show",
+      "token_id": 17
+    },
+    {
+      "token": "\u0121that",
+      "token_id": 18
+    },
+    {
+      "token": "olation",
+      "token_id": 19
+    },
+    {
+      "token": "\u0121strongest",
+      "token_id": 20
+    },
+    {
+      "token": "\u0121consistency",
+      "token_id": 21
+    },
+    {
+      "token": "\u0121model",
+      "token_id": 22
+    },
+    {
+      "token": "\u0121supported",
+      "token_id": 23
+    },
+    {
+      "token": "\u0121across",
+      "token_id": 24
+    },
+    {
+      "token": "\u0121long",
+      "token_id": 25
+    },
+    {
+      "token": "\u0121fork",
+      "token_id": 26
+    },
+    {
+      "token": "\u0121and",
+      "token_id": 27
+    },
+    {
+      "token": "\u0121other",
+      "token_id": 28
+    },
+    {
+      "token": "\u0121g",
+      "token_id": 29
+    },
+    {
+      "token": "non",
+      "token_id": 30
+    },
+    {
+      "token": "adj",
+      "token_id": 31
+    },
+    {
+      "token": "acent",
+      "token_id": 32
+    },
+    {
+      "token": "\u0121cycles",
+      "token_id": 33
+    },
+    {
+      "token": "\u0121these",
+      "token_id": 34
+    },
+    {
+      "token": "\u0121phenomena",
+      "token_id": 35
+    },
+    {
+      "token": "\u0121may",
+      "token_id": 36
+    },
+    {
+      "token": "\u0121instead",
+      "token_id": 37
+    },
+    {
+      "token": "\u0121provide",
+      "token_id": 38
+    },
+    {
+      "token": "\u0121independently",
+      "token_id": 39
+    },
+    {
+      "token": "\u0121by",
+      "token_id": 40
+    },
+    {
+      "token": "\u0121j",
+      "token_id": 41
+    },
+    {
+      "token": "eps",
+      "token_id": 42
+    },
+    {
+      "token": "en",
+      "token_id": 43
+    },
+    {
+      "token": "\u0121without",
+      "token_id": 44
+    },
+    {
+      "token": "\u0121compensation",
+      "token_id": 45
+    },
+    {
+      "token": "\u0121conducted",
+      "token_id": 46
+    },
+    {
+      "token": "\u0121update",
+      "token_id": 47
+    },
+    {
+      "token": "\u0121aws",
+      "token_id": 48
+    },
+    {
+      "token": "\u00e2\u0123\u013cs",
+      "token_id": 49
+    },
+    {
+      "token": "\u0121sergey",
+      "token_id": 50
+    },
+    {
+      "token": "\u0121mel",
+      "token_id": 51
+    },
+    {
+      "token": "nik",
+      "token_id": 52
+    },
+    {
+      "token": "\u0121along",
+      "token_id": 53
+    },
+    {
+      "token": "\u0121with",
+      "token_id": 54
+    },
+    {
+      "token": "\u0121h",
+      "token_id": 55
+    },
+    {
+      "token": "\u0121comment",
+      "token_id": 56
+    },
+    {
+      "token": "ers",
+      "token_id": 57
+    },
+    {
+      "token": "\u0121mat",
+      "token_id": 58
+    },
+    {
+      "token": "ash",
+      "token_id": 59
+    },
+    {
+      "token": "ii",
+      "token_id": 60
+    },
+    {
+      "token": "\u0121ant",
+      "token_id": 61
+    },
+    {
+      "token": "\u0121a",
+      "token_id": 62
+    },
+    {
+      "token": "asma",
+      "token_id": 63
+    },
+    {
+      "token": "\u0121have",
+      "token_id": 64
+    },
+    {
+      "token": "\u0121identified",
+      "token_id": 65
+    },
+    {
+      "token": "\u0121cause",
+      "token_id": 66
+    },
+    {
+      "token": "\u0121in",
+      "token_id": 67
+    },
+    {
+      "token": "\u0121clusters",
+      "token_id": 68
+    },
+    {
+      "token": "\u0121as",
+      "token_id": 69
+    },
+    {
+      "token": "\u0121described",
+      "token_id": 70
+    },
+    {
+      "token": "\u0121mailing",
+      "token_id": 71
+    },
+    {
+      "token": "\u0121list",
+      "token_id": 72
+    },
+    {
+      "token": "\u0121post",
+      "token_id": 73
+    },
+    {
+      "token": "\u0121order",
+      "token_id": 74
+    },
+    {
+      "token": "\u0121which",
+      "token_id": 75
+    },
+    {
+      "token": "\u0121gre",
+      "token_id": 76
+    },
+    {
+      "token": "sql",
+      "token_id": 77
+    },
+    {
+      "token": "\u0121primary",
+      "token_id": 78
+    },
+    {
+      "token": "\u0121makes",
+      "token_id": 79
+    },
+    {
+      "token": "\u0121transactions",
+      "token_id": 80
+    },
+    {
+      "token": "\u0121visible",
+      "token_id": 81
+    },
+    {
+      "token": "\u0121deter",
+      "token_id": 82
+    },
+    {
+      "token": "\u0121mined",
+      "token_id": 83
+    },
+    {
+      "token": "memory",
+      "token_id": 84
+    },
+    {
+      "token": "\u0121lock",
+      "token_id": 85
+    },
+    {
+      "token": "\u0121second",
+      "token_id": 86
+    },
+    {
+      "token": "aries",
+      "token_id": 87
+    },
+    {
+      "token": "\u0121however",
+      "token_id": 88
+    },
+    {
+      "token": "\u0121make",
+      "token_id": 89
+    },
+    {
+      "token": "\u0121based",
+      "token_id": 90
+    },
+    {
+      "token": "\u0121on",
+      "token_id": 91
+    },
+    {
+      "token": "\u0121their",
+      "token_id": 92
+    },
+    {
+      "token": "\u0121write",
+      "token_id": 93
+    },
+    {
+      "token": "head",
+      "token_id": 94
+    },
+    {
+      "token": "\u0121log",
+      "token_id": 95
+    },
+    {
+      "token": "al",
+      "token_id": 96
+    },
+    {
+      "token": "\u0121wal",
+      "token_id": 97
+    },
+    {
+      "token": "\u0121or",
+      "token_id": 98
+    },
+    {
+      "token": "\u0121der",
+      "token_id": 99
+    },
+    {
+      "token": "\u0121can",
+      "token_id": 100
+    },
+    {
+      "token": "\u0121be",
+      "token_id": 101
+    },
+    {
+      "token": "\u0121different",
+      "token_id": 102
+    },
+    {
+      "token": "\u0121causes",
+      "token_id": 103
+    },
+    {
+      "token": "\u0121primaries",
+      "token_id": 104
+    },
+    {
+      "token": "\u0121sec",
+      "token_id": 105
+    },
+    {
+      "token": "\u0121to",
+      "token_id": 106
+    },
+    {
+      "token": "\u0121disagree",
+      "token_id": 107
+    },
+    {
+      "token": "\u0121apparent",
+      "token_id": 108
+    },
+    {
+      "token": "\u0121trans",
+      "token_id": 109
+    },
+    {
+      "token": "ac",
+      "token_id": 110
+    },
+    {
+      "token": "\u0121t",
+      "token_id": 111
+    },
+    {
+      "token": "ions",
+      "token_id": 112
+    },
+    {
+      "token": "\u0121has",
+      "token_id": 113
+    },
+    {
+      "token": "\u0121written",
+      "token_id": 114
+    },
+    {
+      "token": "\u0121blog",
+      "token_id": 115
+    },
+    {
+      "token": "\u0121ex",
+      "token_id": 116
+    },
+    {
+      "token": "\u0121pl",
+      "token_id": 117
+    },
+    {
+      "token": "aining",
+      "token_id": 118
+    },
+    {
+      "token": "\u0121this",
+      "token_id": 119
+    },
+    {
+      "token": "\u0121behavior",
+      "token_id": 120
+    },
+    {
+      "token": "\u0121encourages",
+      "token_id": 121
+    },
+    {
+      "token": "\u0121both",
+      "token_id": 122
+    },
+    {
+      "token": "\u0121document",
+      "token_id": 123
+    },
+    {
+      "token": "\u0121issue",
+      "token_id": 124
+    },
+    {
+      "token": "\u0121while",
+      "token_id": 125
+    },
+    {
+      "token": "\u0121they",
+      "token_id": 126
+    },
+    {
+      "token": "\u0121work",
+      "token_id": 127
+    },
+    {
+      "token": "\u0121fix",
+      "token_id": 128
+    },
+    {
+      "token": "\u0121it",
+      "token_id": 129
+    },
+    {
+      "token": "endoftext",
+      "token_id": 130
+    },
+    {
+      "token": "background",
+      "token_id": 131
+    },
+    {
+      "token": "\u0121popular",
+      "token_id": 132
+    },
+    {
+      "token": "\u0121open",
+      "token_id": 133
+    },
+    {
+      "token": "\u0121source",
+      "token_id": 134
+    },
+    {
+      "token": "\u0121general",
+      "token_id": 135
+    },
+    {
+      "token": "purpose",
+      "token_id": 136
+    },
+    {
+      "token": "\u0121sql",
+      "token_id": 137
+    },
+    {
+      "token": "\u0121uses",
+      "token_id": 138
+    },
+    {
+      "token": "\u0121mult",
+      "token_id": 139
+    },
+    {
+      "token": "iv",
+      "token_id": 140
+    },
+    {
+      "token": "ersion",
+      "token_id": 141
+    },
+    {
+      "token": "\u0121concurrency",
+      "token_id": 142
+    },
+    {
+      "token": "\u0121con",
+      "token_id": 143
+    },
+    {
+      "token": "rol",
+      "token_id": 144
+    },
+    {
+      "token": "mv",
+      "token_id": 145
+    },
+    {
+      "token": "cc",
+      "token_id": 146
+    },
+    {
+      "token": "\u0121three",
+      "token_id": 147
+    },
+    {
+      "token": "\u0121levels",
+      "token_id": 148
+    },
+    {
+      "token": "\u0121transaction",
+      "token_id": 149
+    },
+    {
+      "token": "\u0121iso",
+      "token_id": 150
+    },
+    {
+      "token": "\u0121l",
+      "token_id": 151
+    },
+    {
+      "token": "ation",
+      "token_id": 152
+    },
+    {
+      "token": "\u0121\u00e2\u0123\u013e",
+      "token_id": 153
+    },
+    {
+      "token": "read",
+      "token_id": 154
+    },
+    {
+      "token": "\u0121un",
+      "token_id": 155
+    },
+    {
+      "token": "committed",
+      "token_id": 156
+    },
+    {
+      "token": "\u00e2\u0123\u0140",
+      "token_id": 157
+    },
+    {
+      "token": "\u0121com",
+      "token_id": 158
+    },
+    {
+      "token": "mitted",
+      "token_id": 159
+    },
+    {
+      "token": "\u0121are",
+      "token_id": 160
+    },
+    {
+      "token": "\u0121read",
+      "token_id": 161
+    },
+    {
+      "token": "repeat",
+      "token_id": 162
+    },
+    {
+      "token": "\u0121able",
+      "token_id": 163
+    },
+    {
+      "token": "\u0121level",
+      "token_id": 164
+    },
+    {
+      "token": "\u0121actually",
+      "token_id": 165
+    },
+    {
+      "token": "\u0121provides",
+      "token_id": 166
+    },
+    {
+      "token": "\u0121snapshot",
+      "token_id": 167
+    },
+    {
+      "token": "\u0121not",
+      "token_id": 168
+    },
+    {
+      "token": "\u0121repeat",
+      "token_id": 169
+    },
+    {
+      "token": "able",
+      "token_id": 170
+    },
+    {
+      "token": "\u0121serializable",
+      "token_id": 171
+    },
+    {
+      "token": "\u0121serial",
+      "token_id": 172
+    },
+    {
+      "token": "iz",
+      "token_id": 173
+    },
+    {
+      "token": "\u0121ability",
+      "token_id": 174
+    },
+    {
+      "token": "\u0121service",
+      "token_id": 175
+    },
+    {
+      "token": "\u0121managed",
+      "token_id": 176
+    },
+    {
+      "token": "\u0121auto",
+      "token_id": 177
+    },
+    {
+      "token": "\u0121mates",
+      "token_id": 178
+    },
+    {
+      "token": "\u0121provisioning",
+      "token_id": 179
+    },
+    {
+      "token": "\u0121storage",
+      "token_id": 180
+    },
+    {
+      "token": "\u0121management",
+      "token_id": 181
+    },
+    {
+      "token": "\u0121replication",
+      "token_id": 182
+    },
+    {
+      "token": "\u0121backups",
+      "token_id": 183
+    },
+    {
+      "token": "\u0121upgrades",
+      "token_id": 184
+    },
+    {
+      "token": "\u0121more",
+      "token_id": 185
+    },
+    {
+      "token": "\u0121multi",
+      "token_id": 186
+    },
+    {
+      "token": "\u0121deployments",
+      "token_id": 187
+    },
+    {
+      "token": "\u0121distribute",
+      "token_id": 188
+    },
+    {
+      "token": "\u0121nodes",
+      "token_id": 189
+    },
+    {
+      "token": "\u0121multiple",
+      "token_id": 190
+    },
+    {
+      "token": "\u0121avail",
+      "token_id": 191
+    },
+    {
+      "token": "abil",
+      "token_id": 192
+    },
+    {
+      "token": "\u0121zones",
+      "token_id": 193
+    },
+    {
+      "token": "\u0121reducing",
+      "token_id": 194
+    },
+    {
+      "token": "\u0121probability",
+      "token_id": 195
+    },
+    {
+      "token": "\u0121correlated",
+      "token_id": 196
+    },
+    {
+      "token": "\u0121fail",
+      "token_id": 197
+    },
+    {
+      "token": "\u0121ure",
+      "token_id": 198
+    },
+    {
+      "token": "\u0121synchronous",
+      "token_id": 199
+    },
+    {
+      "token": "\u0121ensure",
+      "token_id": 200
+    },
+    {
+      "token": "\u0121durable",
+      "token_id": 201
+    },
+    {
+      "token": "at",
+      "token_id": 202
+    },
+    {
+      "token": "\u0121least",
+      "token_id": 203
+    },
+    {
+      "token": "\u0121one",
+      "token_id": 204
+    },
+    {
+      "token": "\u0121secondary",
+      "token_id": 205
+    },
+    {
+      "token": "\u0121instances",
+      "token_id": 206
+    },
+    {
+      "token": "\u0121before",
+      "token_id": 207
+    },
+    {
+      "token": "\u0121acknowledging",
+      "token_id": 208
+    },
+    {
+      "token": "\u0121from",
+      "token_id": 209
+    },
+    {
+      "token": "\u0121user",
+      "token_id": 210
+    },
+    {
+      "token": "\u0121perspective",
+      "token_id": 211
+    },
+    {
+      "token": "\u0121pair",
+      "token_id": 212
+    },
+    {
+      "token": "\u0121urls",
+      "token_id": 213
+    },
+    {
+      "token": "\u0121speak",
+      "token_id": 214
+    },
+    {
+      "token": "aws",
+      "token_id": 215
+    },
+    {
+      "token": "\u0121violate",
+      "token_id": 216
+    },
+    {
+      "token": "\u0121all",
+      "token_id": 217
+    },
+    {
+      "token": "\u0121endpoints",
+      "token_id": 218
+    },
+    {
+      "token": "\u0121healthy",
+      "token_id": 219
+    },
+    {
+      "token": "\u0121occasionally",
+      "token_id": 220
+    },
+    {
+      "token": "\u0121allow",
+      "token_id": 221
+    },
+    {
+      "token": "\u0121occurred",
+      "token_id": 222
+    },
+    {
+      "token": "\u0121every",
+      "token_id": 223
+    },
+    {
+      "token": "\u0121version",
+      "token_id": 224
+    },
+    {
+      "token": "\u0121tested",
+      "token_id": 225
+    },
+    {
+      "token": "\u0121parallel",
+      "token_id": 226
+    },
+    {
+      "token": "\u0121was",
+      "token_id": 227
+    },
+    {
+      "token": "\u0121performed",
+      "token_id": 228
+    },
+    {
+      "token": "\u0121accordance",
+      "token_id": 229
+    },
+    {
+      "token": "\u0121ethics",
+      "token_id": 230
+    },
+    {
+      "token": "\u0121policy",
+      "token_id": 231
+    },
+    {
+      "token": "\u0121wire",
+      "token_id": 232
+    },
+    {
+      "token": "\u0121protocol",
+      "token_id": 233
+    },
+    {
+      "token": "\u0121endpoint",
+      "token_id": 234
+    },
+    {
+      "token": "write",
+      "token_id": 235
+    },
+    {
+      "token": "\u0121actions",
+      "token_id": 236
+    },
+    {
+      "token": "\u0121reader",
+      "token_id": 237
+    },
+    {
+      "token": "only",
+      "token_id": 238
+    },
+    {
+      "token": "\u0121supports",
+      "token_id": 239
+    },
+    {
+      "token": "\u0121isolation",
+      "token_id": 240
+    },
+    {
+      "token": "\u0121do",
+      "token_id": 241
+    },
+    {
+      "token": "\u0121support",
+      "token_id": 242
+    },
+    {
+      "token": "\u0121se",
+      "token_id": 243
+    },
+    {
+      "token": "ial",
+      "token_id": 244
+    },
+    {
+      "token": "izable",
+      "token_id": 245
+    },
+    {
+      "token": "\u0121therefore",
+      "token_id": 246
+    },
+    {
+      "token": "which",
+      "token_id": 247
+    },
+    {
+      "token": "\u0121terms",
+      "token_id": 248
+    },
+    {
+      "token": "test",
+      "token_id": 249
+    },
+    {
+      "token": "\u0121design",
+      "token_id": 250
+    },
+    {
+      "token": "\u0121adapted",
+      "token_id": 251
+    },
+    {
+      "token": "\u0121test",
+      "token_id": 252
+    },
+    {
+      "token": "\u0121library",
+      "token_id": 253
+    },
+    {
+      "token": "\u0121use",
+      "token_id": 254
+    },
+    {
+      "token": "\u0121small",
+      "token_id": 255
+    },
+    {
+      "token": "\u0121wrapper",
+      "token_id": 256
+    },
+    {
+      "token": "\u0121program",
+      "token_id": 257
+    },
+    {
+      "token": "\u0121each",
+      "token_id": 258
+    },
+    {
+      "token": "\u0121round",
+      "token_id": 259
+    },
+    {
+      "token": "\u0121tests",
+      "token_id": 260
+    },
+    {
+      "token": "\u0121prov",
+      "token_id": 261
+    },
+    {
+      "token": "\u0121s",
+      "token_id": 262
+    },
+    {
+      "token": "ioned",
+      "token_id": 263
+    },
+    {
+      "token": "\u0121cluster",
+      "token_id": 264
+    },
+    {
+      "token": "\u0121using",
+      "token_id": 265
+    },
+    {
+      "token": "\u0121create",
+      "token_id": 266
+    },
+    {
+      "token": "db",
+      "token_id": 267
+    },
+    {
+      "token": "cluster",
+      "token_id": 268
+    },
+    {
+      "token": "\u0121api",
+      "token_id": 269
+    },
+    {
+      "token": "\u0121gp",
+      "token_id": 270
+    },
+    {
+      "token": "\u0121db",
+      "token_id": 271
+    },
+    {
+      "token": "id",
+      "token_id": 272
+    },
+    {
+      "token": "large",
+      "token_id": 273
+    },
+    {
+      "token": "\u0121then",
+      "token_id": 274
+    },
+    {
+      "token": "\u0121launched",
+      "token_id": 275
+    },
+    {
+      "token": "\u0121single",
+      "token_id": 276
+    },
+    {
+      "token": "\u0121ec",
+      "token_id": 277
+    },
+    {
+      "token": "\u0121node",
+      "token_id": 278
+    },
+    {
+      "token": "\u0121run",
+      "token_id": 279
+    },
+    {
+      "token": "\u0121our",
+      "token_id": 280
+    },
+    {
+      "token": "\u0121provided",
+      "token_id": 281
+    },
+    {
+      "token": "\u0121main",
+      "token_id": 282
+    },
+    {
+      "token": "\u0121no",
+      "token_id": 283
+    },
+    {
+      "token": "\u0121fault",
+      "token_id": 284
+    },
+    {
+      "token": "\u0121injection",
+      "token_id": 285
+    },
+    {
+      "token": "\u0121triggered",
+      "token_id": 286
+    },
+    {
+      "token": "overs",
+      "token_id": 287
+    },
+    {
+      "token": "\u0121previous",
+      "token_id": 288
+    },
+    {
+      "token": "\u0121workload",
+      "token_id": 289
+    },
+    {
+      "token": "\u0121consisted",
+      "token_id": 290
+    },
+    {
+      "token": "\u0121over",
+      "token_id": 291
+    },
+    {
+      "token": "\u0121lists",
+      "token_id": 292
+    },
+    {
+      "token": "\u0121unique",
+      "token_id": 293
+    },
+    {
+      "token": "\u0121integers",
+      "token_id": 294
+    },
+    {
+      "token": "\u0121stored",
+      "token_id": 295
+    },
+    {
+      "token": "\u0121row",
+      "token_id": 296
+    },
+    {
+      "token": "\u0121encoded",
+      "token_id": 297
+    },
+    {
+      "token": "\u0121text",
+      "token_id": 298
+    },
+    {
+      "token": "\u0121field",
+      "token_id": 299
+    },
+    {
+      "token": "\u0121comma",
+      "token_id": 300
+    },
+    {
+      "token": "separated",
+      "token_id": 301
+    },
+    {
+      "token": "\u0121values",
+      "token_id": 302
+    },
+    {
+      "token": "\u0121could",
+      "token_id": 303
+    },
+    {
+      "token": "\u0121either",
+      "token_id": 304
+    },
+    {
+      "token": "\u0121key",
+      "token_id": 305
+    },
+    {
+      "token": "\u0121append",
+      "token_id": 306
+    },
+    {
+      "token": "\u0121integer",
+      "token_id": 307
+    },
+    {
+      "token": "\u0121concat",
+      "token_id": 308
+    },
+    {
+      "token": "\u0121allowed",
+      "token_id": 309
+    },
+    {
+      "token": "\u0121elle",
+      "token_id": 310
+    },
+    {
+      "token": "\u0121checker",
+      "token_id": 311
+    },
+    {
+      "token": "\u0121verify",
+      "token_id": 312
+    },
+    {
+      "token": "\u0121variety",
+      "token_id": 313
+    },
+    {
+      "token": "\u0121mainly",
+      "token_id": 314
+    },
+    {
+      "token": "\u0121inf",
+      "token_id": 315
+    },
+    {
+      "token": "erring",
+      "token_id": 316
+    },
+    {
+      "token": "\u0121data",
+      "token_id": 317
+    },
+    {
+      "token": "flow",
+      "token_id": 318
+    },
+    {
+      "token": "\u0121dependencies",
+      "token_id": 319
+    },
+    {
+      "token": "\u0121tween",
+      "token_id": 320
+    },
+    {
+      "token": "\u0121finding",
+      "token_id": 321
+    },
+    {
+      "token": "\u0121resulting",
+      "token_id": 322
+    },
+    {
+      "token": "\u0121graph",
+      "token_id": 323
+    },
+    {
+      "token": "results",
+      "token_id": 324
+    },
+    {
+      "token": "\u0121under",
+      "token_id": 325
+    },
+    {
+      "token": "\u0121conditions",
+      "token_id": 326
+    },
+    {
+      "token": "\u0121moderate",
+      "token_id": 327
+    },
+    {
+      "token": "cur",
+      "token_id": 328
+    },
+    {
+      "token": "\u0121re",
+      "token_id": 329
+    },
+    {
+      "token": "ncy",
+      "token_id": 330
+    },
+    {
+      "token": "\u0121exhibited",
+      "token_id": 331
+    },
+    {
+      "token": "\u0121non",
+      "token_id": 332
+    },
+    {
+      "token": "\u0121few",
+      "token_id": 333
+    },
+    {
+      "token": "\u0121minutes",
+      "token_id": 334
+    },
+    {
+      "token": "\u0121consider",
+      "token_id": 335
+    },
+    {
+      "token": "\u0121two",
+      "token_id": 336
+    },
+    {
+      "token": "minute",
+      "token_id": 337
+    },
+    {
+      "token": "\u0121approximately",
+      "token_id": 338
+    },
+    {
+      "token": "\u0121per",
+      "token_id": 339
+    },
+    {
+      "token": "\u0121contains",
+      "token_id": 340
+    },
+    {
+      "token": "\u0121fol",
+      "token_id": 341
+    },
+    {
+      "token": "\u0121low",
+      "token_id": 342
+    },
+    {
+      "token": "ing",
+      "token_id": 343
+    },
+    {
+      "token": "\u0121cycle",
+      "token_id": 344
+    },
+    {
+      "token": "\u0121four",
+      "token_id": 345
+    },
+    {
+      "token": "wr",
+      "token_id": 346
+    },
+    {
+      "token": "\u0121nil",
+      "token_id": 347
+    },
+    {
+      "token": "rw",
+      "token_id": 348
+    },
+    {
+      "token": "ww",
+      "token_id": 349
+    },
+    {
+      "token": "\u0121top",
+      "token_id": 350
+    },
+    {
+      "token": "\u0121bottom",
+      "token_id": 351
+    },
+    {
+      "token": "\u0121call",
+      "token_id": 352
+    },
+    {
+      "token": "\u0121\u00f0\u0140",
+      "token_id": 353
+    },
+    {
+      "token": "\u0121appended",
+      "token_id": 354
+    },
+    {
+      "token": "\u0121observed",
+      "token_id": 355
+    },
+    {
+      "token": "rit",
+      "token_id": 356
+    },
+    {
+      "token": "\u0121ten",
+      "token_id": 357
+    },
+    {
+      "token": "\u0121\u00e2\u0123\u013c",
+      "token_id": 358
+    },
+    {
+      "token": "\u0121failed",
+      "token_id": 359
+    },
+    {
+      "token": "\u0121observe",
+      "token_id": 360
+    },
+    {
+      "token": "\u0121sym",
+      "token_id": 361
+    },
+    {
+      "token": "metric",
+      "token_id": 362
+    },
+    {
+      "token": "ally",
+      "token_id": 363
+    },
+    {
+      "token": "\u0121but",
+      "token_id": 364
+    },
+    {
+      "token": "\u0121since",
+      "token_id": 365
+    },
+    {
+      "token": "\u0121includes",
+      "token_id": 366
+    },
+    {
+      "token": "\u0121adjacent",
+      "token_id": 367
+    },
+    {
+      "token": "\u0121violation",
+      "token_id": 368
+    },
+    {
+      "token": "\u0121should",
+      "token_id": 369
+    },
+    {
+      "token": "\u0121occur",
+      "token_id": 370
+    },
+    {
+      "token": "\u0121standard",
+      "token_id": 371
+    },
+    {
+      "token": "\u0121at",
+      "token_id": 372
+    },
+    {
+      "token": "\u0121there",
+      "token_id": 373
+    },
+    {
+      "token": "\u0121understand",
+      "token_id": 374
+    },
+    {
+      "token": "\u0121why",
+      "token_id": 375
+    },
+    {
+      "token": "\u0121illegal",
+      "token_id": 376
+    },
+    {
+      "token": "\u0121recall",
+      "token_id": 377
+    },
+    {
+      "token": "app",
+      "token_id": 378
+    },
+    {
+      "token": "arently",
+      "token_id": 379
+    },
+    {
+      "token": "\u0121op",
+      "token_id": 380
+    },
+    {
+      "token": "\u0121er",
+      "token_id": 381
+    },
+    {
+      "token": "ates",
+      "token_id": 382
+    },
+    {
+      "token": "\u0121taken",
+      "token_id": 383
+    },
+    {
+      "token": "\u0121some",
+      "token_id": 384
+    },
+    {
+      "token": "\u0121start",
+      "token_id": 385
+    },
+    {
+      "token": "\u0121timestamp",
+      "token_id": 386
+    },
+    {
+      "token": "\u0121effects",
+      "token_id": 387
+    },
+    {
+      "token": "\u0121made",
+      "token_id": 388
+    },
+    {
+      "token": "\u0121others",
+      "token_id": 389
+    },
+    {
+      "token": "\u0121later",
+      "token_id": 390
+    },
+    {
+      "token": "\u0121commit",
+      "token_id": 391
+    },
+    {
+      "token": "\u0133\u0133",
+      "token_id": 392
+    },
+    {
+      "token": "\u0121its",
+      "token_id": 393
+    },
+    {
+      "token": "\u0121must",
+      "token_id": 394
+    },
+    {
+      "token": "\u0121followed",
+      "token_id": 395
+    },
+    {
+      "token": "\u0121did",
+      "token_id": 396
+    },
+    {
+      "token": "rote",
+      "token_id": 397
+    },
+    {
+      "token": "and",
+      "token_id": 398
+    },
+    {
+      "token": "\u0121so",
+      "token_id": 399
+    },
+    {
+      "token": "\u0121contra",
+      "token_id": 400
+    },
+    {
+      "token": "\u0121d",
+      "token_id": 401
+    },
+    {
+      "token": "iction",
+      "token_id": 402
+    },
+    {
+      "token": "\u0121way",
+      "token_id": 403
+    },
+    {
+      "token": "\u0121timestamps",
+      "token_id": 404
+    },
+    {
+      "token": "\u0121preced",
+      "token_id": 405
+    },
+    {
+      "token": "\u0121also",
+      "token_id": 406
+    },
+    {
+      "token": "\u0121example",
+      "token_id": 407
+    },
+    {
+      "token": "\u0121first",
+      "token_id": 408
+    },
+    {
+      "token": "\u0121compose",
+      "token_id": 409
+    },
+    {
+      "token": "\u0121logical",
+      "token_id": 410
+    },
+    {
+      "token": "\u0121state",
+      "token_id": 411
+    },
+    {
+      "token": "\u0121third",
+      "token_id": 412
+    },
+    {
+      "token": "\u0121fourth",
+      "token_id": 413
+    },
+    {
+      "token": "\u0121comprise",
+      "token_id": 414
+    },
+    {
+      "token": "we",
+      "token_id": 415
+    },
+    {
+      "token": "\u0121updates",
+      "token_id": 416
+    },
+    {
+      "token": "\u0121neither",
+      "token_id": 417
+    },
+    {
+      "token": "\u0121observes",
+      "token_id": 418
+    },
+    {
+      "token": "\u0121cur",
+      "token_id": 419
+    },
+    {
+      "token": "iously",
+      "token_id": 420
+    },
+    {
+      "token": "\u0121ob",
+      "token_id": 421
+    },
+    {
+      "token": "\u0121serve",
+      "token_id": 422
+    },
+    {
+      "token": "\u0121short",
+      "token_id": 423
+    },
+    {
+      "token": "\u0121known",
+      "token_id": 424
+    },
+    {
+      "token": "\u0121sk",
+      "token_id": 425
+    },
+    {
+      "token": "ew",
+      "token_id": 426
+    },
+    {
+      "token": "\u0121sug",
+      "token_id": 427
+    },
+    {
+      "token": "\u0121gest",
+      "token_id": 428
+    },
+    {
+      "token": "\u0121might",
+      "token_id": 429
+    },
+    {
+      "token": "\u0121slightly",
+      "token_id": 430
+    },
+    {
+      "token": "\u0121weaker",
+      "token_id": 431
+    },
+    {
+      "token": "\u0121cons",
+      "token_id": 432
+    },
+    {
+      "token": "is",
+      "token_id": 433
+    },
+    {
+      "token": "ency",
+      "token_id": 434
+    },
+    {
+      "token": "\u0121anomalies",
+      "token_id": 435
+    },
+    {
+      "token": "\u0121cl",
+      "token_id": 436
+    },
+    {
+      "token": "uding",
+      "token_id": 437
+    },
+    {
+      "token": "\u0121those",
+      "token_id": 438
+    },
+    {
+      "token": "\u0121linked",
+      "token_id": 439
+    },
+    {
+      "token": "\u0121only",
+      "token_id": 440
+    },
+    {
+      "token": "\u0121edges",
+      "token_id": 441
+    },
+    {
+      "token": "\u0121well",
+      "token_id": 442
+    },
+    {
+      "token": "\u0121several",
+      "token_id": 443
+    },
+    {
+      "token": "\u0121than",
+      "token_id": 444
+    },
+    {
+      "token": "\u0121oc",
+      "token_id": 445
+    },
+    {
+      "token": "\u0121c",
+      "token_id": 446
+    },
+    {
+      "token": "urred",
+      "token_id": 447
+    },
+    {
+      "token": "the",
+      "token_id": 448
+    },
+    {
+      "token": "\u0121oldest",
+      "token_id": 449
+    },
+    {
+      "token": "\u0121newest",
+      "token_id": 450
+    },
+    {
+      "token": "discussion",
+      "token_id": 451
+    },
+    {
+      "token": "\u0121presence",
+      "token_id": 452
+    },
+    {
+      "token": "\u0121conclude",
+      "token_id": 453
+    },
+    {
+      "token": "\u0121snap",
+      "token_id": 454
+    },
+    {
+      "token": "\u0121shot",
+      "token_id": 455
+    },
+    {
+      "token": "\u0121spect",
+      "token_id": 456
+    },
+    {
+      "token": "\u0121offer",
+      "token_id": 457
+    },
+    {
+      "token": "\u0121safety",
+      "token_id": 458
+    },
+    {
+      "token": "\u0121semantics",
+      "token_id": 459
+    },
+    {
+      "token": "node",
+      "token_id": 460
+    },
+    {
+      "token": "\u0121system",
+      "token_id": 461
+    },
+    {
+      "token": "\u0121testing",
+      "token_id": 462
+    },
+    {
+      "token": "\u0121ap",
+      "token_id": 463
+    },
+    {
+      "token": "\u0121pe",
+      "token_id": 464
+    },
+    {
+      "token": "ared",
+      "token_id": 465
+    },
+    {
+      "token": "\u0121strong",
+      "token_id": 466
+    },
+    {
+      "token": "\u0121users",
+      "token_id": 467
+    },
+    {
+      "token": "\u0121wish",
+      "token_id": 468
+    },
+    {
+      "token": "\u0121examine",
+      "token_id": 469
+    },
+    {
+      "token": "\u0121structures",
+      "token_id": 470
+    },
+    {
+      "token": "\u0121eye",
+      "token_id": 471
+    },
+    {
+      "token": "\u0121wards",
+      "token_id": 472
+    },
+    {
+      "token": "\u0121experiments",
+      "token_id": 473
+    },
+    {
+      "token": "\u0121whether",
+      "token_id": 474
+    },
+    {
+      "token": "\u0121intended",
+      "token_id": 475
+    },
+    {
+      "token": "variants",
+      "token_id": 476
+    },
+    {
+      "token": "\u0121preserved",
+      "token_id": 477
+    },
+    {
+      "token": "\u0121were",
+      "token_id": 478
+    },
+    {
+      "token": "uted",
+      "token_id": 479
+    },
+    {
+      "token": "\u0121appear",
+      "token_id": 480
+    },
+    {
+      "token": "\u0121involve",
+      "token_id": 481
+    },
+    {
+      "token": "\u0121queries",
+      "token_id": 482
+    },
+    {
+      "token": "\u0121against",
+      "token_id": 483
+    },
+    {
+      "token": "\u0121pos",
+      "token_id": 484
+    },
+    {
+      "token": "ible",
+      "token_id": 485
+    },
+    {
+      "token": "\u0121recover",
+      "token_id": 486
+    },
+    {
+      "token": "\u0121writer",
+      "token_id": 487
+    },
+    {
+      "token": "\u0121ensuring",
+      "token_id": 488
+    },
+    {
+      "token": "ritical",
+      "token_id": 489
+    },
+    {
+      "token": "\u0121report",
+      "token_id": 490
+    },
+    {
+      "token": "\u0121product",
+      "token_id": 491
+    },
+    {
+      "token": "\u0121curs",
+      "token_id": 492
+    },
+    {
+      "token": "ory",
+      "token_id": 493
+    },
+    {
+      "token": "\u0121exploration",
+      "token_id": 494
+    },
+    {
+      "token": "\u00e2\u0123\u0137",
+      "token_id": 495
+    },
+    {
+      "token": "\u0121investigated",
+      "token_id": 496
+    },
+    {
+      "token": "\u0121detail",
+      "token_id": 497
+    },
+    {
+      "token": "\u0121always",
+      "token_id": 498
+    },
+    {
+      "token": "\u0121takes",
+      "token_id": 499
+    },
+    {
+      "token": "\u0121experi",
+      "token_id": 500
+    },
+    {
+      "token": "\u0121mental",
+      "token_id": 501
+    },
+    {
+      "token": "\u0121approach",
+      "token_id": 502
+    },
+    {
+      "token": "\u0121verification",
+      "token_id": 503
+    },
+    {
+      "token": "\u0121prove",
+      "token_id": 504
+    },
+    {
+      "token": "\u0121bugs",
+      "token_id": 505
+    },
+    {
+      "token": "\u0121absence",
+      "token_id": 506
+    },
+    {
+      "token": "\u0121extensive",
+      "token_id": 507
+    },
+    {
+      "token": "\u0121efforts",
+      "token_id": 508
+    },
+    {
+      "token": "\u0121find",
+      "token_id": 509
+    },
+    {
+      "token": "\u0121problems",
+      "token_id": 510
+    },
+    {
+      "token": "\u0121cannot",
+      "token_id": 511
+    },
+    {
+      "token": "\u0121correctness",
+      "token_id": 512
+    },
+    {
+      "token": "\u0121thanks",
+      "token_id": 513
+    },
+    {
+      "token": "\u0121irene",
+      "token_id": 514
+    },
+    {
+      "token": "\u0121k",
+      "token_id": 515
+    },
+    {
+      "token": "anny",
+      "token_id": 516
+    },
+    {
+      "token": "\u0121her",
+      "token_id": 517
+    },
+    {
+      "token": "\u0121editorial",
+      "token_id": 518
+    },
+    {
+      "token": "\u0121helping",
+      "token_id": 519
+    },
+    {
+      "token": "\u0121identify",
+      "token_id": 520
+    },
+    {
+      "token": "\u0121af",
+      "token_id": 521
+    },
+    {
+      "token": "\u0121ter",
+      "token_id": 522
+    },
+    {
+      "token": "\u0121release",
+      "token_id": 523
+    },
+    {
+      "token": "\u0121pol",
+      "token_id": 524
+    },
+    {
+      "token": "\u0121icy",
+      "token_id": 525
+    }
+  ],
+  "vocabulary_name": "incident_reports_fixed_in_structural_qwen3__sparse_vocabulary"
+}

@@ -1,6 +1,5 @@
 use crate::orchestrator::run_state::model::{RunStatus, StepError, StepKind, StepResultEnvelope};
 use crate::orchestrator::run_state::view::{FinishedStepView, IterationView, RunStateView};
-use crate::request_pipeline::context::Context;
 use crate::request_pipeline::candidate_card_retrieval::CandidateCardRetrieval;
 use crate::request_pipeline::card_hydration::CardHydration;
 use crate::request_pipeline::incident_evidence_retrieval::IncidentEvidenceRetrieval;
@@ -11,9 +10,10 @@ use crate::request_pipeline::query_structuring::QueryStructuring;
 use crate::request_pipeline::response_validation_and_normalization::ResponseValidationAndNormalization;
 use crate::request_pipeline::theory_evidence_retrieval::TheoryEvidenceRetrieval;
 use crate::shared_types::{
-    CandidateCardRetrievalOutput, CardHydrationOutput, IncidentEvidenceRetrievalOutput,
-    LlmStructuredGenerationOutput, NormalizedUserRequest, PromptContextAssemblyOutput,
-    QueryStructuringOutput, TheoryEvidenceRetrievalOutput, UserRequest,
+    CandidateCardRetrievalOutput, CardHydrationOutput, Context,
+    IncidentEvidenceRetrievalOutput, LlmStructuredGenerationOutput, NormalizedUserRequest,
+    PromptContextAssemblyOutput, QueryStructuringOutput, TheoryEvidenceRetrievalOutput,
+    UserRequest,
 };
 
 #[derive(Debug)]
@@ -27,6 +27,7 @@ pub struct StepExecutor {
     prompt_context_assembly: PromptContextAssembly,
     llm_structured_generation: LlmStructuredGeneration,
     response_validation_and_normalization: ResponseValidationAndNormalization,
+    chunk_audit_log: Option<crate::chunk_audit_log::ChunkAuditLog>,
 }
 
 #[derive(Debug)]
@@ -74,7 +75,13 @@ impl StepExecutor {
             prompt_context_assembly: modules.prompt_context_assembly,
             llm_structured_generation: modules.llm_structured_generation,
             response_validation_and_normalization: modules.response_validation_and_normalization,
+            chunk_audit_log: None,
         }
+    }
+
+    pub fn with_chunk_audit_log(mut self, log: crate::chunk_audit_log::ChunkAuditLog) -> Self {
+        self.chunk_audit_log = Some(log);
+        self
     }
 
     pub async fn execute(
@@ -132,6 +139,12 @@ impl StepExecutor {
                 message: "cannot execute a step on an archived run".to_string(),
             });
         }
+
+        let run_id_for_log = state.run_id().0.to_string();
+        let iter_id_for_log = state
+            .last_iteration()
+            .map(|it| it.iteration_id().0.to_string())
+            .unwrap_or_default();
 
         let iteration = Self::require_iteration(state)?;
 
@@ -205,6 +218,15 @@ impl StepExecutor {
                     theory_evidence,
                     context,
                 )?;
+                if let Some(log) = &self.chunk_audit_log {
+                    log.append(
+                        &run_id_for_log,
+                        &iter_id_for_log,
+                        &normalized_request.query,
+                        incident_evidence,
+                        &result.incident_evidence_chunks,
+                    );
+                }
                 Ok(StepResultEnvelope::PromptContextAssembly(result))
             }
             StepKind::LlmStructuredGeneration => {
@@ -497,7 +519,8 @@ mod tests {
     const QS_PROMPT_JSON: &str = r#"{
         "version": "v1",
         "system_prompt": "You are a helpful assistant.",
-        "user_template": "Query: {{normalized_query}}\nVocabulary: {{controlled_vocabulary_json}}"
+        "user_template": "Query: {{normalized_query}}\nVocabulary: {{controlled_vocabulary_json}}",
+        "response_schema": {"type": "object"}
     }"#;
 
     fn new_record_id() -> StepRecordId {
@@ -560,6 +583,7 @@ mod tests {
     fn user_request() -> UserRequest {
         UserRequest {
             query: "service down".to_string(),
+            golden_question: None,
         }
     }
 
@@ -596,6 +620,7 @@ mod tests {
                 confidence: StructuredUserQueryConfidence::Medium,
             },
             token_usage: empty_token_usage(),
+            metrics: Some(crate::shared_types::QueryStructuringMetrics::default()),
         }
     }
 
@@ -603,6 +628,7 @@ mod tests {
         CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![],
+            metrics: None,
         }
     }
 
@@ -660,6 +686,7 @@ mod tests {
         IncidentEvidenceRetrievalOutput {
             primary_chunks: vec![],
             alternative_chunks: vec![],
+            metrics: None,
         }
     }
 
@@ -682,11 +709,15 @@ mod tests {
                 },
             ],
             alternative_chunks: vec![],
+            metrics: None,
         }
     }
 
     fn empty_theory_evidence() -> TheoryEvidenceRetrievalOutput {
-        TheoryEvidenceRetrievalOutput { chunks: vec![] }
+        TheoryEvidenceRetrievalOutput {
+            chunks: vec![],
+            metrics: None,
+        }
     }
 
     fn valid_llm_output() -> LlmStructuredGenerationOutput {
@@ -710,6 +741,7 @@ mod tests {
     fn prompt_context_output_with_nonempty_prompt() -> PromptContextAssemblyOutput {
         PromptContextAssemblyOutput {
             prompt: "Diagnose the incident based on the evidence provided.".to_string(),
+            response_schema: serde_json::Value::Object(serde_json::Map::new()),
             incident_evidence_chunks: vec![],
             theory_chunks: vec![],
         }
@@ -815,7 +847,7 @@ mod tests {
             content: serde_json::json!({
                 "problem_understanding": "Service is down",
                 "similar_practical_context": "Similar incidents in the past",
-                "active_hypotheses": ["overload"],
+                "active_hypotheses": ["overload", "network partition"],
                 "first_check": "Check service logs",
                 "result_interpretation": {
                     "supports_primary_if": "Logs show error spikes",

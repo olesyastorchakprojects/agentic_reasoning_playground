@@ -17,6 +17,7 @@ use super::{
     TokenizerSettings,
 };
 
+
 // ---------------------------------------------------------------------------
 // Raw intermediate structs mirroring the merged TOML structure
 // ---------------------------------------------------------------------------
@@ -33,6 +34,13 @@ struct RawConfig {
     embedding: RawEmbedding,
     qdrant: RawQdrant,
     observability: RawObservability,
+    #[serde(default)]
+    chunk_audit_log: Option<RawChunkAuditLog>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawChunkAuditLog {
+    path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -310,6 +318,7 @@ fn load_inner(
             metrics_export_interval_ms: raw.observability.metrics_export_interval_ms,
         },
         postgres: PostgresSettings { url: postgres_url },
+        chunk_audit_log_path: raw.chunk_audit_log.map(|c| c.path),
     })
 }
 

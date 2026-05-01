@@ -1,0 +1,157 @@
+{
+  "dataset_id": "agentic_reasoning_seed_10_easy_qdrant_split_v6",
+  "schema_version": "0.6",
+  "created_for": "agentic_reasoning_playground request_pipeline MVP evals",
+  "query_type": "incident_diagnosis",
+  "difficulty": "easy",
+  "ambiguity_allowed": [
+    "none",
+    "low"
+  ],
+  "case_meta": [
+    {
+      "case_id": "q001",
+      "difficulty": "easy",
+      "ambiguity": "low",
+      "system": "amazon_rds_postgresql",
+      "failure_class": [
+        "snapshot_isolation_violation",
+        "reader_endpoint_visibility_divergence"
+      ]
+    },
+    {
+      "case_id": "q002",
+      "difficulty": "easy",
+      "ambiguity": "low",
+      "system": "amazon_rds_postgresql",
+      "failure_class": [
+        "long_fork",
+        "primary_secondary_order_disagreement"
+      ]
+    },
+    {
+      "case_id": "q003",
+      "difficulty": "easy",
+      "ambiguity": "none",
+      "system": "etcd",
+      "failure_class": [
+        "unsafe_locking",
+        "duplicate_lock_holders"
+      ]
+    },
+    {
+      "case_id": "q004",
+      "difficulty": "easy",
+      "ambiguity": "low",
+      "system": "etcd",
+      "failure_class": [
+        "lease_validation",
+        "lock_semantics"
+      ]
+    },
+    {
+      "case_id": "q005",
+      "difficulty": "easy",
+      "ambiguity": "low",
+      "system": "mongodb",
+      "failure_class": [
+        "snapshot_read_without_majority_write",
+        "weak_defaults"
+      ]
+    },
+    {
+      "case_id": "q006",
+      "difficulty": "easy",
+      "ambiguity": "low",
+      "system": "mongodb",
+      "failure_class": [
+        "transaction_retry_bug",
+        "duplicate_writes"
+      ]
+    },
+    {
+      "case_id": "q007",
+      "difficulty": "easy",
+      "ambiguity": "none",
+      "system": "mysql",
+      "failure_class": [
+        "lost_update",
+        "repeatable_read_anomaly"
+      ]
+    },
+    {
+      "case_id": "q008",
+      "difficulty": "easy",
+      "ambiguity": "low",
+      "system": "mysql",
+      "failure_class": [
+        "monotonic_atomic_view_violation",
+        "partial_visibility"
+      ]
+    },
+    {
+      "case_id": "q009",
+      "difficulty": "easy",
+      "ambiguity": "low",
+      "system": "cockroachdb",
+      "failure_class": [
+        "strict_serializability_gap",
+        "external_consistency"
+      ]
+    },
+    {
+      "case_id": "q010",
+      "difficulty": "easy",
+      "ambiguity": "low",
+      "system": "cockroachdb",
+      "failure_class": [
+        "timestamp_collision",
+        "serializability_violation"
+      ]
+    }
+  ],
+  "notes": [
+    "First seed dataset intentionally uses well-described, corpus-near queries.",
+    "All query_structuring labels are selected from the current controlled vocabulary.",
+    "Chunk ids are structural chunk ids from Evidence/parsing/*/chunks/chunks.jsonl.",
+    "expected_theory_evidence is included even though the minimal user sketch omitted it, because the theory corpus was explicitly requested."
+  ],
+  "relevance_scale": {
+    "1.0": "strict/directly relevant",
+    "0.5": "soft/partially relevant or useful supporting context",
+    "0.0": "not relevant for this specific eval section"
+  },
+  "invariants": [
+    "All graded_relevance fields are arrays of objects, not maps.",
+    "Chunk relevance items use {\"chunk_id\": string, \"score\": 1.0|0.5|0.0}.",
+    "Term relevance items use {\"term\": string, \"score\": 1.0|0.5|0.0}.",
+    "Card relevance items use {\"card_id\": string, \"score\": 1.0|0.5|0.0}.",
+    "No relevance score outside 1.0, 0.5, 0.0 is allowed.",
+    "Every expected_theory_evidence.mechanism_explanation.graded_relevance includes explicit 0.0 chunks from the structural theory chunks file.",
+    "Any retrieved item absent from graded_relevance should still be treated as 0.0 by the metric runner.",
+    "Vocabulary strict terms score 1.0; vocabulary soft-only terms score 0.5; all other vocabulary terms score 0.0.",
+    "For expected_query_structuring, graded_relevance contains at most 10 items per field.",
+    "For expected_query_structuring, graded_relevance is sorted by score descending.",
+    "For expected_query_structuring, scores are limited to 1.0, 0.5, and 0.0."
+  ],
+  "graded_relevance_shape": {
+    "chunk_relevance_item": {
+      "chunk_id": "string",
+      "score": "1.0|0.5|0.0"
+    },
+    "term_relevance_item": {
+      "term": "string",
+      "score": "1.0|0.5|0.0"
+    },
+    "card_relevance_item": {
+      "card_id": "string",
+      "score": "1.0|0.5|0.0"
+    }
+  },
+  "query_structuring_vocab_closure": {
+    "status": "compact_sample",
+    "max_graded_relevance_items_per_field": 10,
+    "sort_order": "score_desc",
+    "note": "graded_relevance is not full-vocabulary closed in v6; it is capped to keep the seed dataset readable."
+  }
+}

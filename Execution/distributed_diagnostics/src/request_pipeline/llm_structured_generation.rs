@@ -5,11 +5,26 @@ use crate::api_clients::model::{
     ModelMessageRole, ModelResponseMode,
 };
 use crate::config::LlmStructuredGenerationSettings;
-use crate::request_pipeline::context::Context;
 use crate::shared_types::{
-    LlmStructuredGenerationOutput, ModelTokenUsage, PromptContextAssemblyOutput,
+    Context, LlmStructuredGenerationOutput, ModelTokenUsage, PromptContextAssemblyOutput,
 };
 use tracing::{info_span, field, Instrument};
+
+const REQUIRED_RESPONSE_TOP_LEVEL_KEYS: &[&str] = &[
+    "problem_understanding",
+    "similar_practical_context",
+    "first_check",
+    "result_interpretation",
+    "competing_interpretation",
+    "active_hypotheses",
+];
+
+const REQUIRED_RESULT_INTERPRETATION_KEYS: &[&str] = &[
+    "supports_primary_if",
+    "supports_competing_if",
+    "inconclusive_if",
+];
+const REPAIR_MAX_OUTPUT_TOKENS_CAP: u32 = 2000;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum LlmStructuredGenerationError {
@@ -87,7 +102,7 @@ impl LlmStructuredGeneration {
         oi_span.record(
             "llm.invocation_parameters",
             format!(
-                r#"{{"temperature":0.0,"response_format":"json_object","max_output_tokens":{}}}"#,
+                r#"{{"temperature":0.0,"response_format":"json_schema","max_output_tokens":{}}}"#,
                 self.max_output_tokens
             )
             .as_str(),
@@ -111,6 +126,15 @@ impl LlmStructuredGeneration {
             llm.output.object_field_count = field::Empty,
             llm.output.has_markdown_fence = field::Empty,
             llm.output.content_chars = field::Empty,
+            llm.output.shape_valid_initial = field::Empty,
+            llm.output.strip_attempted = field::Empty,
+            llm.output.strip_succeeded = field::Empty,
+            llm.output.unwrap_attempted = field::Empty,
+            llm.output.unwrap_succeeded = field::Empty,
+            llm.output.rename_attempted = field::Empty,
+            llm.output.rename_succeeded = field::Empty,
+            llm.output.repair_attempted = field::Empty,
+            llm.output.repair_succeeded = field::Empty,
             module.outcome = field::Empty,
             status = field::Empty,
             error.type = field::Empty,
@@ -148,7 +172,7 @@ impl LlmStructuredGeneration {
                 role: ModelMessageRole::User,
                 content: prompt_context.prompt.clone(),
             }],
-            response_mode: ModelResponseMode::JsonObject,
+            response_mode: ModelResponseMode::JsonSchema(prompt_context.response_schema.clone()),
             temperature: 0.0,
             max_output_tokens: Some(self.max_output_tokens),
         };
@@ -167,51 +191,7 @@ impl LlmStructuredGeneration {
             error.message = field::Empty,
         );
 
-        let response = {
-            async {
-                match self.model_client.generate(&request).await {
-                    Ok(r) => {
-                        oi_span.record("llm.model_name", "unknown");
-                        oi_span.record("llm.provider", "unknown");
-                        tracing::Span::current().record("model.response_mode", "JsonObject");
-                        tracing::Span::current().record("model.temperature", 0.0);
-                        tracing::Span::current().record("model.max_output_tokens", self.max_output_tokens as i64);
-                        if let Some(ref fr) = r.finish_reason {
-                            tracing::Span::current().record("model.finish_reason", format!("{:?}", fr));
-                        }
-                        if let Some(pt) = r.prompt_tokens {
-                            oi_span.record("llm.token_count.prompt", pt as i64);
-                            tracing::Span::current().record("model.prompt_tokens", pt as i64);
-                        }
-                        if let Some(ct) = r.completion_tokens {
-                            oi_span.record("llm.token_count.completion", ct as i64);
-                            tracing::Span::current().record("model.completion_tokens", ct as i64);
-                        }
-                        if let Some(tt) = r.total_tokens {
-                            oi_span.record("llm.token_count.total", tt as i64);
-                            tracing::Span::current().record("model.total_tokens", tt as i64);
-                        }
-                        oi_span.record("status", "ok");
-                        tracing::Span::current().record("status", "ok");
-                        Ok(r)
-                    }
-                    Err(e) => {
-                        crate::observability::record_error(
-                            oi_span,
-                            "LlmStructuredGeneration.Model",
-                            &format!("Model client error: {}", e),
-                        );
-                        tracing::Span::current().record("status", "error");
-                        tracing::Span::current().record("error.type", "LlmStructuredGeneration.Model");
-                        tracing::Span::current()
-                            .record("error.message", format!("Model client error: {}", e));
-                        Err(e)
-                    }
-                }
-            }
-            .instrument(llm_span)
-            .await
-        };
+        let response = self.run_model_request(&request, oi_span, llm_span).await;
 
         let response = match response {
             Ok(r) => r,
@@ -237,8 +217,9 @@ impl LlmStructuredGeneration {
         };
         let finish_reason = response.finish_reason.clone();
         let content = response.content.clone();
+        oi_span.record("llm.raw_response", content.as_str());
 
-        tracing::Span::current().record("llm.response_mode", "JsonObject");
+        tracing::Span::current().record("llm.response_mode", "JsonSchema");
         tracing::Span::current().record("llm.temperature", 0.0);
         tracing::Span::current().record("llm.max_output_tokens", self.max_output_tokens as i64);
         if let Some(ref fr) = finish_reason {
@@ -280,58 +261,194 @@ impl LlmStructuredGeneration {
         let has_markdown_fence = content.contains("```");
 
         // Step 3: parse content as JSON
-        let parsed: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-            crate::observability::record_error(
-                oi_span,
-                "LlmStructuredGeneration.InvalidModelOutput",
-                &format!("Failed to parse JSON: {}", e),
-            );
-            tracing::Span::current().record("llm.output.parse_success", false);
-            tracing::Span::current().record("llm.output.content_chars", content_chars as i64);
-            tracing::Span::current().record("llm.output.has_markdown_fence", has_markdown_fence);
-            tracing::Span::current().record("module.outcome", "failure");
-            tracing::Span::current().record("status", "error");
-            tracing::Span::current().record("error.type", "LlmStructuredGeneration.InvalidModelOutput");
-            tracing::Span::current()
-                .record("error.message", format!("Failed to parse JSON: {}", e));
-            LlmStructuredGenerationError::InvalidModelOutput {
-                reason: "model response is not valid JSON".to_string(),
-                token_usage: token_usage.clone(),
-                finish_reason: finish_reason.clone(),
-            }
-        })?;
-
-        if !parsed.is_object() {
-            crate::observability::record_error(
-                oi_span,
-                "LlmStructuredGeneration.InvalidModelOutput",
-                "model response is not a JSON object",
-            );
-            tracing::Span::current().record("llm.output.parse_success", false);
-            tracing::Span::current().record("llm.output.content_chars", content_chars as i64);
-            tracing::Span::current().record("llm.output.has_markdown_fence", has_markdown_fence);
-            tracing::Span::current().record("module.outcome", "failure");
-            tracing::Span::current().record("status", "error");
-            tracing::Span::current().record("error.type", "LlmStructuredGeneration.InvalidModelOutput");
-            tracing::Span::current()
-                .record("error.message", "model response is not a JSON object");
-            return Err(LlmStructuredGenerationError::InvalidModelOutput {
-                reason: "model response is not a JSON object".to_string(),
-                token_usage,
-                finish_reason,
-            });
-        }
+        let parsed = parse_json_object_output(
+            &content,
+            content_chars,
+            has_markdown_fence,
+            &token_usage,
+            &finish_reason,
+            oi_span,
+        )?;
 
         let parse_success = true;
         let top_level_type = "object".to_string();
         let object_field_count = parsed.as_object().map(|obj| obj.len()).unwrap_or(0);
-        let parsed_json = serde_json::to_string(&parsed).unwrap_or_else(|_| "{}".to_string());
+        let shape_valid_initial = json_matches_expected_shape(&parsed);
+        let mut final_parsed = parsed;
+        let mut final_token_usage = token_usage;
+
+        if !shape_valid_initial {
+            tracing::event!(
+                tracing::Level::INFO,
+                event.name = "llm_output_initial_invalid_payload",
+                llm.raw_response = %content,
+                llm.output.parsed_json = %serde_json::to_string(&final_parsed)
+                    .unwrap_or_else(|_| "{}".to_string())
+            );
+        }
+
+        let (strip_attempted, strip_succeeded) = if !shape_valid_initial {
+            match try_strip_extra_fields(&final_parsed) {
+                Some((stripped, stripped_field_names)) => {
+                    oi_span.in_scope(|| {
+                        tracing::event!(
+                            tracing::Level::INFO,
+                            event.name = "llm_output_strip_succeeded",
+                            llm.output.stripped_field_names = %stripped_field_names,
+                        );
+                    });
+                    final_parsed = stripped;
+                    (true, true)
+                }
+                None => (true, false),
+            }
+        } else {
+            (false, false)
+        };
+
+        let (unwrap_attempted, unwrap_succeeded) =
+            if !shape_valid_initial && !strip_succeeded {
+                match try_unwrap_single_key(&final_parsed) {
+                    Some((unwrapped, wrapper_key)) => {
+                        oi_span.in_scope(|| {
+                            tracing::event!(
+                                tracing::Level::INFO,
+                                event.name = "llm_output_unwrap_succeeded",
+                                llm.output.unwrapped_from_key = %wrapper_key,
+                            );
+                        });
+                        final_parsed = unwrapped;
+                        (true, true)
+                    }
+                    None => (true, false),
+                }
+            } else {
+                (false, false)
+            };
+
+        let (rename_attempted, rename_succeeded) =
+            if !shape_valid_initial && !strip_succeeded && !unwrap_succeeded {
+                match try_rename_misnamed_field(&final_parsed) {
+                    Some((renamed, from_key, to_key)) => {
+                        oi_span.in_scope(|| {
+                            tracing::event!(
+                                tracing::Level::INFO,
+                                event.name = "llm_output_rename_succeeded",
+                                llm.output.renamed_from = %from_key,
+                                llm.output.renamed_to = %to_key,
+                            );
+                        });
+                        final_parsed = renamed;
+                        (true, true)
+                    }
+                    None => (true, false),
+                }
+            } else {
+                (false, false)
+            };
+
+        let should_attempt_repair = !json_matches_expected_shape(&final_parsed)
+            && should_attempt_shape_repair(&final_parsed);
 
         tracing::Span::current().record("llm.output.parse_success", parse_success);
         tracing::Span::current().record("llm.output.top_level_type", &top_level_type);
         tracing::Span::current().record("llm.output.object_field_count", object_field_count as i64);
         tracing::Span::current().record("llm.output.has_markdown_fence", has_markdown_fence);
         tracing::Span::current().record("llm.output.content_chars", content_chars as i64);
+        tracing::Span::current().record("llm.output.shape_valid_initial", shape_valid_initial);
+        tracing::Span::current().record("llm.output.strip_attempted", strip_attempted);
+        tracing::Span::current().record("llm.output.strip_succeeded", strip_succeeded);
+        tracing::Span::current().record("llm.output.unwrap_attempted", unwrap_attempted);
+        tracing::Span::current().record("llm.output.unwrap_succeeded", unwrap_succeeded);
+        tracing::Span::current().record("llm.output.rename_attempted", rename_attempted);
+        tracing::Span::current().record("llm.output.rename_succeeded", rename_succeeded);
+        tracing::Span::current().record("llm.output.repair_attempted", should_attempt_repair);
+        tracing::Span::current().record("llm.output.repair_succeeded", false);
+
+        if should_attempt_repair {
+            let repair_max_output_tokens = self.max_output_tokens.min(REPAIR_MAX_OUTPUT_TOKENS_CAP);
+            let repair_request = ModelGenerationRequest {
+                messages: vec![ModelMessage {
+                    role: ModelMessageRole::User,
+                    content: build_shape_repair_prompt(&prompt_context.prompt, &content),
+                }],
+                response_mode: ModelResponseMode::JsonObject,
+                temperature: 0.0,
+                max_output_tokens: Some(repair_max_output_tokens),
+            };
+
+            let repair_span = info_span!(
+                "llm.call.diagnostic_response_repair",
+                model.response_mode = field::Empty,
+                model.temperature = field::Empty,
+                model.max_output_tokens = field::Empty,
+                model.finish_reason = field::Empty,
+                model.prompt_tokens = field::Empty,
+                model.completion_tokens = field::Empty,
+                model.total_tokens = field::Empty,
+                status = field::Empty,
+                error.type = field::Empty,
+                error.message = field::Empty,
+            );
+
+            let repair_response =
+                self.run_model_request(&repair_request, oi_span, repair_span).await?;
+            let repair_token_usage = ModelTokenUsage {
+                prompt_tokens: repair_response.prompt_tokens,
+                completion_tokens: repair_response.completion_tokens,
+                total_tokens: repair_response.total_tokens,
+            };
+            let repair_finish_reason = repair_response.finish_reason.clone();
+
+            match &repair_finish_reason {
+                Some(ModelFinishReason::Stop) | None => {}
+                Some(ModelFinishReason::Length) => {
+                    return Err(LlmStructuredGenerationError::InvalidModelOutput {
+                        reason: "repair model hit output token limit".to_string(),
+                        token_usage: combine_token_usage(&final_token_usage, &repair_token_usage),
+                        finish_reason: repair_finish_reason,
+                    });
+                }
+                Some(ref fr) => {
+                    return Err(LlmStructuredGenerationError::InvalidModelOutput {
+                        reason: format!("repair model stopped with unexpected finish reason: {:?}", fr),
+                        token_usage: combine_token_usage(&final_token_usage, &repair_token_usage),
+                        finish_reason: repair_finish_reason,
+                    });
+                }
+            }
+
+            let repaired = parse_json_object_output(
+                &repair_response.content,
+                repair_response.content.len(),
+                repair_response.content.contains("```"),
+                &repair_token_usage,
+                &repair_finish_reason,
+                oi_span,
+            )?;
+
+            if !json_matches_expected_shape(&repaired) {
+                tracing::event!(
+                    tracing::Level::INFO,
+                    event.name = "llm_output_repair_invalid_payload",
+                    llm.raw_response = %repair_response.content,
+                    llm.output.parsed_json = %serde_json::to_string(&repaired)
+                        .unwrap_or_else(|_| "{}".to_string())
+                );
+                return Err(LlmStructuredGenerationError::InvalidModelOutput {
+                    reason: "repair response JSON does not match expected shape".to_string(),
+                    token_usage: combine_token_usage(&final_token_usage, &repair_token_usage),
+                    finish_reason: repair_finish_reason,
+                });
+            }
+
+            final_token_usage = combine_token_usage(&final_token_usage, &repair_token_usage);
+            final_parsed = repaired;
+            tracing::Span::current().record("llm.output.repair_succeeded", true);
+        }
+
+        let parsed_json =
+            serde_json::to_string(&final_parsed).unwrap_or_else(|_| "{}".to_string());
         tracing::event!(
             tracing::Level::INFO,
             event.name = "llm_output_payload",
@@ -344,9 +461,388 @@ impl LlmStructuredGeneration {
         tracing::Span::current().record("status", "ok");
 
         Ok(LlmStructuredGenerationOutput {
-            response_json: parsed,
-            token_usage,
+            response_json: final_parsed,
+            token_usage: final_token_usage,
         })
+    }
+
+    async fn run_model_request(
+        &self,
+        request: &ModelGenerationRequest,
+        oi_span: &tracing::Span,
+        llm_span: tracing::Span,
+    ) -> Result<crate::api_clients::model::shared_types::ModelGenerationResponse, ModelClientError>
+    {
+        async {
+            match self.model_client.generate(request).await {
+                Ok(r) => {
+                    oi_span.record("llm.model_name", "unknown");
+                    oi_span.record("llm.provider", "unknown");
+                    tracing::Span::current().record("model.response_mode", "JsonObject");
+                    tracing::Span::current().record("model.temperature", 0.0);
+                    tracing::Span::current()
+                        .record("model.max_output_tokens", self.max_output_tokens as i64);
+                    if let Some(ref fr) = r.finish_reason {
+                        tracing::Span::current()
+                            .record("model.finish_reason", format!("{:?}", fr));
+                    }
+                    if let Some(pt) = r.prompt_tokens {
+                        oi_span.record("llm.token_count.prompt", pt as i64);
+                        tracing::Span::current().record("model.prompt_tokens", pt as i64);
+                    }
+                    if let Some(ct) = r.completion_tokens {
+                        oi_span.record("llm.token_count.completion", ct as i64);
+                        tracing::Span::current().record("model.completion_tokens", ct as i64);
+                    }
+                    if let Some(tt) = r.total_tokens {
+                        oi_span.record("llm.token_count.total", tt as i64);
+                        tracing::Span::current().record("model.total_tokens", tt as i64);
+                    }
+                    oi_span.record("status", "ok");
+                    tracing::Span::current().record("status", "ok");
+                    Ok(r)
+                }
+                Err(e) => {
+                    crate::observability::record_error(
+                        oi_span,
+                        "LlmStructuredGeneration.Model",
+                        &format!("Model client error: {}", e),
+                    );
+                    tracing::Span::current().record("status", "error");
+                    tracing::Span::current().record("error.type", "LlmStructuredGeneration.Model");
+                    tracing::Span::current()
+                        .record("error.message", format!("Model client error: {}", e));
+                    Err(e)
+                }
+            }
+        }
+        .instrument(llm_span)
+        .await
+    }
+}
+
+fn parse_json_object_output(
+    content: &str,
+    content_chars: usize,
+    has_markdown_fence: bool,
+    token_usage: &ModelTokenUsage,
+    finish_reason: &Option<ModelFinishReason>,
+    oi_span: &tracing::Span,
+) -> Result<serde_json::Value, LlmStructuredGenerationError> {
+    let parsed: serde_json::Value = serde_json::from_str(content).map_err(|e| {
+        crate::observability::record_error(
+            oi_span,
+            "LlmStructuredGeneration.InvalidModelOutput",
+            &format!("Failed to parse JSON: {}", e),
+        );
+        tracing::Span::current().record("llm.output.parse_success", false);
+        tracing::Span::current().record("llm.output.content_chars", content_chars as i64);
+        tracing::Span::current().record("llm.output.has_markdown_fence", has_markdown_fence);
+        tracing::Span::current().record("module.outcome", "failure");
+        tracing::Span::current().record("status", "error");
+        tracing::Span::current().record("error.type", "LlmStructuredGeneration.InvalidModelOutput");
+        tracing::Span::current()
+            .record("error.message", format!("Failed to parse JSON: {}", e));
+        LlmStructuredGenerationError::InvalidModelOutput {
+            reason: "model response is not valid JSON".to_string(),
+            token_usage: token_usage.clone(),
+            finish_reason: finish_reason.clone(),
+        }
+    })?;
+
+    if !parsed.is_object() {
+        crate::observability::record_error(
+            oi_span,
+            "LlmStructuredGeneration.InvalidModelOutput",
+            "model response is not a JSON object",
+        );
+        tracing::Span::current().record("llm.output.parse_success", false);
+        tracing::Span::current().record("llm.output.content_chars", content_chars as i64);
+        tracing::Span::current().record("llm.output.has_markdown_fence", has_markdown_fence);
+        tracing::Span::current().record("module.outcome", "failure");
+        tracing::Span::current().record("status", "error");
+        tracing::Span::current().record("error.type", "LlmStructuredGeneration.InvalidModelOutput");
+        tracing::Span::current()
+            .record("error.message", "model response is not a JSON object");
+        return Err(LlmStructuredGenerationError::InvalidModelOutput {
+            reason: "model response is not a JSON object".to_string(),
+            token_usage: token_usage.clone(),
+            finish_reason: finish_reason.clone(),
+        });
+    }
+
+    Ok(parsed)
+}
+
+fn json_matches_expected_shape(parsed: &serde_json::Value) -> bool {
+    let Some(obj) = parsed.as_object() else {
+        return false;
+    };
+
+    if obj.len() != REQUIRED_RESPONSE_TOP_LEVEL_KEYS.len() {
+        return false;
+    }
+
+    if !REQUIRED_RESPONSE_TOP_LEVEL_KEYS
+        .iter()
+        .all(|key| obj.contains_key(*key))
+    {
+        return false;
+    }
+
+    let Some(problem_understanding) = obj.get("problem_understanding") else {
+        return false;
+    };
+    if !problem_understanding.is_string() {
+        return false;
+    }
+
+    let Some(similar_practical_context) = obj.get("similar_practical_context") else {
+        return false;
+    };
+    if !similar_practical_context.is_string() {
+        return false;
+    }
+
+    let Some(active_hypotheses) = obj.get("active_hypotheses").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    if !(2..=3).contains(&active_hypotheses.len())
+        || !active_hypotheses.iter().all(|v| v.is_string())
+    {
+        return false;
+    }
+
+    let Some(first_check) = obj.get("first_check") else {
+        return false;
+    };
+    if !first_check.is_string() {
+        return false;
+    }
+
+    let Some(result_interpretation) = obj.get("result_interpretation").and_then(|v| v.as_object())
+    else {
+        return false;
+    };
+
+    if result_interpretation.len() != REQUIRED_RESULT_INTERPRETATION_KEYS.len() {
+        return false;
+    }
+
+    if !REQUIRED_RESULT_INTERPRETATION_KEYS
+        .iter()
+        .all(|key| result_interpretation.contains_key(*key))
+    {
+        return false;
+    }
+
+    let Some(supports_primary_if) = result_interpretation.get("supports_primary_if") else {
+        return false;
+    };
+    if !supports_primary_if.is_string() {
+        return false;
+    }
+
+    let Some(supports_competing_if) = result_interpretation.get("supports_competing_if") else {
+        return false;
+    };
+    if !supports_competing_if.is_string() {
+        return false;
+    }
+
+    let Some(inconclusive_if) = result_interpretation.get("inconclusive_if") else {
+        return false;
+    };
+    if !(inconclusive_if.is_null() || inconclusive_if.is_string()) {
+        return false;
+    }
+
+    let Some(competing_interpretation) = obj.get("competing_interpretation") else {
+        return false;
+    };
+    if !(competing_interpretation.is_null() || competing_interpretation.is_string()) {
+        return false;
+    }
+
+    true
+}
+
+fn try_strip_extra_fields(parsed: &serde_json::Value) -> Option<(serde_json::Value, String)> {
+    let obj = parsed.as_object()?;
+
+    if !REQUIRED_RESPONSE_TOP_LEVEL_KEYS
+        .iter()
+        .all(|k| obj.contains_key(*k))
+    {
+        return None;
+    }
+
+    let required_set: std::collections::HashSet<&str> =
+        REQUIRED_RESPONSE_TOP_LEVEL_KEYS.iter().copied().collect();
+    let mut extra_keys: Vec<String> = obj
+        .keys()
+        .filter(|k| !required_set.contains(k.as_str()))
+        .cloned()
+        .collect();
+    extra_keys.sort();
+
+    let mut stripped = serde_json::Map::new();
+    for key in REQUIRED_RESPONSE_TOP_LEVEL_KEYS {
+        stripped.insert(key.to_string(), obj[*key].clone());
+    }
+
+    if let Some(ri) = stripped.get_mut("result_interpretation") {
+        if let Some(ri_obj) = ri.as_object().cloned() {
+            if REQUIRED_RESULT_INTERPRETATION_KEYS
+                .iter()
+                .all(|k| ri_obj.contains_key(*k))
+            {
+                let ri_required_set: std::collections::HashSet<&str> =
+                    REQUIRED_RESULT_INTERPRETATION_KEYS.iter().copied().collect();
+                let mut ri_extra: Vec<String> = ri_obj
+                    .keys()
+                    .filter(|k| !ri_required_set.contains(k.as_str()))
+                    .cloned()
+                    .collect();
+                ri_extra.sort();
+                extra_keys.extend(ri_extra);
+
+                let mut ri_stripped = serde_json::Map::new();
+                for key in REQUIRED_RESULT_INTERPRETATION_KEYS {
+                    ri_stripped.insert(key.to_string(), ri_obj[*key].clone());
+                }
+                *ri = serde_json::Value::Object(ri_stripped);
+            }
+        }
+    }
+
+    let result = serde_json::Value::Object(stripped);
+    if json_matches_expected_shape(&result) {
+        Some((result, extra_keys.join(", ")))
+    } else {
+        None
+    }
+}
+
+fn try_rename_misnamed_field(parsed: &serde_json::Value) -> Option<(serde_json::Value, String, String)> {
+    let obj = parsed.as_object()?;
+    if obj.len() != REQUIRED_RESPONSE_TOP_LEVEL_KEYS.len() {
+        return None;
+    }
+
+    let required_set: std::collections::HashSet<&str> =
+        REQUIRED_RESPONSE_TOP_LEVEL_KEYS.iter().copied().collect();
+
+    let extra_keys: Vec<&str> = obj
+        .keys()
+        .filter(|k| !required_set.contains(k.as_str()))
+        .map(|k| k.as_str())
+        .collect();
+
+    let missing_keys: Vec<&str> = REQUIRED_RESPONSE_TOP_LEVEL_KEYS
+        .iter()
+        .filter(|k| !obj.contains_key(**k))
+        .copied()
+        .collect();
+
+    if extra_keys.len() != 1 || missing_keys.len() != 1 {
+        return None;
+    }
+
+    let extra_key = extra_keys[0];
+    let missing_key = missing_keys[0];
+    let value = obj[extra_key].clone();
+
+    let mut renamed = obj.clone();
+    renamed.remove(extra_key);
+    renamed.insert(missing_key.to_string(), value);
+
+    let result = serde_json::Value::Object(renamed);
+    if json_matches_expected_shape(&result) {
+        Some((result, extra_key.to_string(), missing_key.to_string()))
+    } else {
+        None
+    }
+}
+
+fn try_unwrap_single_key(parsed: &serde_json::Value) -> Option<(serde_json::Value, String)> {
+    let obj = parsed.as_object()?;
+    if obj.len() != 1 {
+        return None;
+    }
+    let (key, inner) = obj.iter().next()?;
+    if json_matches_expected_shape(inner) {
+        Some((inner.clone(), key.clone()))
+    } else {
+        None
+    }
+}
+
+fn should_attempt_shape_repair(parsed: &serde_json::Value) -> bool {
+    let Some(obj) = parsed.as_object() else {
+        return false;
+    };
+
+    obj.keys()
+        .any(|key| REQUIRED_RESPONSE_TOP_LEVEL_KEYS.contains(&key.as_str()))
+}
+
+fn build_shape_repair_prompt(original_prompt: &str, invalid_json: &str) -> String {
+    format!(
+        concat!(
+            "Repair the JSON shape only.\n",
+            "Do not write a new answer from scratch.\n",
+            "Preserve the original meaning and reuse existing text whenever possible.\n",
+            "Return exactly one valid JSON object and nothing else.\n",
+            "Required top-level keys exactly: ",
+            "[\"problem_understanding\",\"similar_practical_context\",\"first_check\",\"result_interpretation\",\"competing_interpretation\",\"active_hypotheses\"].\n",
+            "Required nested keys inside result_interpretation exactly: ",
+            "[\"supports_primary_if\",\"supports_competing_if\",\"inconclusive_if\"].\n",
+            "Constraints:\n",
+            "- active_hypotheses must be an array of 2 or 3 strings\n",
+            "- competing_interpretation may be null\n",
+            "- inconclusive_if may be null\n",
+            "- no markdown fences and no text outside JSON\n",
+            "- preserve uncertainty and avoid definitive-root-cause language\n",
+            "- keep every field concise\n",
+            "- do not add extra top-level keys\n",
+            "- if a required field is missing, fill it from the closest compatible content in the previous JSON\n",
+            "- if no compatible content exists, use null only for nullable fields; otherwise use a short string\n\n",
+            "Return JSON in this exact shape:\n",
+            "{{\n",
+            "  \"problem_understanding\": \"string\",\n",
+            "  \"similar_practical_context\": \"string\",\n",
+            "  \"first_check\": \"string\",\n",
+            "  \"result_interpretation\": {{\n",
+            "    \"supports_primary_if\": \"string\",\n",
+            "    \"supports_competing_if\": \"string\",\n",
+            "    \"inconclusive_if\": \"string|null\"\n",
+            "  }},\n",
+            "  \"competing_interpretation\": \"string|null\",\n",
+            "  \"active_hypotheses\": [\"string\", \"string\"]\n",
+            "}}\n\n",
+            "Original task prompt:\n{original_prompt}\n\n",
+            "Previous invalid JSON:\n{invalid_json}\n"
+        ),
+        original_prompt = original_prompt,
+        invalid_json = invalid_json,
+    )
+}
+
+fn combine_optional_counts(lhs: Option<usize>, rhs: Option<usize>) -> Option<usize> {
+    match (lhs, rhs) {
+        (Some(a), Some(b)) => Some(a + b),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+fn combine_token_usage(lhs: &ModelTokenUsage, rhs: &ModelTokenUsage) -> ModelTokenUsage {
+    ModelTokenUsage {
+        prompt_tokens: combine_optional_counts(lhs.prompt_tokens, rhs.prompt_tokens),
+        completion_tokens: combine_optional_counts(lhs.completion_tokens, rhs.completion_tokens),
+        total_tokens: combine_optional_counts(lhs.total_tokens, rhs.total_tokens),
     }
 }
 
@@ -413,6 +909,39 @@ mod tests {
         }
     }
 
+    struct SeqStubModelClient {
+        responses: Mutex<Vec<ModelGenerationResponse>>,
+        captured: Mutex<Vec<ModelGenerationRequest>>,
+    }
+
+    impl SeqStubModelClient {
+        fn ok(responses: Vec<ModelGenerationResponse>) -> Arc<Self> {
+            Arc::new(Self {
+                responses: Mutex::new(responses.into_iter().rev().collect()),
+                captured: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn captured_requests(&self) -> Vec<ModelGenerationRequest> {
+            self.captured.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl ModelClient for SeqStubModelClient {
+        async fn generate(
+            &self,
+            request: &ModelGenerationRequest,
+        ) -> Result<ModelGenerationResponse, ModelClientError> {
+            self.captured.lock().unwrap().push(request.clone());
+            self.responses
+                .lock()
+                .unwrap()
+                .pop()
+                .ok_or_else(|| ModelClientError::Transport("no stub response left".into()))
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
@@ -434,6 +963,7 @@ mod tests {
     fn prompt_ctx(prompt: &str) -> PromptContextAssemblyOutput {
         PromptContextAssemblyOutput {
             prompt: prompt.to_string(),
+            response_schema: serde_json::Value::Object(serde_json::Map::new()),
             incident_evidence_chunks: vec![],
             theory_chunks: vec![],
         }
@@ -779,6 +1309,201 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn generate_repairs_json_object_with_missing_required_fields() {
+        let invalid_but_parseable = r#"{
+            "problem_understanding":"Two concurrent transactions lose one append.",
+            "similar_practical_context":"Looks like a repeatable-read lost update.",
+            "active_hypotheses":["H1","H2","result_interpretation","competing_interpretation"]
+        }"#;
+        let repaired = r#"{
+            "problem_understanding":"Two concurrent transactions lose one append.",
+            "similar_practical_context":"Looks like a repeatable-read lost update.",
+            "active_hypotheses":["Repeatable Read permits this anomaly.","The app may assume stronger protection than MySQL provides."],
+            "first_check":"Inspect whether both transactions read the missing key before either insert became visible.",
+            "result_interpretation":{
+                "supports_primary_if":"Both transactions read the key as absent before writing.",
+                "supports_competing_if":"The reads were serialized yet one append still disappeared.",
+                "inconclusive_if":null
+            },
+            "competing_interpretation":"A separate write-path bug could be dropping one append."
+        }"#;
+
+        let client = SeqStubModelClient::ok(vec![ok_response(invalid_but_parseable), ok_response(repaired)]);
+        let inst = make_instance(client.clone());
+        let out = inst.generate(&prompt_ctx("hello")).await.unwrap();
+
+        assert_eq!(
+            out.response_json.get("first_check").and_then(|v| v.as_str()),
+            Some("Inspect whether both transactions read the missing key before either insert became visible.")
+        );
+        assert_eq!(out.token_usage.prompt_tokens, Some(20));
+        assert_eq!(out.token_usage.completion_tokens, Some(10));
+        assert_eq!(out.token_usage.total_tokens, Some(30));
+
+        let requests = client.captured_requests();
+        assert_eq!(requests.len(), 2, "expected initial request plus repair request");
+        assert!(
+            requests[1].messages[0]
+                .content
+                .contains("Previous invalid JSON"),
+            "repair prompt must include the invalid JSON payload"
+        );
+        assert!(
+            requests[1].messages[0]
+                .content
+                .contains("Repair the JSON shape only."),
+            "repair prompt must explicitly instruct shape repair"
+        );
+        assert_eq!(
+            requests[1].max_output_tokens,
+            Some(512),
+            "repair request should use the capped output-token budget"
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_strips_unknown_top_level_field_without_repair() {
+        let with_extra_field = r#"{
+            "problem_understanding":"Reader misses writes visible on writer.",
+            "similar_practical_context":"Primary and reader disagree on visibility.",
+            "active_hypotheses":["Reader endpoint has weaker visibility semantics.","Replica ordering differs from writer ordering."],
+            "first_check":"Compare the same read on writer and reader.",
+            "result_interpretation":{
+                "supports_primary_if":"Reader still misses the write while writer sees it.",
+                "supports_competing_if":"Reader sees the write, suggesting a narrower divergence.",
+                "inconclusive_if":null
+            },
+            "competing_interpretation":"A narrower ordering anomaly may explain the divergence.",
+            "extra_field":"should be stripped"
+        }"#;
+
+        let client = StubModelClient::ok(ok_response(with_extra_field));
+        let inst = make_instance(Arc::clone(&client) as Arc<dyn ModelClient>);
+        let out = inst.generate(&prompt_ctx("hello")).await.unwrap();
+
+        assert_eq!(
+            out.response_json
+                .get("problem_understanding")
+                .and_then(|v| v.as_str()),
+            Some("Reader misses writes visible on writer.")
+        );
+        assert!(
+            out.response_json.get("extra_field").is_none(),
+            "extra field must be stripped"
+        );
+        assert_eq!(
+            client.last_request().unwrap().messages.len(),
+            1,
+            "strip must resolve shape without a repair call"
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_strips_unknown_result_interpretation_field_without_repair() {
+        let with_extra_nested = r#"{
+            "problem_understanding":"Two clients hold the same lock.",
+            "similar_practical_context":"etcd lease expiry allows two holders.",
+            "active_hypotheses":["Lease expiry overlap.","Keepalive missed."],
+            "first_check":"Correlate conflicts with lease renewal timing.",
+            "result_interpretation":{
+                "supports_primary_if":"Conflicts cluster around lease expiry.",
+                "supports_competing_if":"Conflicts occur independently of lease timing.",
+                "inconclusive_if":null,
+                "extra_nested_key":"should be stripped"
+            },
+            "competing_interpretation":null
+        }"#;
+
+        let client = StubModelClient::ok(ok_response(with_extra_nested));
+        let inst = make_instance(Arc::clone(&client) as Arc<dyn ModelClient>);
+        let out = inst.generate(&prompt_ctx("hello")).await.unwrap();
+
+        let ri = out.response_json
+            .get("result_interpretation")
+            .and_then(|v| v.as_object())
+            .expect("result_interpretation must be present");
+        assert!(
+            ri.get("extra_nested_key").is_none(),
+            "extra nested field must be stripped"
+        );
+        assert_eq!(
+            client.last_request().unwrap().messages.len(),
+            1,
+            "strip must resolve shape without a repair call"
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_unwraps_single_key_wrapper_without_repair() {
+        let wrapped = r#"{
+            "response": {
+                "problem_understanding":"Two sessions lose one append.",
+                "similar_practical_context":"Lost update under default RavenDB sessions.",
+                "first_check":"Open two sessions, both load the same document, append distinct values, commit both, read and verify.",
+                "result_interpretation":{
+                    "supports_primary_if":"Only one appended value present after both commits.",
+                    "supports_competing_if":"Both values present but in wrong order.",
+                    "inconclusive_if":null
+                },
+                "competing_interpretation":null,
+                "active_hypotheses":["Default sessions allow last-writer-wins.","No optimistic concurrency means no conflict detection."]
+            }
+        }"#;
+
+        let client = StubModelClient::ok(ok_response(wrapped));
+        let inst = make_instance(Arc::clone(&client) as Arc<dyn ModelClient>);
+        let out = inst.generate(&prompt_ctx("hello")).await.unwrap();
+
+        assert_eq!(
+            out.response_json.get("problem_understanding").and_then(|v| v.as_str()),
+            Some("Two sessions lose one append.")
+        );
+        assert!(
+            out.response_json.get("response").is_none(),
+            "wrapper key must be removed"
+        );
+        assert_eq!(
+            client.last_request().unwrap().messages.len(),
+            1,
+            "unwrap must resolve shape without a repair call"
+        );
+    }
+
+    #[tokio::test]
+    async fn generate_renames_misnamed_field_without_repair() {
+        let with_wrong_key = r#"{
+            "final{": "Two sessions both commit appends but one value disappears.",
+            "similar_practical_context":"Default RavenDB sessions allow lost updates without optimistic concurrency.",
+            "first_check":"Open two sessions, load the same document, each append a distinct value, save both, then read and verify both values are present.",
+            "result_interpretation":{
+                "supports_primary_if":"Only one appended value present after both commits.",
+                "supports_competing_if":"Both values present but in unexpected order.",
+                "inconclusive_if":null
+            },
+            "competing_interpretation":null,
+            "active_hypotheses":["Default sessions use last-writer-wins semantics.","No conflict detection without optimistic concurrency."]
+        }"#;
+
+        let client = StubModelClient::ok(ok_response(with_wrong_key));
+        let inst = make_instance(Arc::clone(&client) as Arc<dyn ModelClient>);
+        let out = inst.generate(&prompt_ctx("hello")).await.unwrap();
+
+        assert_eq!(
+            out.response_json.get("problem_understanding").and_then(|v| v.as_str()),
+            Some("Two sessions both commit appends but one value disappears.")
+        );
+        assert!(
+            out.response_json.get("final{").is_none(),
+            "misnamed key must be removed"
+        );
+        assert_eq!(
+            client.last_request().unwrap().messages.len(),
+            1,
+            "rename must resolve shape without a repair call"
+        );
+    }
+
+    #[tokio::test]
     async fn generate_preserves_token_usage_in_invalid_finish_reason_error() {
         let client = StubModelClient::ok(ModelGenerationResponse {
             content: "{}".into(),
@@ -884,12 +1609,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_uses_json_object_response_mode() {
+    async fn generate_uses_json_schema_response_mode() {
         let client = StubModelClient::ok(ok_response("{}"));
         let inst = make_instance(Arc::clone(&client) as Arc<dyn ModelClient>);
         inst.generate(&prompt_ctx("hello")).await.unwrap();
         let req = client.last_request().unwrap();
-        assert_eq!(req.response_mode, ModelResponseMode::JsonObject);
+        assert!(
+            matches!(req.response_mode, ModelResponseMode::JsonSchema(_)),
+            "expected JsonSchema mode, got: {:?}",
+            req.response_mode
+        );
     }
 
     #[tokio::test]

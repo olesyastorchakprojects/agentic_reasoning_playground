@@ -101,7 +101,7 @@ fallback_to_any_chunk = false
 tag_priority = []
 
 [llm_structured_generation]
-max_output_tokens = 4500
+max_output_tokens = 6000
 
 [model]
 transport_kind = "together"
@@ -127,3 +127,6 @@ tracing_enabled = true
 metrics_enabled = true
 trace_batch_scheduled_delay_ms = 2000
 metrics_export_interval_ms = 1000
+
+[chunk_audit_log]
+path = "chunk_audit.log.jsonl"

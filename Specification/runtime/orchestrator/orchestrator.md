@@ -66,6 +66,8 @@ use crate::orchestrator::transition_policy::{
     TransitionPolicy,
 };
 use crate::shared_types::{
+    Context,
+    OpenInferenceContext,
     ResponseValidationAndNormalizationOutput,
     UserRequest,
 };
@@ -223,6 +225,10 @@ as mandatory:
 
 - every new iteration starts with one successful `StepKind::UserInputReceived`
   finished record created by `RunStateWriter::begin_iteration(user_input)`;
+- the orchestration loop must assemble one execution-time `Context` for the
+  current invocation before context-aware step execution begins;
+- the orchestrator must derive `Context.golden_question` only from the current
+  iteration's recorded `UserRequest`;
 - the orchestrator must never attempt to execute
   `StepKind::UserInputReceived` through `StepExecutor`;
 - `resume(run_id)` must not mutate or replace the stored user input for the
@@ -238,7 +244,61 @@ as mandatory:
   rather than through direct field access on `RunState`, `RunIteration`, or
   `StepRecord`.
 
-## 8) Canonical Orchestration Loop
+## 8) Execution-Time Context Assembly
+
+The generated orchestrator implementation must assemble one execution-time
+`Context` for each invocation that operates on a current iteration.
+
+The current MVP context contract is:
+
+```rust
+pub struct OpenInferenceContext {
+    pub root_span: tracing::Span,
+}
+
+pub struct Context {
+    pub open_inference: OpenInferenceContext,
+    pub golden_question: Option<GoldenQuestion>,
+}
+```
+
+Context-assembly rules:
+
+- the orchestrator owns creation of `OpenInferenceContext` for the current
+  invocation and current iteration;
+- the orchestrator must create `OpenInferenceContext.root_span` as the
+  iteration-scoped OpenInference chain span `oi.chain.diagnostic_iteration`
+  defined in `Specification/runtime/observability/open_inference_spans.md`;
+- that OpenInference root span must be a child of the active
+  `diagnostics.iteration` span for the same invocation;
+- the orchestrator must read the current iteration's successful
+  `StepKind::UserInputReceived` record through `RunStateView` /
+  `IterationView`;
+- when that recorded `UserRequest` contains `golden_question = Some(...)`, the
+  assembled `Context.golden_question` must preserve the same value unchanged;
+- when that recorded `UserRequest` contains `golden_question = None`, the
+  assembled `Context.golden_question` must be `None`;
+- the orchestrator must not synthesize fallback golden-question values and must
+  not mutate the recorded user input after `begin_iteration(user_input)`;
+- the assembled `Context` must then be passed unchanged into context-aware step
+  execution.
+
+Outcome rules:
+
+- on successful terminal iteration completion, the orchestrator must record
+  `status = "ok"` and `run.outcome = "success"` on
+  `OpenInferenceContext.root_span`;
+- when the final result is serializable, the orchestrator must also record the
+  serialized result as `output.value` with `output.mime_type = "application/json"`;
+- on terminal failure, the orchestrator must record `run.outcome = "failure"`
+  and an OpenInference error status on `OpenInferenceContext.root_span`.
+
+This context-assembly boundary is orchestration-owned.
+Golden-file validation, golden-file parsing, and initial `UserRequest`
+construction are runtime-entry concerns and are not owned by
+`orchestrator::orchestrator`.
+
+## 9) Canonical Orchestration Loop
 
 The generated implementation must follow this control-flow shape.
 
@@ -254,6 +314,8 @@ where
         &self,
         state: &mut RunState,
     ) -> Result<RunOutcome, OrchestratorError> {
+        let context = self.build_context(RunStateView::new(state))?;
+
         loop {
             let decision = self
                 .policy
@@ -290,7 +352,7 @@ where
 
                     let execution_result = self
                         .executor
-                        .execute(step, RunStateView::new(state))
+                        .execute_with_context(step, RunStateView::new(state), &context)
                         .await;
 
                     {
@@ -354,7 +416,10 @@ Normative rules for this loop:
   `begin_step(step)` succeeds;
 - the pending record passed to `RunRepository::append_step_record(...)` must
   carry the exact `record_id` returned by `PendingStepWriter::record_id()`;
-- step execution must be invoked only through `StepExecutor::execute(...)`;
+- step execution must be invoked only through
+  `StepExecutor::execute_with_context(...)` or through
+  `StepExecutor::execute(...)` when orchestration intentionally relies on the
+  documented `Context::noop()` delegation path;
 - after execution returns, the pending step must be finished through
   `record_success(...)` or `record_failure(...)`;
 - the finished step transition must then be persisted through
@@ -368,7 +433,7 @@ Normative rules for this loop:
 - the loop must terminate only when policy returns `FinishWithResult` or
   `FinishWithError`.
 
-## 9) Canonical Entry-Point Algorithms
+## 10) Canonical Entry-Point Algorithms
 
 The generated implementation must follow these entry-point shapes.
 
@@ -478,7 +543,7 @@ async fn load_existing_run(
 - return the loaded `RunState` unchanged when it exists;
 - perform no in-memory mutation and no persistence.
 
-## 10) Persistence Order
+## 11) Persistence Order
 
 The generated implementation must persist run progress in the same mutation
 granularity already defined by `run_repository`.
@@ -510,7 +575,7 @@ Required persistence order:
 3. persist the appended iteration via `RunRepository::append_iteration(...)`;
 4. enter `drive_to_outcome(...)`.
 
-## 11) Resume Semantics
+## 12) Resume Semantics
 
 `resume(run_id)` is a retry/continue entrypoint for the current iteration.
 
@@ -539,7 +604,7 @@ The generated implementation must treat it as:
 - using the new iteration as the only execution context inspected by policy and
   executor during the new invocation.
 
-## 12) Non-Responsibilities
+## 13) Non-Responsibilities
 
 `orchestrator` must not:
 
@@ -551,12 +616,13 @@ The generated implementation must treat it as:
   `run_state::view`/`run_state::apply` helper methods exist;
 - persist the entire run through a hypothetical generic `save_run(...)`
   shortcut;
+- own golden-file validation, schema checking, or golden JSON parsing;
 - bypass `RunStateWriter` and mutate `RunState.iterations` or
   `RunIteration.step_records` inline;
 - collapse step failure into `OrchestratorError` when policy can surface the
   recorded `StepError` as `RunOutcome::Failed`.
 
-## 13) Testing Seams
+## 14) Testing Seams
 
 The generated production implementation must keep the exact public
 `Orchestrator<P>` API defined by this document.
@@ -580,7 +646,7 @@ Disallowed changes:
   test-only constructor;
 - introducing a second public orchestrator type solely for testing.
 
-## 14) Unit-Test Ownership
+## 15) Unit-Test Ownership
 
 Required unit-test coverage for the orchestrator runtime subtree is owned by:
 

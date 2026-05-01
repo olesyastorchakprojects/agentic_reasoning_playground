@@ -32,6 +32,9 @@ Shared request and response types are defined by:
 Practice-chunk collection behavior is defined by:
 - `Specification/runtime/api_clients/qdrant/practice_chunks_collection.md`
 
+OpenInference span behavior for the context-aware execution path is defined by:
+- `Specification/runtime/observability/open_inference_spans.md`
+
 The generated Rust module file for the current version is:
 - `src/request_pipeline/incident_evidence_retrieval.rs`
 
@@ -42,6 +45,8 @@ This module must use the shared runtime types:
 - `CandidateCardRetrievalOutput`
 - `IncidentEvidenceChunk`
 - `IncidentEvidenceRetrievalOutput`
+- `IncidentEvidenceBranchRetrievalMetrics`
+- `IncidentEvidenceRetrievalMetrics`
 
 These shared types are defined in:
 - `Specification/runtime/runtime.md`
@@ -63,6 +68,7 @@ pub struct IncidentEvidenceChunk {
 pub struct IncidentEvidenceRetrievalOutput {
     pub primary_chunks: Vec<IncidentEvidenceChunk>,
     pub alternative_chunks: Vec<IncidentEvidenceChunk>,
+    pub metrics: Option<IncidentEvidenceRetrievalMetrics>,
 }
 ```
 
@@ -75,10 +81,22 @@ Shared-type rules:
 - `IncidentEvidenceRetrievalOutput.primary_chunks` contains only hits returned by the primary search call;
 - `IncidentEvidenceRetrievalOutput.alternative_chunks` contains only hits returned by the alternatives search call;
 - `IncidentEvidenceRetrievalOutput` must preserve the separation between primary and alternative retrieval paths exactly;
-- `primary_chunks` and `alternative_chunks` encode retrieval-branch separation only and must not be interpreted as prompt-time semantic roles.
+- `primary_chunks` and `alternative_chunks` encode retrieval-branch separation only and must not be interpreted as prompt-time semantic roles;
+- `IncidentEvidenceRetrievalOutput.metrics` contains request-local retrieval
+  metrics in the shared `IncidentEvidenceRetrievalMetrics` shape when such
+  metrics were computed for the current execution;
+- `IncidentEvidenceRetrievalOutput.metrics = None` is allowed when no matching
+  golden incident-evidence retrieval targets are available in the current
+  execution context.
 
 Import rule for the generated Rust module:
 - shared input and output types used by this module, including `NormalizedUserRequest`, `CandidateCardRetrievalOutput`, `IncidentEvidenceChunk`, and `IncidentEvidenceRetrievalOutput`, must be imported from `crate::shared_types`;
+- `IncidentEvidenceBranchRetrievalMetrics` and
+  `IncidentEvidenceRetrievalMetrics` must be imported from
+  `crate::shared_types` when request-local retrieval metrics are attached to
+  the module output;
+- retrieval metrics helper behavior is defined by
+  `Specification/runtime/request_pipeline/retrieval_metrics.md`;
 - `PracticeChunksCollection` must be imported through `crate::api_clients::qdrant::...`;
 - `NormalizedUserQuery` must be imported through `crate::api_clients::qdrant::...`.
 
@@ -141,6 +159,13 @@ impl IncidentEvidenceRetrieval {
         request: &NormalizedUserRequest,
         candidates: &CandidateCardRetrievalOutput,
     ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError>;
+
+    pub async fn retrieve_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        candidates: &CandidateCardRetrievalOutput,
+        context: &Context,
+    ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError>;
 }
 ```
 
@@ -152,10 +177,38 @@ Rules:
 - `new(...)` must retain the injected dependency and typed settings for reuse;
 - `new(...)` must fail fast when `settings.top_k = 0`;
 - `new(...)` constructor validation failures must be returned through `IncidentEvidenceRetrievalError` rather than through panic;
-- `retrieve(...)` must be the single public request-time entrypoint of this module;
+- `retrieve(...)` must delegate to
+  `retrieve_with_context(request, candidates, &Context::noop())`;
+- `retrieve_with_context(...)` is the context-aware request-time entrypoint used
+  by the orchestrator;
+- `retrieve_with_context(...)` must treat `context.open_inference.root_span` as
+  the parent span for the module-owned OpenInference retriever spans
+  `oi.retriever.incident_evidence.primary` and
+  `oi.retriever.incident_evidence.alternatives`;
+- when `IncidentEvidenceRetrievalOutput.metrics = Some(...)`,
+  `retrieve_with_context(...)` must also emit the companion OpenInference
+  metrics span `oi.chain.incident_evidence_retrieval_metrics` as defined by
+  `Specification/runtime/observability/open_inference_spans.md`;
 - `retrieve(...)` must not mutate the input `NormalizedUserRequest`;
 - `retrieve(...)` must not mutate the input `CandidateCardRetrievalOutput`;
-- `retrieve(...)` must not re-rank, deduplicate, or semantically reinterpret returned chunks.
+- `retrieve(...)` must not re-rank, deduplicate, or semantically reinterpret returned chunks;
+- when `context.golden_question = Some(...)`, `retrieve_with_context(...)` must
+  compute retrieval metrics twice:
+  - once for `primary_chunks` against
+    `golden_question.expected_incident_evidence.primary_card_evidence_query.relevance_judgments`
+  - once for `alternative_chunks` against
+    `golden_question.expected_incident_evidence.alternative_cards_evidence_query.relevance_judgments`
+- those two metric bundles must be attached as
+  `IncidentEvidenceRetrievalOutput.metrics = Some(...)`;
+- if either incident-evidence golden branch contains an empty
+  `strict_chunk_ids` or `soft_chunk_ids` list, `retrieve_with_context(...)`
+  must not call `compute_retrieval_metrics(...)` for incident evidence in the
+  current version and must return `IncidentEvidenceRetrievalOutput.metrics = None`;
+- when `context.golden_question = None`,
+  `IncidentEvidenceRetrievalOutput.metrics` must be `None`.
+- helper failures from `compute_retrieval_metrics(...)` must be wrapped into
+  `IncidentEvidenceRetrievalError` and must fail the request-time call rather
+  than being silently ignored.
 
 Debug rules:
 - `IncidentEvidenceRetrieval` must not derive `Debug` in the current version because `Arc<dyn PracticeChunksCollection>` does not implement `Debug`;
@@ -222,6 +275,32 @@ General retrieval rules:
 - each executed search call returns at most `settings.top_k` chunks because the collection request limit must be set to `settings.top_k`;
 - the module must not perform additional truncation after receiving successful collection results;
 - the module must build collection-level `NormalizedUserQuery` from the unchanged `NormalizedUserRequest.query` string;
+- request-local retrieval metrics, when computed, must use:
+  - `actual_ranked_ids = primary_chunks[*].chunk_id` for the primary branch
+  - `actual_ranked_ids = alternative_chunks[*].chunk_id` for the alternatives
+    branch
+- for the current contract, the module must call
+  `compute_retrieval_metrics(...)` twice with:
+  - normalized golden targets derived from
+    `golden_question.expected_incident_evidence.primary_card_evidence_query.relevance_judgments`
+    and `golden_question.expected_incident_evidence.alternative_cards_evidence_query.relevance_judgments`
+  - branch-local `actual_ranked_ids`
+  - `k = settings.top_k`
+- after both helper calls succeed, the module must attach:
+
+```rust
+IncidentEvidenceRetrievalMetrics {
+    primary_card_evidence_query: IncidentEvidenceBranchRetrievalMetrics {
+        relevance_judgments: primary_metrics,
+    },
+    alternative_cards_evidence_query: IncidentEvidenceBranchRetrievalMetrics {
+        relevance_judgments: alternative_metrics,
+    },
+}
+```
+- the OpenInference input/output payload contracts for the primary and
+  alternative retrieval branches are owned by
+  `Specification/runtime/observability/open_inference_spans.md`;
 - the module must not paraphrase, tokenize, rewrite, or otherwise mutate `NormalizedUserRequest.query` before constructing `NormalizedUserQuery`;
 - the module must not validate cross-branch uniqueness of candidate `case_id` values;
 - the module must trust the supplied `CandidateCardRetrievalOutput`, even if the same `case_id` appears in both `primary` and `alternatives`;

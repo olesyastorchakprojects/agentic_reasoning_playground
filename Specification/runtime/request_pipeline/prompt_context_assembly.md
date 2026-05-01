@@ -37,6 +37,9 @@ This document does not define:
 Shared request and response types are defined by:
 - `Specification/runtime/runtime.md`
 
+OpenInference span behavior for the context-aware execution path is defined by:
+- `Specification/runtime/observability/open_inference_spans.md`
+
 The generated Rust module file for the current version is:
 - `src/request_pipeline/prompt_context_assembly.rs`
 
@@ -223,6 +226,16 @@ impl PromptContextAssembly {
         incident_evidence: &IncidentEvidenceRetrievalOutput,
         theory_evidence: &TheoryEvidenceRetrievalOutput,
     ) -> Result<PromptContextAssemblyOutput, PromptContextAssemblyError>;
+
+    pub fn assemble_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        query: &QueryStructuringOutput,
+        cards: &CardHydrationOutput,
+        incident_evidence: &IncidentEvidenceRetrievalOutput,
+        theory_evidence: &TheoryEvidenceRetrievalOutput,
+        context: &Context,
+    ) -> Result<PromptContextAssemblyOutput, PromptContextAssemblyError>;
 }
 ```
 
@@ -234,7 +247,13 @@ Rules:
 - `new(...)` must validate constructor-owned settings and retain settings for reuse;
 - `new(...)` must load and validate the configured prompt asset;
 - `new(...)` constructor validation failures must be returned through `PromptContextAssemblyError`;
-- `assemble(...)` must be the single public request-time entrypoint of this module;
+- `assemble(...)` must delegate to `assemble_with_context(...)` with
+  `&Context::noop()`;
+- `assemble_with_context(...)` is the context-aware request-time entrypoint used
+  by the orchestrator;
+- `assemble_with_context(...)` must treat `context.open_inference.root_span` as
+  the parent span for the module-owned OpenInference chain span
+  `oi.chain.prompt_context_assembly`;
 - `assemble(...)` must not mutate any input;
 - `assemble(...)` must not call external services;
 - `assemble(...)` must render the filled diagnostic-response prompt string;
@@ -669,6 +688,9 @@ Output rules:
 - selected incident chunks must be emitted in role order: `EvidenceForMatch`, `FirstCheckHint`, `SupportingExplanation`, then `AlternativeContext`;
 - returned selected chunks must be exactly the same chunks represented inside the rendered prompt context;
 - returned selected chunks are intended for history, tracing, and later diagnostic state;
+- the OpenInference input/output payload contract for
+  `assemble_with_context(...)` is owned by
+  `Specification/runtime/observability/open_inference_spans.md`;
 - the prompt string is the input intended for the next model-generation module.
 
 ## 11) Error Boundary

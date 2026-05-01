@@ -6,9 +6,12 @@ use crate::api_clients::qdrant::practice_chunks_collection::{
 };
 use crate::api_clients::qdrant::shared_types::NormalizedUserQuery;
 use crate::config::CollectionRetrievalSettings;
-use crate::request_pipeline::context::Context;
+use crate::request_pipeline::retrieval_metrics::{
+    compute_retrieval_metrics, GoldenRetrievalRelevanceById, GoldenRetrievalTargetsById,
+};
 use crate::shared_types::{
-    CandidateCardRetrievalOutput, IncidentEvidenceChunk, IncidentEvidenceRetrievalOutput,
+    CandidateCardRetrievalOutput, Context, IncidentEvidenceBranchRetrievalMetrics,
+    IncidentEvidenceChunk, IncidentEvidenceRetrievalMetrics, IncidentEvidenceRetrievalOutput,
     NormalizedUserRequest,
 };
 use tracing::{info_span, field, Instrument};
@@ -42,6 +45,8 @@ pub enum IncidentEvidenceRetrievalError {
     InvalidSettings(String),
     #[error("practice chunks collection error: {0}")]
     Collection(#[from] PracticeChunksCollectionError),
+    #[error("retrieval metrics computation failed: {0}")]
+    MetricsComputation(String),
 }
 
 // ─── Public struct ────────────────────────────────────────────────────────────
@@ -141,7 +146,13 @@ impl IncidentEvidenceRetrieval {
             error.message = field::Empty,
         );
 
-        self.retrieve_instrumented(request, candidates, &oi_primary_span, &oi_alternatives_span)
+        self.retrieve_instrumented(
+            request,
+            candidates,
+            &oi_primary_span,
+            &oi_alternatives_span,
+            context,
+        )
             .instrument(span)
             .await
     }
@@ -152,6 +163,7 @@ impl IncidentEvidenceRetrieval {
         candidates: &CandidateCardRetrievalOutput,
         oi_primary_span: &tracing::Span,
         oi_alternatives_span: &tracing::Span,
+        context: &Context,
     ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError> {
         let alternative_case_ids: Vec<&str> = candidates
             .alternatives
@@ -428,9 +440,91 @@ impl IncidentEvidenceRetrieval {
         tracing::Span::current().record("module.outcome", "success");
         tracing::Span::current().record("status", "ok");
 
+        let metrics = if let Some(golden_question) = &context.golden_question {
+            let primary_golden = &golden_question
+                .expected_incident_evidence
+                .primary_card_evidence_query
+                .relevance_judgments;
+            let alternative_golden = &golden_question
+                .expected_incident_evidence
+                .alternative_cards_evidence_query
+                .relevance_judgments;
+
+            if primary_golden.strict_chunk_ids.is_empty()
+                || primary_golden.soft_chunk_ids.is_empty()
+                || alternative_golden.strict_chunk_ids.is_empty()
+                || alternative_golden.soft_chunk_ids.is_empty()
+            {
+                None
+            } else {
+                let primary_targets = GoldenRetrievalTargetsById {
+                    strict_positive_ids: primary_golden.strict_chunk_ids.clone(),
+                    soft_positive_ids: primary_golden.soft_chunk_ids.clone(),
+                    graded_relevance: primary_golden
+                        .graded_relevance
+                        .iter()
+                        .map(|rel| GoldenRetrievalRelevanceById {
+                            id: rel.chunk_id.clone(),
+                            score: rel.score,
+                        })
+                        .collect(),
+                };
+                let alternative_targets = GoldenRetrievalTargetsById {
+                    strict_positive_ids: alternative_golden.strict_chunk_ids.clone(),
+                    soft_positive_ids: alternative_golden.soft_chunk_ids.clone(),
+                    graded_relevance: alternative_golden
+                        .graded_relevance
+                        .iter()
+                        .map(|rel| GoldenRetrievalRelevanceById {
+                            id: rel.chunk_id.clone(),
+                            score: rel.score,
+                        })
+                        .collect(),
+                };
+                let primary_actual_ids: Vec<String> =
+                    primary_chunks.iter().map(|chunk| chunk.chunk_id.clone()).collect();
+                let alternative_actual_ids: Vec<String> = alternative_chunks
+                    .iter()
+                    .map(|chunk| chunk.chunk_id.clone())
+                    .collect();
+
+                let primary_metrics = compute_retrieval_metrics(
+                    &primary_targets,
+                    &primary_actual_ids,
+                    self.settings.top_k,
+                )
+                .map_err(|e| IncidentEvidenceRetrievalError::MetricsComputation(e.to_string()))?;
+                let alternative_metrics = compute_retrieval_metrics(
+                    &alternative_targets,
+                    &alternative_actual_ids,
+                    self.settings.top_k,
+                )
+                .map_err(|e| IncidentEvidenceRetrievalError::MetricsComputation(e.to_string()))?;
+
+                let metrics = IncidentEvidenceRetrievalMetrics {
+                    primary_card_evidence_query: IncidentEvidenceBranchRetrievalMetrics {
+                        relevance_judgments: primary_metrics,
+                    },
+                    alternative_cards_evidence_query: IncidentEvidenceBranchRetrievalMetrics {
+                        relevance_judgments: alternative_metrics,
+                    },
+                };
+                context.open_inference.root_span.in_scope(|| {
+                    emit_incident_evidence_metrics_oi_span(
+                        &context.open_inference.root_span,
+                        &metrics,
+                    );
+                });
+                Some(metrics)
+            }
+        } else {
+            None
+        };
+
         Ok(IncidentEvidenceRetrievalOutput {
             primary_chunks,
             alternative_chunks,
+            metrics,
         })
     }
 }
@@ -466,6 +560,105 @@ fn map_hits(
             text: h.text,
         })
         .collect()
+}
+
+fn emit_incident_evidence_metrics_oi_span(
+    oi_parent: &tracing::Span,
+    metrics: &IncidentEvidenceRetrievalMetrics,
+) {
+    let span = crate::observability::oi_chain_incident_evidence_retrieval_metrics_span(oi_parent);
+    span.record(
+        "input.value",
+        r#"{"golden_backed":true,"source":"incident_evidence"}"#,
+    );
+    span.record("input.mime_type", "application/json");
+
+    record_rt_metric_set(
+        &span,
+        "rt.incident_primary",
+        &metrics.primary_card_evidence_query.relevance_judgments,
+    );
+    record_rt_metric_set(
+        &span,
+        "rt.incident_alternatives",
+        &metrics.alternative_cards_evidence_query.relevance_judgments,
+    );
+
+    let primary_payload = build_rt_payload(&metrics.primary_card_evidence_query.relevance_judgments).to_string();
+    let alternatives_payload =
+        build_rt_payload(&metrics.alternative_cards_evidence_query.relevance_judgments).to_string();
+
+    let _guard = span.enter();
+    tracing::event!(
+        tracing::Level::INFO,
+        event.name = "retrieval_metrics.incident_primary",
+        payload = %primary_payload
+    );
+    tracing::event!(
+        tracing::Level::INFO,
+        event.name = "retrieval_metrics.incident_alternatives",
+        payload = %alternatives_payload
+    );
+    drop(_guard);
+
+    let output_json = serde_json::to_string(metrics).unwrap_or_default();
+    span.record("output.value", output_json.as_str());
+    span.record("output.mime_type", "application/json");
+    span.record("status", "ok");
+}
+
+fn record_rt_metric_set(
+    span: &tracing::Span,
+    prefix: &str,
+    m: &crate::shared_types::RetrievalEvaluationMetrics,
+) {
+    use opentelemetry::{Key, Value};
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+    span.set_attribute(Key::from(format!("{prefix}.recall_soft")), Value::F64(m.recall_soft as f64));
+    span.set_attribute(Key::from(format!("{prefix}.recall_strict")), Value::F64(m.recall_strict as f64));
+    span.set_attribute(Key::from(format!("{prefix}.rr_soft")), Value::F64(m.rr_soft as f64));
+    span.set_attribute(Key::from(format!("{prefix}.rr_strict")), Value::F64(m.rr_strict as f64));
+    span.set_attribute(Key::from(format!("{prefix}.ndcg")), Value::F64(m.ndcg as f64));
+    span.set_attribute(Key::from(format!("{prefix}.evaluated_k")), Value::I64(m.evaluated_k as i64));
+    span.set_attribute(
+        Key::from(format!("{prefix}.first_relevant_rank_soft")),
+        opt_u32_attr(m.first_relevant_rank_soft),
+    );
+    span.set_attribute(
+        Key::from(format!("{prefix}.first_relevant_rank_strict")),
+        opt_u32_attr(m.first_relevant_rank_strict),
+    );
+    span.set_attribute(
+        Key::from(format!("{prefix}.num_relevant_soft")),
+        Value::I64(m.num_relevant_soft as i64),
+    );
+    span.set_attribute(
+        Key::from(format!("{prefix}.num_relevant_strict")),
+        Value::I64(m.num_relevant_strict as i64),
+    );
+}
+
+fn build_rt_payload(m: &crate::shared_types::RetrievalEvaluationMetrics) -> serde_json::Value {
+    serde_json::json!({
+        "recall_soft": m.recall_soft,
+        "recall_strict": m.recall_strict,
+        "rr_soft": m.rr_soft,
+        "rr_strict": m.rr_strict,
+        "ndcg": m.ndcg,
+        "evaluated_k": m.evaluated_k,
+        "first_relevant_rank_soft": m.first_relevant_rank_soft,
+        "first_relevant_rank_strict": m.first_relevant_rank_strict,
+        "num_relevant_soft": m.num_relevant_soft,
+        "num_relevant_strict": m.num_relevant_strict,
+    })
+}
+
+fn opt_u32_attr(value: Option<u32>) -> opentelemetry::Value {
+    match value {
+        Some(v) => opentelemetry::Value::I64(v as i64),
+        None => opentelemetry::Value::String("null".into()),
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -595,6 +788,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![],
+            metrics: None,
         };
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -613,6 +807,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![],
+            metrics: None,
         };
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -629,6 +824,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![],
+            metrics: None,
         };
 
         sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -646,6 +842,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-42")),
             alternatives: vec![],
+            metrics: None,
         };
 
         sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -662,6 +859,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![candidate("card-2")],
+            metrics: None,
         };
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -678,6 +876,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![candidate("card-2")],
+            metrics: None,
         };
 
         sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -699,6 +898,7 @@ mod tests {
                 candidate("card-B"),
                 candidate("card-C"),
             ],
+            metrics: None,
         };
 
         sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -721,6 +921,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2"), candidate("card-3")],
+            metrics: None,
         };
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -740,6 +941,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2")],
+            metrics: None,
         };
 
         sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -760,6 +962,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![],
+            metrics: None,
         };
 
         sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -778,6 +981,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![],
+            metrics: None,
         };
 
         sut.retrieve(&request("exact query text"), &candidates)
@@ -801,6 +1005,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("x")),
             alternatives: vec![],
+            metrics: None,
         };
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -821,6 +1026,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![candidate("x")],
+            metrics: None,
         };
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -842,6 +1048,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("different-case-id")),
             alternatives: vec![],
+            metrics: None,
         };
 
         let out = sut.retrieve(&request("q"), &candidates).await.unwrap();
@@ -860,6 +1067,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![],
+            metrics: None,
         };
 
         let err = sut.retrieve(&request("q"), &candidates).await.unwrap_err();
@@ -875,6 +1083,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: None,
             alternatives: vec![candidate("card-2")],
+            metrics: None,
         };
 
         let err = sut.retrieve(&request("q"), &candidates).await.unwrap_err();
@@ -893,6 +1102,7 @@ mod tests {
         let candidates = CandidateCardRetrievalOutput {
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2")],
+            metrics: None,
         };
 
         let err = sut.retrieve(&request("q"), &candidates).await.unwrap_err();

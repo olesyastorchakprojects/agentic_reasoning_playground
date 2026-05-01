@@ -120,6 +120,8 @@ struct WireMessage<'a> {
 #[derive(Serialize)]
 struct WireResponseFormat {
     r#type: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schema: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -169,10 +171,15 @@ impl ModelClient for TogetherModelClient {
             })
             .collect();
 
-        let response_format = match request.response_mode {
+        let response_format = match &request.response_mode {
             ModelResponseMode::Text => None,
             ModelResponseMode::JsonObject => Some(WireResponseFormat {
                 r#type: "json_object",
+                schema: None,
+            }),
+            ModelResponseMode::JsonSchema(schema) => Some(WireResponseFormat {
+                r#type: "json_schema",
+                schema: Some(schema.clone()),
             }),
         };
 

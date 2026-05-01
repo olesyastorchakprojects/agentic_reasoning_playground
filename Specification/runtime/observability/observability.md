@@ -46,13 +46,16 @@ The observability specification is split into the following documents:
   - top-level observability model;
 - `spans.md`
   - root span contract, span hierarchy, span ownership, span attributes, and root-span lifecycle rules;
+- `open_inference_spans.md`
+  - OpenInference hierarchy, span kinds, ownership, payload contracts, and success/error rules;
 - `references.md`
   - local reference artifact contract;
 - `implementation.md`
   - validated Rust implementation pattern for startup-time observability initialization.
 
 Generation must follow this document split.
-Detailed metric, OpenInference, and dashboard contracts are intentionally out of scope for the current runtime stage.
+Detailed metric and dashboard contracts are intentionally out of scope for the current runtime stage.
+Detailed OpenInference span contracts are defined in `open_inference_spans.md`.
 `references.md` is limited to read-only local wiring/provisioning templates.
 
 # 5) Configuration Model
@@ -75,7 +78,8 @@ The following values must not be written to telemetry during the current stage:
 - environment variable values;
 - raw prompt text;
 - raw retrieved document text;
-- raw model output text;
+- unrestricted raw model output text outside the explicit OpenInference
+  exceptions documented in `open_inference_spans.md`.
 
 # 7) Troubleshooting Missing Telemetry
 

@@ -33,6 +33,8 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `Cargo.toml`
 - `src/lib.rs`
 - `src/main.rs`
+- `src/golden_eval_input.rs`
+- `src/startup.rs`
 - `src/errors/mod.rs`
 - `src/shared_types.rs`
 - `src/config/mod.rs`
@@ -47,6 +49,8 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/request_pipeline/mod.rs`
 - `src/request_pipeline/input_normalization.rs`
 - `src/request_pipeline/query_structuring.rs`
+- `src/request_pipeline/query_structuring_metrics.rs`
+- `src/request_pipeline/retrieval_metrics.rs`
 - `src/request_pipeline/candidate_card_retrieval.rs`
 - `src/request_pipeline/card_hydration.rs`
 - `src/request_pipeline/incident_evidence_retrieval.rs`
@@ -72,6 +76,10 @@ Artifact rules:
 - `Cargo.toml` must define a valid Rust crate for the generated runtime skeleton;
 - `src/lib.rs` must declare the crate-level public module tree;
 - `src/main.rs` must exist as the binary entrypoint;
+- `src/golden_eval_input.rs` must define the dedicated runtime-entry golden
+  batch input loading boundary required by `Specification/runtime/runtime.md`;
+- `src/startup.rs` must define the typed runtime-wiring boundary required by
+  `Specification/runtime/runtime.md`;
 - `src/main.rs` must implement the crate-level CLI contract from `Specification/runtime/runtime.md` and delegate config loading to library-owned code;
 - `src/errors/mod.rs` must define the parent error hierarchy required by `Specification/runtime/runtime.md`;
 - `src/shared_types.rs` must define the shared cross-module runtime types required by `Specification/runtime/runtime.md`;
@@ -79,7 +87,19 @@ Artifact rules:
 - `src/config/settings.rs` must define the resolved typed settings model required by `Specification/runtime/runtime.md`;
 - `src/config/load.rs` must define config loading and merge logic for runtime TOML, ingest TOML, and environment values;
 - `src/observability/mod.rs` must define startup-time observability initialization from typed settings;
+- `src/golden_eval_input.rs` must implement startup-time golden JSON schema
+  validation, typed parsing, and `Vec<UserRequest>` construction for
+  golden-backed batch evaluation;
+- `src/startup.rs` must expose the typed orchestrator-construction entrypoint
+  and the `StartupError` parent error required by
+  `Specification/runtime/runtime.md`;
 - `src/request_pipeline/mod.rs` must expose request-pipeline child modules required by active runtime slice specifications;
+- `src/request_pipeline/query_structuring_metrics.rs` must define the dedicated
+  request-local query-structuring metrics helper required by
+  `Specification/runtime/request_pipeline/query_structuring_metrics.md`;
+- `src/request_pipeline/retrieval_metrics.rs` must define the dedicated
+  request-local retrieval metrics helper required by
+  `Specification/runtime/request_pipeline/retrieval_metrics.md`;
 - `src/api_clients/postgres/mod.rs` must expose `run_state_store` in addition to other active postgres child modules;
 - `src/api_clients/postgres/run_state_store.rs` must follow
   `Specification/runtime/api_clients/postgres/run_state_store.md`;
@@ -118,6 +138,12 @@ Child artifacts for the request-pipeline leaf module `input_normalization` are o
 
 Child artifacts for the request-pipeline leaf module `query_structuring` are owned by:
 - `Specification/runtime/request_pipeline/query_structuring.md`
+
+Child artifacts for the request-pipeline helper module `query_structuring_metrics` are owned by:
+- `Specification/runtime/request_pipeline/query_structuring_metrics.md`
+
+Child artifacts for the request-pipeline helper module `retrieval_metrics` are owned by:
+- `Specification/runtime/request_pipeline/retrieval_metrics.md`
 
 Child artifacts for the request-pipeline leaf module `candidate_card_retrieval` are owned by:
 - `Specification/runtime/request_pipeline/candidate_card_retrieval.md`
@@ -163,6 +189,12 @@ Child artifacts for the orchestrator run-state views are owned by:
 
 Child artifacts for the orchestrator run-state writer are owned by:
 - `Specification/runtime/orchestrator/run_state/apply.md`
+
+Child artifacts for the golden eval input module are owned by:
+- `Specification/runtime/runtime.md`
+
+Child artifacts for the startup module are owned by:
+- `Specification/runtime/runtime.md`
 
 Child artifacts for the tokenizer utility module are owned by:
 - `Specification/runtime/utils/tokenizer.md`
@@ -211,6 +243,9 @@ Current delegated child specifications:
 Rules:
 - the generated crate must include both library and binary entrypoints;
 - the generated crate must include a dedicated parent `errors` module;
+- the generated crate must include a dedicated `golden_eval_input` module when
+  golden-backed batch-eval runtime mode is part of the active crate-level
+  contract;
 - the generated crate must include a dedicated parent `config` module;
 - the generated crate must include a dedicated parent `observability` module;
 - the generated crate must include a dedicated parent `api_clients` module;

@@ -1,10 +1,9 @@
 use serde::Deserialize;
 use tracing::{field, info_span};
 
-use crate::request_pipeline::context::Context;
 use crate::shared_types::{
-    DiagnosticResponse, DiagnosticResultInterpretation, LlmStructuredGenerationOutput,
-    ResponseValidationAndNormalizationOutput,
+    Context, DiagnosticResponse, DiagnosticResultInterpretation,
+    LlmStructuredGenerationOutput, ResponseValidationAndNormalizationOutput,
 };
 
 // ---------------------------------------------------------------------------
@@ -172,7 +171,7 @@ impl ResponseValidationAndNormalization {
             })?;
 
         // Record hypothesis and optional field presence before business rule validation
-        let active_hyp_count = raw.active_hypotheses.len();
+        let active_hyp_count = filtered_active_hypotheses_count(&raw);
         let active_hyp_valid = active_hyp_count >= 2 && active_hyp_count <= 3;
         span.record("validation.active_hypotheses.count", active_hyp_count);
         span.record("validation.active_hypotheses.valid_count_range", active_hyp_valid);
@@ -298,16 +297,7 @@ fn apply_business_rules(
 ) -> Result<(), ResponseValidationAndNormalizationError> {
     use ResponseValidationAndNormalizationError::BusinessRuleViolation;
 
-    // TODO: Temporarily ignoring empty hypothesis check to debug
-    // for h in &raw.active_hypotheses {
-    //     if h.trim().is_empty() {
-    //         return Err(BusinessRuleViolation(
-    //             "every active_hypotheses item must be non-empty after trimming".to_string(),
-    //         ));
-    //     }
-    // }
-
-    let hyp_len = raw.active_hypotheses.len();
+    let hyp_len = filtered_active_hypotheses_count(raw);
     if hyp_len < 2 || hyp_len > 3 {
         return Err(BusinessRuleViolation(
             "active_hypotheses must contain 2 or 3 items".to_string(),
@@ -563,6 +553,7 @@ fn normalize(raw: RawDiagnosticResponse) -> DiagnosticResponse {
             .active_hypotheses
             .into_iter()
             .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
             .collect(),
         first_check: raw.first_check.trim().to_string(),
         result_interpretation: DiagnosticResultInterpretation {
@@ -580,6 +571,13 @@ fn normalize(raw: RawDiagnosticResponse) -> DiagnosticResponse {
         },
         competing_interpretation: normalize_nullable(raw.competing_interpretation),
     }
+}
+
+fn filtered_active_hypotheses_count(raw: &RawDiagnosticResponse) -> usize {
+    raw.active_hypotheses
+        .iter()
+        .filter(|h| !h.trim().is_empty())
+        .count()
 }
 
 // ---------------------------------------------------------------------------
@@ -992,7 +990,7 @@ mod tests {
     }
 
     #[test]
-    fn business_rejects_empty_hypothesis_before_count_check() {
+    fn business_filters_empty_hypothesis_before_count_check() {
         let mut j = valid_json();
         j["active_hypotheses"] = json!([
             "The lock service may allow multiple holders at once",
@@ -1000,15 +998,7 @@ mod tests {
             "The application might be misusing the lock",
             ""
         ]);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        let err_msg = match err {
-            ResponseValidationAndNormalizationError::BusinessRuleViolation(msg) => msg,
-            _ => panic!("expected BusinessRuleViolation, got: {err}"),
-        };
-        assert!(
-            err_msg.contains("non-empty after trimming"),
-            "expected error about empty hypothesis, got: {err_msg}"
-        );
+        assert!(make().validate_and_normalize(&make_input(j)).is_ok());
     }
 
     // -----------------------------------------------------------------------
@@ -1140,6 +1130,17 @@ mod tests {
     fn normalization_trims_active_hypotheses_items() {
         let mut j = valid_json();
         j["active_hypotheses"] = json!([" Hypothesis A ", "  Hypothesis B  "]);
+        let out = make().validate_and_normalize(&make_input(j)).unwrap();
+        assert_eq!(
+            out.response.active_hypotheses,
+            vec!["Hypothesis A", "Hypothesis B"]
+        );
+    }
+
+    #[test]
+    fn normalization_filters_whitespace_only_active_hypotheses_items() {
+        let mut j = valid_json();
+        j["active_hypotheses"] = json!([" Hypothesis A ", "   ", "  Hypothesis B  "]);
         let out = make().validate_and_normalize(&make_input(j)).unwrap();
         assert_eq!(
             out.response.active_hypotheses,

@@ -36,6 +36,9 @@ Shared request and response types are defined by:
 Theory-chunk collection behavior is defined by:
 - `Specification/runtime/api_clients/qdrant/theory_chunks_collection.md`
 
+OpenInference span behavior for the context-aware execution path is defined by:
+- `Specification/runtime/observability/open_inference_spans.md`
+
 The generated Rust module file for the current version is:
 - `src/request_pipeline/theory_evidence_retrieval.rs`
 
@@ -45,6 +48,7 @@ This module must use the shared runtime types:
 - `NormalizedUserRequest`
 - `TheoryEvidenceChunk`
 - `TheoryEvidenceRetrievalOutput`
+- `TheoryEvidenceRetrievalMetrics`
 
 These shared types are defined in:
 - `Specification/runtime/runtime.md`
@@ -63,6 +67,7 @@ pub struct TheoryEvidenceChunk {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TheoryEvidenceRetrievalOutput {
     pub chunks: Vec<TheoryEvidenceChunk>,
+    pub metrics: Option<TheoryEvidenceRetrievalMetrics>,
 }
 ```
 
@@ -72,10 +77,20 @@ Shared-type rules:
 - `TheoryEvidenceChunk.text` must preserve the raw collection-returned text;
 - `TheoryEvidenceRetrievalOutput.chunks` contains only hits returned by the theory search call;
 - `TheoryEvidenceRetrievalOutput.chunks` must preserve collection-returned hit order exactly;
-- `TheoryEvidenceRetrievalOutput` must not expose collection-layer request types, transport payloads, vector data, collection names, or module-private retrieval metadata.
+- `TheoryEvidenceRetrievalOutput` must not expose collection-layer request types, transport payloads, vector data, collection names, or module-private retrieval metadata;
+- `TheoryEvidenceRetrievalOutput.metrics` contains request-local retrieval
+  metrics in the shared `TheoryEvidenceRetrievalMetrics` shape when such
+  metrics were computed for the current execution;
+- `TheoryEvidenceRetrievalOutput.metrics = None` is allowed when no matching
+  golden theory-evidence retrieval targets are available in the current
+  execution context.
 
 Import rule for the generated Rust module:
 - shared input and output types used by this module, including `NormalizedUserRequest`, `TheoryEvidenceChunk`, and `TheoryEvidenceRetrievalOutput`, must be imported from `crate::shared_types`;
+- `TheoryEvidenceRetrievalMetrics` must be imported from `crate::shared_types`
+  when request-local retrieval metrics are attached to the module output;
+- retrieval metrics helper behavior is defined by
+  `Specification/runtime/request_pipeline/retrieval_metrics.md`;
 - `CollectionRetrievalSettings` must be imported from `crate::config`;
 - `TheoryChunksCollection` must be imported through `crate::api_clients::qdrant::...`;
 - `TheoryChunksCollectionError` must be imported through `crate::api_clients::qdrant::...`;
@@ -153,6 +168,12 @@ impl TheoryEvidenceRetrieval {
         &self,
         request: &NormalizedUserRequest,
     ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError>;
+
+    pub async fn retrieve_with_context(
+        &self,
+        request: &NormalizedUserRequest,
+        context: &Context,
+    ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError>;
 }
 ```
 
@@ -165,9 +186,32 @@ Rules:
 - `new(...)` must fail fast when `settings.top_k = 0`;
 - `new(...)` must fail fast when `settings.score_threshold` is negative, `NaN`, `+inf`, or `-inf`;
 - `new(...)` constructor validation failures must be returned through `TheoryEvidenceRetrievalError` rather than through panic;
-- `retrieve(...)` must be the single public request-time entrypoint of this module;
+- `retrieve(...)` must delegate to
+  `retrieve_with_context(request, &Context::noop())`;
+- `retrieve_with_context(...)` is the context-aware request-time entrypoint used
+  by the orchestrator;
+- `retrieve_with_context(...)` must treat `context.open_inference.root_span` as
+  the parent span for the module-owned OpenInference retriever span
+  `oi.retriever.theory_evidence`;
+- when `TheoryEvidenceRetrievalOutput.metrics = Some(...)`,
+  `retrieve_with_context(...)` must also emit the companion OpenInference
+  metrics span `oi.chain.theory_evidence_retrieval_metrics` as defined by
+  `Specification/runtime/observability/open_inference_spans.md`;
 - `retrieve(...)` must not mutate the input `NormalizedUserRequest`;
-- `retrieve(...)` must not expose collection-layer result types in its public return value.
+- `retrieve(...)` must not expose collection-layer result types in its public return value;
+- when `context.golden_question = Some(...)`, `retrieve_with_context(...)` must
+  compute retrieval metrics against
+  `golden_question.expected_theory_evidence.mechanism_explanation` and set
+  `TheoryEvidenceRetrievalOutput.metrics = Some(...)`;
+- if `golden_question.expected_theory_evidence.mechanism_explanation`
+  contains an empty `strict_chunk_ids` or `soft_chunk_ids` list,
+  `retrieve_with_context(...)` must not call `compute_retrieval_metrics(...)`
+  and must return `TheoryEvidenceRetrievalOutput.metrics = None`;
+- when `context.golden_question = None`, `TheoryEvidenceRetrievalOutput.metrics`
+  must be `None`.
+- helper failures from `compute_retrieval_metrics(...)` must be wrapped into
+  `TheoryEvidenceRetrievalError` and must fail the request-time call rather
+  than being silently ignored.
 
 Debug rules:
 - `TheoryEvidenceRetrieval` must not derive `Debug` in the current version because `Arc<dyn TheoryChunksCollection + Send + Sync>` does not implement `Debug`;
@@ -203,11 +247,15 @@ Retrieval rules:
 - the module must call `TheoryChunksCollection::search(&TheoryChunkSearchRequest)`;
 - the collection call must use the request constructed from the normalized query and theory retrieval settings;
 - a successful empty collection result is not an error;
+- the OpenInference input/output payload contract for
+  `retrieve_with_context(...)` is owned by
+  `Specification/runtime/observability/open_inference_spans.md`;
 - if the collection returns zero hits, the module must return:
 
 ```rust
 TheoryEvidenceRetrievalOutput {
     chunks: vec![],
+    metrics: None,
 }
 ```
 
@@ -215,6 +263,21 @@ TheoryEvidenceRetrievalOutput {
 - the module must not perform additional truncation after receiving successful collection results;
 - the module must not re-rank, deduplicate, merge, or semantically reinterpret returned chunks;
 - the module must not inspect or depend on candidate cards, hydrated cards, practice chunks, incident evidence, or prompt context.
+- request-local retrieval metrics, when computed, must use:
+  - `actual_ranked_ids = chunks[*].chunk_id`
+- for the current contract, the module must call
+  `compute_retrieval_metrics(...)` with:
+  - normalized golden targets derived from
+    `golden_question.expected_theory_evidence.mechanism_explanation`
+  - `actual_ranked_ids`
+  - `k = settings.top_k`
+- after helper success, the module must attach:
+
+```rust
+TheoryEvidenceRetrievalMetrics {
+    mechanism_explanation: computed_metrics,
+}
+```
 
 Independence rules:
 - this module must not accept `CandidateCardRetrievalOutput`;
