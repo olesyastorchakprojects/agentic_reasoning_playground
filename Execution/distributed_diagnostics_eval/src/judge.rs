@@ -5,7 +5,10 @@ use distributed_diagnostics::api_clients::model::{
 };
 use serde_json::{json, Value};
 
+use tracing::Instrument;
+
 use crate::config::JudgeSettings;
+use crate::observability::{eval_suite_span, record_error};
 use crate::snapshot::DiagnosticEvalIterationSnapshot;
 use crate::storage::{
     EvalStage, JudgeLlmCallRow, JudgeResultRow, PostgresEvalStore, StorageError,
@@ -14,6 +17,15 @@ use crate::subject_preparation::PreparedJudgeSubject;
 use crate::suites::{JudgeSuiteCatalog, JudgeSuiteDefinition, SuiteCatalogError};
 
 const FINAL_NO_ROOT_CAUSE_CLAIM: &str = "final_no_root_cause_claim";
+const FINAL_FIRST_CHECK_DISCRIMINATES: &str = "final_first_check_discriminates";
+const FINAL_ALTERNATIVE_CONTEXT_HANDLING: &str = "final_alternative_context_handling";
+const FINAL_RESULT_INTERPRETATION_USEFULNESS: &str = "final_result_interpretation_usefulness";
+const QUERY_STRUCTURING_FIELD_BOUNDARY_CORRECTNESS: &str =
+    "query_structuring_field_boundary_correctness";
+const QUERY_STRUCTURING_GROUNDING_CONSERVATISM: &str = "query_structuring_grounding_conservatism";
+const EVIDENCE_PACK_ROLE_FIT: &str = "evidence_pack_role_fit";
+const EVIDENCE_PACK_SUFFICIENCY: &str = "evidence_pack_sufficiency";
+const FINAL_HYPOTHESIS_SOURCE_ALIGNMENT: &str = "final_hypothesis_source_alignment";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct JudgeCallRequest {
@@ -23,6 +35,7 @@ pub struct JudgeCallRequest {
     pub prompt_version: String,
     pub prompt_text: String,
     pub input_payload: Value,
+    pub response_schema: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -88,78 +101,167 @@ impl TogetherJudgeClient {
     }
 }
 
+// Input types for suite request builders
 #[derive(Debug, Clone)]
 pub struct FinalNoRootCauseClaimSuiteInput {
     pub eval_context: Value,
     pub final_answer: Value,
 }
 
-pub async fn execute_first_suite_for_subject(
+#[derive(Debug, Clone)]
+pub struct FinalResultInterpretationInput {
+    pub final_answer: Value,
+    pub active_hypotheses: Value,
+    pub first_check: Value,
+}
+
+pub async fn execute_one_suite_for_subject(
     store: &PostgresEvalStore,
     judge_settings: &JudgeSettings,
+    suite_name: &str,
     catalog: &JudgeSuiteCatalog,
     subject: &PreparedJudgeSubject,
     client: &dyn JudgeClient,
-) -> Result<String, JudgeExecutionError> {
-    let suite_name = FINAL_NO_ROOT_CAUSE_CLAIM.to_string();
+) -> Result<(), JudgeExecutionError> {
     let suite_def = catalog
-        .get(&suite_name)
-        .ok_or_else(|| JudgeExecutionError::MissingSuiteDefinition(suite_name.clone()))?;
-    let request = build_first_suite_request(suite_name.clone(), suite_def, &subject.snapshot)?;
-    let response = client.execute(request.clone()).await?;
+        .get(suite_name)
+        .ok_or_else(|| JudgeExecutionError::MissingSuiteDefinition(suite_name.to_string()))?;
+
+    let span = eval_suite_span(
+        &subject.processing_state.key.eval_run_id.to_string(),
+        &subject.processing_state.key.runtime_run_id.to_string(),
+        &subject.processing_state.key.iteration_id.to_string(),
+        suite_name,
+        &suite_def.category,
+        &suite_def.scope,
+        &judge_settings.model_name,
+    );
+
+    let result = execute_one_suite_inner(
+        store,
+        judge_settings,
+        suite_name,
+        suite_def,
+        subject,
+        client,
+    )
+    .instrument(span.clone())
+    .await;
+
+    if let Err(ref e) = result {
+        record_error(&span, "JudgeExecutionError", &e.to_string());
+    }
+    result
+}
+
+async fn execute_one_suite_inner(
+    store: &PostgresEvalStore,
+    judge_settings: &JudgeSettings,
+    suite_name: &str,
+    suite_def: &JudgeSuiteDefinition,
+    subject: &PreparedJudgeSubject,
+    client: &dyn JudgeClient,
+) -> Result<(), JudgeExecutionError> {
+    let request = build_suite_request(suite_name.to_string(), suite_def, &subject.snapshot)?;
+
+    // One retry for transient empty-content responses from the judge model.
+    let response = match client.execute(request.clone()).await {
+        Ok(r) => r,
+        Err(JudgeExecutionError::Client(msg)) if msg.contains("content is empty") => {
+            tracing::warn!(suite_name, "judge returned empty content, retrying once");
+            client.execute(request.clone()).await?
+        }
+        Err(e) => return Err(e),
+    };
+
+    let span = tracing::Span::current();
+    span.record("llm.token_count.prompt", response.prompt_tokens as i64);
+    span.record("llm.token_count.completion", response.completion_tokens as i64);
+    span.record(
+        "llm.token_count.total",
+        (response.prompt_tokens + response.completion_tokens) as i64,
+    );
 
     let call_id = format!(
         "{}:{}:{}",
-        subject.processing_state.key.eval_run_id, subject.processing_state.key.iteration_id, suite_name
+        subject.processing_state.key.eval_run_id,
+        subject.processing_state.key.iteration_id,
+        suite_name,
     );
 
-    let llm_row = build_judge_llm_call_row(
-        &call_id,
-        judge_settings,
-        subject,
-        &request,
-        &response,
-    );
+    let llm_row = build_judge_llm_call_row(&call_id, judge_settings, subject, &request, &response);
+    let total_cost = llm_row.total_cost_usd;
     store.insert_judge_llm_call(&llm_row).await?;
 
-    let result_row = build_judge_result_row(
-        judge_settings,
-        subject,
-        &suite_name,
-        suite_def,
-        &response,
-    )?;
+    let result_row =
+        build_judge_result_row(judge_settings, subject, suite_name, suite_def, &response)?;
+    span.record("eval.score", result_row.score as i64);
+    span.record("eval.total_cost_usd", total_cost);
     store.upsert_judge_result(&result_row).await?;
 
-    Ok(suite_name)
+    Ok(())
 }
 
-fn build_first_suite_request(
+pub fn build_suite_request(
     suite_name: String,
     suite_def: &JudgeSuiteDefinition,
     snapshot: &DiagnosticEvalIterationSnapshot,
 ) -> Result<JudgeCallRequest, JudgeExecutionError> {
-    if suite_name != FINAL_NO_ROOT_CAUSE_CLAIM {
-        return Err(JudgeExecutionError::UnsupportedSuite(suite_name));
-    }
+    let payload = match suite_name.as_str() {
+        FINAL_NO_ROOT_CAUSE_CLAIM
+        | FINAL_FIRST_CHECK_DISCRIMINATES
+        | FINAL_ALTERNATIVE_CONTEXT_HANDLING => {
+            let input = build_eval_context_and_final_answer_input(snapshot);
+            json!({
+                "eval_context": input.eval_context,
+                "final_answer": input.final_answer,
+            })
+        }
+        FINAL_RESULT_INTERPRETATION_USEFULNESS => {
+            let input = build_final_result_interpretation_input(snapshot);
+            json!({
+                "final_answer": input.final_answer,
+                "active_hypotheses": input.active_hypotheses,
+                "first_check": input.first_check,
+            })
+        }
+        QUERY_STRUCTURING_FIELD_BOUNDARY_CORRECTNESS
+        | QUERY_STRUCTURING_GROUNDING_CONSERVATISM => {
+            build_query_structuring_payload(snapshot)
+        }
+        EVIDENCE_PACK_ROLE_FIT => build_evidence_pack_role_fit_payload(snapshot),
+        EVIDENCE_PACK_SUFFICIENCY => build_evidence_pack_sufficiency_payload(snapshot),
+        FINAL_HYPOTHESIS_SOURCE_ALIGNMENT => {
+            build_final_hypothesis_source_alignment_payload(snapshot)
+        }
+        other => return Err(JudgeExecutionError::UnsupportedSuite(other.to_string())),
+    };
 
-    let input = build_final_no_root_cause_claim_input(snapshot);
     Ok(JudgeCallRequest {
         suite_name,
         suite_id: suite_def.id.clone(),
         suite_version: suite_def.version.clone(),
         prompt_version: suite_def.version.clone(),
-        prompt_text: render_prompt(suite_def, &input),
-        input_payload: json!({
-            "eval_context": input.eval_context,
-            "final_answer": input.final_answer,
-        }),
+        prompt_text: render_prompt_with_payload(suite_def, &payload),
+        input_payload: payload,
+        response_schema: suite_def.response_schema.clone(),
     })
 }
 
-fn build_final_no_root_cause_claim_input(
+pub fn build_final_no_root_cause_claim_input(
     snapshot: &DiagnosticEvalIterationSnapshot,
 ) -> FinalNoRootCauseClaimSuiteInput {
+    let inner = build_eval_context_and_final_answer_input(snapshot);
+    FinalNoRootCauseClaimSuiteInput {
+        eval_context: inner.eval_context,
+        final_answer: inner.final_answer,
+    }
+}
+
+fn build_eval_context_and_final_answer_input(
+    snapshot: &DiagnosticEvalIterationSnapshot,
+) -> FinalNoRootCauseClaimSuiteInput {
+    let resp = &snapshot.response_validation_and_normalization_output.response;
     FinalNoRootCauseClaimSuiteInput {
         eval_context: json!({
             "raw_user_query": snapshot.user_request.query,
@@ -167,38 +269,72 @@ fn build_final_no_root_cause_claim_input(
             "matched_incident_card": snapshot.card_hydration_output.primary,
             "incident_evidence_chunks": snapshot.prompt_context_assembly_output.incident_evidence_chunks,
             "theory_chunks": snapshot.prompt_context_assembly_output.theory_chunks,
-            "active_hypotheses": snapshot
-                .response_validation_and_normalization_output
-                .response
-                .active_hypotheses,
-            "first_check": snapshot
-                .response_validation_and_normalization_output
-                .response
-                .first_check,
-            "result_interpretation": snapshot
-                .response_validation_and_normalization_output
-                .response
-                .result_interpretation,
+            "active_hypotheses": resp.active_hypotheses,
+            "first_check": resp.first_check,
+            "result_interpretation": resp.result_interpretation,
         }),
-        final_answer: serde_json::to_value(
-            &snapshot.response_validation_and_normalization_output.response,
-        )
-        .expect("diagnostic response must serialize"),
+        final_answer: serde_json::to_value(resp).expect("diagnostic response must serialize"),
     }
 }
 
-fn render_prompt(
-    suite_def: &JudgeSuiteDefinition,
-    input: &FinalNoRootCauseClaimSuiteInput,
-) -> String {
+fn build_final_result_interpretation_input(
+    snapshot: &DiagnosticEvalIterationSnapshot,
+) -> FinalResultInterpretationInput {
+    let resp = &snapshot.response_validation_and_normalization_output.response;
+    FinalResultInterpretationInput {
+        final_answer: serde_json::to_value(resp).expect("diagnostic response must serialize"),
+        active_hypotheses: serde_json::to_value(&resp.active_hypotheses)
+            .expect("active_hypotheses must serialize"),
+        first_check: Value::String(resp.first_check.clone()),
+    }
+}
+
+fn build_query_structuring_payload(snapshot: &DiagnosticEvalIterationSnapshot) -> Value {
+    json!({
+        "raw_user_query": snapshot.user_request.query,
+        "structured_query": snapshot.query_structuring_output.structured_query,
+    })
+}
+
+fn build_evidence_pack_role_fit_payload(snapshot: &DiagnosticEvalIterationSnapshot) -> Value {
+    json!({
+        "raw_user_query": snapshot.user_request.query,
+        "structured_query": snapshot.query_structuring_output.structured_query,
+        "evidence_topology": snapshot.prompt_context_assembly_output.evidence_topology,
+        "incident_evidence_chunks": snapshot.prompt_context_assembly_output.incident_evidence_chunks,
+        "theory_chunks": snapshot.prompt_context_assembly_output.theory_chunks,
+    })
+}
+
+fn build_evidence_pack_sufficiency_payload(snapshot: &DiagnosticEvalIterationSnapshot) -> Value {
+    json!({
+        "raw_user_query": snapshot.user_request.query,
+        "structured_query": snapshot.query_structuring_output.structured_query,
+        "matched_incident_card": snapshot.card_hydration_output.primary,
+        "incident_evidence_chunks": snapshot.prompt_context_assembly_output.incident_evidence_chunks,
+        "theory_chunks": snapshot.prompt_context_assembly_output.theory_chunks,
+    })
+}
+
+fn build_final_hypothesis_source_alignment_payload(
+    snapshot: &DiagnosticEvalIterationSnapshot,
+) -> Value {
+    let resp = &snapshot.response_validation_and_normalization_output.response;
+    json!({
+        "evidence_topology": snapshot.prompt_context_assembly_output.evidence_topology,
+        "matched_incident_card": snapshot.card_hydration_output.primary,
+        "incident_evidence_chunks": snapshot.prompt_context_assembly_output.incident_evidence_chunks,
+        "theory_chunks": snapshot.prompt_context_assembly_output.theory_chunks,
+        "final_answer": serde_json::to_value(resp).expect("diagnostic response must serialize"),
+    })
+}
+
+fn render_prompt_with_payload(suite_def: &JudgeSuiteDefinition, payload: &Value) -> String {
     format!(
-        "{template}\n\nINPUT:\n{payload}",
+        "{template}\n\nINPUT:\n{payload_str}",
         template = suite_def.prompt_template,
-        payload = serde_json::to_string_pretty(&json!({
-            "eval_context": input.eval_context,
-            "final_answer": input.final_answer,
-        }))
-        .expect("suite payload must serialize")
+        payload_str =
+            serde_json::to_string_pretty(payload).expect("suite payload must serialize")
     )
 }
 
@@ -260,6 +396,7 @@ fn build_judge_result_row(
 
     let explanation = normalized_result
         .get("explanation")
+        .or_else(|| normalized_result.get("reason"))
         .and_then(Value::as_str)
         .ok_or(JudgeExecutionError::MissingNormalizedField("explanation"))?
         .to_string();
@@ -296,19 +433,31 @@ fn canonical_normalized_result(normalized_result: &Value) -> Value {
         return normalized_result.clone();
     };
 
-    if object.len() != 1 {
-        return normalized_result.clone();
+    // Single-key wrapper: {"evaluation": {"score": N, ...}} -> unwrap inner
+    if object.len() == 1 {
+        let inner = object.values().next().unwrap();
+        if inner.get("score").is_some() {
+            return inner.clone();
+        }
     }
 
-    let Some(inner) = object.values().next() else {
-        return normalized_result.clone();
-    };
-
-    if inner.get("score").is_some() {
-        inner.clone()
-    } else {
-        normalized_result.clone()
+    // Fallback: model used a non-standard key for the score value (e.g. "commentary": 2).
+    // Find the first integer value in [0,2] at the top level and rename it to "score".
+    let score_entry = object.iter().find(|(_, v)| {
+        v.as_i64().map(|n| (0..=2).contains(&n)).unwrap_or(false)
+    });
+    if let Some((score_key, score_val)) = score_entry {
+        let mut canonical = serde_json::Map::new();
+        canonical.insert("score".to_string(), score_val.clone());
+        for (k, v) in object {
+            if k != score_key {
+                canonical.insert(k.clone(), v.clone());
+            }
+        }
+        return Value::Object(canonical);
     }
+
+    normalized_result.clone()
 }
 
 fn token_cost_usd(tokens: u64, per_million: f64) -> f64 {
@@ -341,7 +490,7 @@ impl JudgeClient for TogetherJudgeClient {
                 }],
                 temperature: 0.0,
                 max_output_tokens: None,
-                response_mode: ModelResponseMode::JsonObject,
+                response_mode: ModelResponseMode::JsonSchema(request.response_schema.clone()),
             })
             .await
             .map_err(|e| JudgeExecutionError::Client(e.to_string()))?;
@@ -397,9 +546,12 @@ mod tests {
     use uuid::Uuid;
 
     use crate::judge::{
-        build_final_no_root_cause_claim_input, build_first_suite_request,
-        canonical_normalized_result, parse_retry_backoff, JudgeCallRequest, JudgeCallResponse,
-        JudgeClient, JudgeExecutionError, FINAL_NO_ROOT_CAUSE_CLAIM,
+        build_final_no_root_cause_claim_input, build_suite_request, canonical_normalized_result,
+        parse_retry_backoff, JudgeCallRequest, JudgeCallResponse, JudgeClient, JudgeExecutionError,
+        EVIDENCE_PACK_ROLE_FIT, EVIDENCE_PACK_SUFFICIENCY, FINAL_ALTERNATIVE_CONTEXT_HANDLING,
+        FINAL_FIRST_CHECK_DISCRIMINATES, FINAL_HYPOTHESIS_SOURCE_ALIGNMENT,
+        FINAL_NO_ROOT_CAUSE_CLAIM, FINAL_RESULT_INTERPRETATION_USEFULNESS,
+        QUERY_STRUCTURING_FIELD_BOUNDARY_CORRECTNESS, QUERY_STRUCTURING_GROUNDING_CONSERVATISM,
     };
     use crate::snapshot::{build_snapshot, SnapshotIterationSelector};
     use crate::suites::JudgeSuiteCatalog;
@@ -426,7 +578,12 @@ mod tests {
         }
     }
 
+    fn stub_schema() -> serde_json::Value {
+        json!({"type":"object","properties":{"score":{"type":"integer","minimum":0,"maximum":2}},"required":["score"]})
+    }
+
     fn minimal_catalog() -> JudgeSuiteCatalog {
+        let schema = stub_schema();
         serde_json::from_value(json!({
             "judge_suites": {
                 "final_no_root_cause_claim": {
@@ -437,7 +594,96 @@ mod tests {
                     "required_for_mvp": true,
                     "input_variables": ["eval_context", "final_answer"],
                     "prompt_template": "Evaluate root cause overclaiming.",
-                    "normalized_output_schema_hint": {"required":["score","violations","explanation"]}
+                    "normalized_output_schema_hint": {"required":["score","explanation"]},
+                    "response_schema": schema
+                },
+                "final_first_check_discriminates": {
+                    "id": "evals.diagnostics.final_first_check_discriminates",
+                    "version": "v1",
+                    "category": "final_answer",
+                    "scope": "iteration",
+                    "required_for_mvp": true,
+                    "input_variables": ["eval_context", "final_answer"],
+                    "prompt_template": "Evaluate first check discriminating power.",
+                    "normalized_output_schema_hint": {"required":["score","reason"]},
+                    "response_schema": stub_schema()
+                },
+                "final_alternative_context_handling": {
+                    "id": "evals.diagnostics.final_alternative_context_handling",
+                    "version": "v1",
+                    "category": "final_answer",
+                    "scope": "iteration",
+                    "required_for_mvp": true,
+                    "input_variables": ["eval_context", "final_answer"],
+                    "prompt_template": "Evaluate alternative context handling.",
+                    "normalized_output_schema_hint": {"required":["score","reason"]},
+                    "response_schema": stub_schema()
+                },
+                "final_result_interpretation_usefulness": {
+                    "id": "evals.diagnostics.final_result_interpretation_usefulness",
+                    "version": "v1",
+                    "category": "final_answer",
+                    "scope": "iteration",
+                    "required_for_mvp": true,
+                    "input_variables": ["final_answer", "active_hypotheses", "first_check"],
+                    "prompt_template": "Evaluate result interpretation usefulness.",
+                    "normalized_output_schema_hint": {"required":["score","reason"]},
+                    "response_schema": stub_schema()
+                },
+                "query_structuring_field_boundary_correctness": {
+                    "id": "evals.diagnostics.query_structuring_field_boundary_correctness",
+                    "version": "v1",
+                    "category": "query_structuring",
+                    "scope": "iteration",
+                    "required_for_mvp": true,
+                    "input_variables": ["raw_user_query", "structured_query"],
+                    "prompt_template": "Evaluate query structuring field boundaries.",
+                    "normalized_output_schema_hint": {"required":["score","explanation"]},
+                    "response_schema": stub_schema()
+                },
+                "query_structuring_grounding_conservatism": {
+                    "id": "evals.diagnostics.query_structuring_grounding_conservatism",
+                    "version": "v1",
+                    "category": "query_structuring",
+                    "scope": "iteration",
+                    "required_for_mvp": true,
+                    "input_variables": ["raw_user_query", "structured_query"],
+                    "prompt_template": "Evaluate query structuring grounding conservatism.",
+                    "normalized_output_schema_hint": {"required":["score","explanation"]},
+                    "response_schema": stub_schema()
+                },
+                "evidence_pack_role_fit": {
+                    "id": "evals.diagnostics.evidence_pack_role_fit",
+                    "version": "v1",
+                    "category": "evidence_pack",
+                    "scope": "iteration",
+                    "required_for_mvp": true,
+                    "input_variables": ["raw_user_query", "structured_query", "evidence_topology", "incident_evidence_chunks", "theory_chunks"],
+                    "prompt_template": "Evaluate evidence pack role fit.",
+                    "normalized_output_schema_hint": {"required":["score","explanation"]},
+                    "response_schema": stub_schema()
+                },
+                "evidence_pack_sufficiency": {
+                    "id": "evals.diagnostics.evidence_pack_sufficiency",
+                    "version": "v1",
+                    "category": "evidence_pack",
+                    "scope": "iteration",
+                    "required_for_mvp": true,
+                    "input_variables": ["raw_user_query", "structured_query", "matched_incident_card", "incident_evidence_chunks", "theory_chunks"],
+                    "prompt_template": "Evaluate evidence pack sufficiency.",
+                    "normalized_output_schema_hint": {"required":["score","explanation"]},
+                    "response_schema": stub_schema()
+                },
+                "final_hypothesis_source_alignment": {
+                    "id": "evals.diagnostics.final_hypothesis_source_alignment",
+                    "version": "v1",
+                    "category": "final_answer",
+                    "scope": "iteration",
+                    "required_for_mvp": true,
+                    "input_variables": ["evidence_topology", "matched_incident_card", "incident_evidence_chunks", "theory_chunks", "final_answer"],
+                    "prompt_template": "Evaluate hypothesis source alignment.",
+                    "normalized_output_schema_hint": {"required":["score","explanation"]},
+                    "response_schema": stub_schema()
                 }
             }
         }))
@@ -458,6 +704,7 @@ mod tests {
     fn minimal_iteration(iteration_id: RunIterationId) -> RunIteration {
         RunIteration {
             iteration_id,
+            config_snapshot: None,
             step_records: vec![
                 step_record(
                     StepKind::UserInputReceived,
@@ -542,6 +789,7 @@ mod tests {
                     StepResultEnvelope::PromptContextAssembly(PromptContextAssemblyOutput {
                         prompt: "prompt".to_string(),
                         response_schema: json!({"type": "object"}),
+                        evidence_topology: Default::default(),
                         incident_evidence_chunks: vec![],
                         theory_chunks: vec![],
                     }),
@@ -611,27 +859,248 @@ mod tests {
         assert!(input.eval_context.get("active_hypotheses").is_some());
     }
 
-    #[tokio::test]
-    async fn builds_request_for_first_supported_suite() {
+    #[test]
+    fn build_suite_request_final_no_root_cause_claim_has_eval_context_and_final_answer() {
         let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
         let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
             .expect("snapshot");
         let catalog = minimal_catalog();
         let suite_def = catalog.get(FINAL_NO_ROOT_CAUSE_CLAIM).unwrap();
 
-        let request = build_first_suite_request(
-            FINAL_NO_ROOT_CAUSE_CLAIM.to_string(),
+        let request =
+            build_suite_request(FINAL_NO_ROOT_CAUSE_CLAIM.to_string(), suite_def, &snapshot)
+                .expect("request");
+
+        assert_eq!(request.suite_name, FINAL_NO_ROOT_CAUSE_CLAIM);
+        assert!(request.prompt_text.contains("Evaluate root cause overclaiming."));
+        assert!(request.input_payload.get("eval_context").is_some());
+        assert!(request.input_payload.get("final_answer").is_some());
+    }
+
+    #[test]
+    fn build_suite_request_final_first_check_discriminates_has_eval_context_and_final_answer() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(FINAL_FIRST_CHECK_DISCRIMINATES).unwrap();
+
+        let request =
+            build_suite_request(FINAL_FIRST_CHECK_DISCRIMINATES.to_string(), suite_def, &snapshot)
+                .expect("request");
+
+        assert_eq!(request.suite_name, FINAL_FIRST_CHECK_DISCRIMINATES);
+        assert!(request.prompt_text.contains("Evaluate first check discriminating power."));
+        assert!(request.input_payload.get("eval_context").is_some());
+        assert!(request.input_payload.get("final_answer").is_some());
+    }
+
+    #[test]
+    fn build_suite_request_final_alternative_context_handling_has_eval_context_and_final_answer() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(FINAL_ALTERNATIVE_CONTEXT_HANDLING).unwrap();
+
+        let request = build_suite_request(
+            FINAL_ALTERNATIVE_CONTEXT_HANDLING.to_string(),
             suite_def,
             &snapshot,
         )
         .expect("request");
 
-        assert_eq!(request.suite_name, FINAL_NO_ROOT_CAUSE_CLAIM);
-        assert!(request.prompt_text.contains("Evaluate root cause overclaiming."));
+        assert_eq!(request.suite_name, FINAL_ALTERNATIVE_CONTEXT_HANDLING);
+        assert!(request.prompt_text.contains("Evaluate alternative context handling."));
+        assert!(request.input_payload.get("eval_context").is_some());
+        assert!(request.input_payload.get("final_answer").is_some());
+    }
+
+    #[test]
+    fn build_suite_request_final_result_interpretation_usefulness_has_correct_fields() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(FINAL_RESULT_INTERPRETATION_USEFULNESS).unwrap();
+
+        let request = build_suite_request(
+            FINAL_RESULT_INTERPRETATION_USEFULNESS.to_string(),
+            suite_def,
+            &snapshot,
+        )
+        .expect("request");
+
+        assert_eq!(request.suite_name, FINAL_RESULT_INTERPRETATION_USEFULNESS);
+        assert!(request.prompt_text.contains("Evaluate result interpretation usefulness."));
+        assert!(request.input_payload.get("final_answer").is_some());
+        assert!(request.input_payload.get("active_hypotheses").is_some());
+        assert!(request.input_payload.get("first_check").is_some());
+        assert!(request.input_payload.get("eval_context").is_none());
+    }
+
+    #[test]
+    fn build_suite_request_returns_error_for_unknown_suite() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let fake_def = serde_json::from_value(serde_json::json!({
+            "id": "x",
+            "version": "v1",
+            "category": "final_answer",
+            "scope": "iteration",
+            "required_for_mvp": false,
+            "input_variables": [],
+            "prompt_template": "x",
+            "normalized_output_schema_hint": {},
+            "response_schema": {"type": "object"}
+        }))
+        .unwrap();
+
+        let err = build_suite_request("unknown_suite".to_string(), &fake_def, &snapshot)
+            .unwrap_err();
+        assert!(matches!(err, JudgeExecutionError::UnsupportedSuite(_)));
+    }
+
+    #[tokio::test]
+    async fn stub_client_returns_valid_response_for_final_no_root_cause_claim() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(FINAL_NO_ROOT_CAUSE_CLAIM).unwrap();
+
+        let request =
+            build_suite_request(FINAL_NO_ROOT_CAUSE_CLAIM.to_string(), suite_def, &snapshot)
+                .expect("request");
 
         let client = StubJudgeClient;
         let response = client.execute(request).await.expect("stub response");
         assert_eq!(response.normalized_result["score"], 2);
+    }
+
+    #[test]
+    fn build_suite_request_query_structuring_field_boundary_has_raw_query_and_structured_query() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(QUERY_STRUCTURING_FIELD_BOUNDARY_CORRECTNESS).unwrap();
+
+        let request = build_suite_request(
+            QUERY_STRUCTURING_FIELD_BOUNDARY_CORRECTNESS.to_string(),
+            suite_def,
+            &snapshot,
+        )
+        .expect("request");
+
+        assert_eq!(request.suite_name, QUERY_STRUCTURING_FIELD_BOUNDARY_CORRECTNESS);
+        assert!(request.input_payload.get("raw_user_query").is_some());
+        assert!(request.input_payload.get("structured_query").is_some());
+        assert!(request.input_payload.get("eval_context").is_none());
+    }
+
+    #[test]
+    fn build_suite_request_query_structuring_grounding_conservatism_has_correct_fields() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(QUERY_STRUCTURING_GROUNDING_CONSERVATISM).unwrap();
+
+        let request = build_suite_request(
+            QUERY_STRUCTURING_GROUNDING_CONSERVATISM.to_string(),
+            suite_def,
+            &snapshot,
+        )
+        .expect("request");
+
+        assert_eq!(request.suite_name, QUERY_STRUCTURING_GROUNDING_CONSERVATISM);
+        assert!(request.input_payload.get("raw_user_query").is_some());
+        assert!(request.input_payload.get("structured_query").is_some());
+    }
+
+    #[test]
+    fn build_suite_request_evidence_pack_role_fit_has_topology_and_chunks() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(EVIDENCE_PACK_ROLE_FIT).unwrap();
+
+        let request =
+            build_suite_request(EVIDENCE_PACK_ROLE_FIT.to_string(), suite_def, &snapshot)
+                .expect("request");
+
+        assert_eq!(request.suite_name, EVIDENCE_PACK_ROLE_FIT);
+        assert!(request.input_payload.get("raw_user_query").is_some());
+        assert!(request.input_payload.get("evidence_topology").is_some());
+        assert!(request.input_payload.get("incident_evidence_chunks").is_some());
+        assert!(request.input_payload.get("theory_chunks").is_some());
+        assert!(request.input_payload.get("matched_incident_card").is_none());
+    }
+
+    #[test]
+    fn build_suite_request_evidence_pack_sufficiency_has_matched_card_and_chunks() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(EVIDENCE_PACK_SUFFICIENCY).unwrap();
+
+        let request =
+            build_suite_request(EVIDENCE_PACK_SUFFICIENCY.to_string(), suite_def, &snapshot)
+                .expect("request");
+
+        assert_eq!(request.suite_name, EVIDENCE_PACK_SUFFICIENCY);
+        assert!(request.input_payload.get("matched_incident_card").is_some());
+        assert!(request.input_payload.get("incident_evidence_chunks").is_some());
+        assert!(request.input_payload.get("evidence_topology").is_none());
+    }
+
+    #[test]
+    fn build_suite_request_final_hypothesis_source_alignment_has_topology_and_final_answer() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(FINAL_HYPOTHESIS_SOURCE_ALIGNMENT).unwrap();
+
+        let request = build_suite_request(
+            FINAL_HYPOTHESIS_SOURCE_ALIGNMENT.to_string(),
+            suite_def,
+            &snapshot,
+        )
+        .expect("request");
+
+        assert_eq!(request.suite_name, FINAL_HYPOTHESIS_SOURCE_ALIGNMENT);
+        assert!(request.input_payload.get("evidence_topology").is_some());
+        assert!(request.input_payload.get("matched_incident_card").is_some());
+        assert!(request.input_payload.get("final_answer").is_some());
+        assert!(request.input_payload.get("eval_context").is_none());
+    }
+
+    #[test]
+    fn canonical_normalized_result_recovers_score_from_nonstandard_key() {
+        let malformed = json!({
+            "commentary to=assistant{": 2,
+            "violations": [],
+            "explanation": "ok"
+        });
+        let canonical = canonical_normalized_result(&malformed);
+        assert_eq!(canonical["score"], 2);
+        assert_eq!(canonical["explanation"], "ok");
+    }
+
+    #[test]
+    fn canonical_normalized_result_accepts_reason_field_unchanged() {
+        // Suites that return "reason" instead of "explanation" pass through as-is;
+        // build_judge_result_row then falls back to the "reason" key.
+        let with_reason = json!({"score": 1, "reason": "marginal check"});
+        let canonical = canonical_normalized_result(&with_reason);
+        assert_eq!(canonical["score"], 1);
+        assert_eq!(canonical["reason"], "marginal check");
+        assert!(canonical.get("explanation").is_none());
     }
 
     #[test]

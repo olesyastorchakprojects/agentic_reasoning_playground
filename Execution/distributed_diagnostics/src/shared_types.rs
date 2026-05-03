@@ -103,13 +103,23 @@ pub struct RetrievalEvaluationMetrics {
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct RetrievalCallStats {
+    pub hits_count: u32,
+    pub selected_count: u32,
+    pub top_score: Option<f32>,
+    pub min_score: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct CandidateCardRetrievalMetrics {
     pub retrieval_relevant_cards: RetrievalEvaluationMetrics,
+    pub call_stats: RetrievalCallStats,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct IncidentEvidenceBranchRetrievalMetrics {
     pub relevance_judgments: RetrievalEvaluationMetrics,
+    pub call_stats: RetrievalCallStats,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -121,6 +131,7 @@ pub struct IncidentEvidenceRetrievalMetrics {
 #[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TheoryEvidenceRetrievalMetrics {
     pub mechanism_explanation: RetrievalEvaluationMetrics,
+    pub call_stats: RetrievalCallStats,
 }
 
 #[derive(Debug, Clone)]
@@ -480,10 +491,20 @@ pub struct PromptTheoryEvidenceChunk {
     pub text: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct EvidenceTopology {
+    pub primary_evidence_roles: Vec<String>,
+    pub alternative_context_present: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternative_context_case_ids: Vec<String>,
+    pub theory_evidence_present: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct PromptContextAssemblyOutput {
     pub prompt: String,
     pub response_schema: serde_json::Value,
+    pub evidence_topology: EvidenceTopology,
     pub incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>,
     pub theory_chunks: Vec<PromptTheoryEvidenceChunk>,
 }
@@ -543,4 +564,18 @@ pub struct DiagnosticResultInterpretation {
     pub supports_primary_if: String,
     pub supports_competing_if: String,
     pub inconclusive_if: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RunConfigSnapshot {
+    pub model_name: String,
+    pub transport_kind: String,
+    pub input_cost_per_million_tokens: f64,
+    pub output_cost_per_million_tokens: f64,
+    pub retrieval_cards_top_k: usize,
+    pub retrieval_cards_collection: String,
+    pub retrieval_practice_top_k: usize,
+    pub retrieval_practice_collection: String,
+    pub retrieval_theory_top_k: usize,
+    pub retrieval_theory_collection: String,
 }

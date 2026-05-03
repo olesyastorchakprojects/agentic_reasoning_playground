@@ -1,0 +1,30 @@
+{
+  "eval_run_id": "45fb8e47-8672-476a-b7d3-7d4010955ff5",
+  "run_type": "golden_dataset",
+  "status": "running",
+  "started_at": "2026-05-02T13:02:36.773887619Z",
+  "completed_at": null,
+  "stages": [
+    "judge_request_suites",
+    "build_eval_summary"
+  ],
+  "judge_provider": "together",
+  "judge_base_url": "https://api.together.xyz",
+  "judge_model": "openai/gpt-oss-20b",
+  "suite_versions": {
+    "query_structuring_field_boundary_correctness": "enabled_from_config",
+    "query_structuring_grounding_conservatism": "enabled_from_config"
+  },
+  "runtime_run_count": 1,
+  "run_scope_runtime_run_ids": [
+    "2a7ed93a-b0b6-4dba-a498-b3df911ed561"
+  ],
+  "subject_count": 1,
+  "run_scope_subjects": [
+    {
+      "runtime_run_id": "2a7ed93a-b0b6-4dba-a498-b3df911ed561",
+      "iteration_id": "e82d2819-8519-4468-860d-da6a705e582d"
+    }
+  ],
+  "last_error": null
+}

@@ -9,8 +9,8 @@ use crate::request_pipeline::retrieval_metrics::{
     compute_retrieval_metrics, GoldenRetrievalRelevanceById, GoldenRetrievalTargetsById,
 };
 use crate::shared_types::{
-    Context, NormalizedUserRequest, TheoryEvidenceChunk, TheoryEvidenceRetrievalMetrics,
-    TheoryEvidenceRetrievalOutput,
+    Context, NormalizedUserRequest, RetrievalCallStats, TheoryEvidenceChunk,
+    TheoryEvidenceRetrievalMetrics, TheoryEvidenceRetrievalOutput,
 };
 use tracing::{info_span, field, Instrument};
 
@@ -273,6 +273,12 @@ impl TheoryEvidenceRetrieval {
                 .map_err(|e| TheoryEvidenceRetrievalError::MetricsComputation(e.to_string()))?;
                 let metrics = TheoryEvidenceRetrievalMetrics {
                     mechanism_explanation: computed,
+                    call_stats: RetrievalCallStats {
+                        hits_count: chunks.len() as u32,
+                        selected_count: chunks.len() as u32,
+                        top_score: chunks.iter().map(|c| c.score).reduce(f32::max),
+                        min_score: chunks.iter().map(|c| c.score).reduce(f32::min),
+                    },
                 };
                 oi_span.in_scope(|| emit_theory_evidence_metrics_oi_span(&oi_span, &metrics));
                 Some(metrics)

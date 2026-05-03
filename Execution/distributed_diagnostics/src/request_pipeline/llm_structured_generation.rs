@@ -1005,6 +1005,7 @@ mod tests {
         PromptContextAssemblyOutput {
             prompt: prompt.to_string(),
             response_schema: serde_json::Value::Object(serde_json::Map::new()),
+            evidence_topology: Default::default(),
             incident_evidence_chunks: vec![],
             theory_chunks: vec![],
         }

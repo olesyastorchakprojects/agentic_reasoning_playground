@@ -65,8 +65,8 @@ pub struct SuitesSettings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObservabilitySettings {
     pub tracing_enabled: bool,
-    pub metrics_enabled: bool,
     pub service_name: String,
+    pub tracing_endpoint: String,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -155,9 +155,16 @@ struct RawSuites {
 #[derive(Debug, Deserialize)]
 struct RawObservability {
     tracing_enabled: bool,
-    metrics_enabled: bool,
     #[serde(default = "default_service_name")]
     service_name: String,
+    #[serde(default = "default_tracing_endpoint_env")]
+    tracing_endpoint_env: String,
+    #[serde(default)]
+    tracing_endpoint: Option<String>,
+}
+
+fn default_tracing_endpoint_env() -> String {
+    "TRACING_ENDPOINT".to_string()
 }
 
 fn default_mode() -> String {
@@ -266,13 +273,29 @@ fn load_eval_settings_inner(
         },
         observability: ObservabilitySettings {
             tracing_enabled: raw.observability.tracing_enabled,
-            metrics_enabled: raw.observability.metrics_enabled,
             service_name: require_non_empty(
                 &raw.observability.service_name,
                 "observability.service_name",
             )?,
+            tracing_endpoint: if let Some(explicit) = raw.observability.tracing_endpoint.as_deref() {
+                explicit.to_string()
+            } else {
+                std::env::var(&raw.observability.tracing_endpoint_env)
+                    .unwrap_or_else(|_| "http://localhost:4317".to_string())
+            },
         },
     })
+}
+
+fn resolve_env_backed_string(
+    explicit: Option<&str>,
+    env_name: &str,
+    field: &str,
+) -> Result<String, EvalConfigError> {
+    if let Some(val) = explicit {
+        return require_non_empty(val, field);
+    }
+    std::env::var(env_name).map_err(|_| EvalConfigError::MissingEnv(env_name.to_string()))
 }
 
 fn resolve_postgres_url(

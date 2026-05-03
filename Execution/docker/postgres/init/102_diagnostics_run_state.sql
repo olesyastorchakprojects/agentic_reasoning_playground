@@ -15,6 +15,7 @@ create table if not exists diagnostics.run_iterations (
     iteration_id uuid primary key,
     run_id uuid not null references diagnostics.runs(run_id) on delete cascade,
     sequence_no bigint not null,
+    config_snapshot jsonb,
     constraint run_iterations_sequence_non_negative check (sequence_no >= 0),
     constraint run_iterations_run_id_sequence_unique unique (run_id, sequence_no)
 );

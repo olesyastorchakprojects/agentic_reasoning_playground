@@ -100,6 +100,10 @@ struct RawOllamaModel {
     model_name: String,
     timeout_sec: u64,
     retry: RawRetryPolicy,
+    #[serde(default)]
+    input_cost_per_million_tokens: f64,
+    #[serde(default)]
+    output_cost_per_million_tokens: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,6 +111,10 @@ struct RawTogetherModel {
     model_name: String,
     timeout_sec: u64,
     retry: RawRetryPolicy,
+    #[serde(default)]
+    input_cost_per_million_tokens: f64,
+    #[serde(default)]
+    output_cost_per_million_tokens: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -369,6 +377,8 @@ fn resolve_model_transport(
                 model_name: cfg.model_name.clone(),
                 timeout_sec: cfg.timeout_sec,
                 retry: resolve_retry(&cfg.retry, "model.ollama.retry")?,
+                input_cost_per_million_tokens: cfg.input_cost_per_million_tokens,
+                output_cost_per_million_tokens: cfg.output_cost_per_million_tokens,
             }))
         }
         "together" => {
@@ -386,6 +396,8 @@ fn resolve_model_transport(
                 model_name: cfg.model_name.clone(),
                 timeout_sec: cfg.timeout_sec,
                 retry: resolve_retry(&cfg.retry, "model.together.retry")?,
+                input_cost_per_million_tokens: cfg.input_cost_per_million_tokens,
+                output_cost_per_million_tokens: cfg.output_cost_per_million_tokens,
             }))
         }
         other => Err(ConfigError::InvalidValue {

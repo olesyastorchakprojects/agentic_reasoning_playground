@@ -35,6 +35,11 @@ create table if not exists diagnostics.eval_iteration_summaries (
     judge_total_cost_usd numeric(20,10) not null,
     run_total_tokens bigint not null,
     run_total_cost_usd numeric(20,10) not null,
+    runtime_qs_metrics jsonb,
+    runtime_candidate_cards_metrics jsonb,
+    runtime_incident_primary_metrics jsonb,
+    runtime_incident_alternatives_metrics jsonb,
+    runtime_theory_evidence_metrics jsonb,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     constraint eval_iteration_summaries_subject_pk primary key (

@@ -3,8 +3,11 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use tracing::Instrument;
+
 use crate::config::EvalSettings;
-use crate::judge::{execute_first_suite_for_subject, JudgeClient, JudgeExecutionError};
+use crate::judge::{execute_one_suite_for_subject, JudgeClient, JudgeExecutionError};
+use crate::observability::{eval_subject_span, record_error};
 use crate::manifest::{
     build_running_manifest, create_eval_run_artifact_dir, write_run_manifest,
     ManifestError,
@@ -171,54 +174,74 @@ impl EvalOrchestrator {
             }
         };
 
-        let suite_name = "final_no_root_cause_claim";
-        let execution_result = if self
-            .store
-            .judge_result_exists(&prepared_subject.processing_state.key, suite_name)
-            .await?
-        {
-            Ok(suite_name.to_string())
-        } else {
-            execute_first_suite_for_subject(
+        let enabled_suites = catalog
+            .resolve_enabled_suite_names(&self.settings.suites)
+            .map_err(OrchestratorError::SuiteCatalog)?;
+
+        let subject_span = eval_subject_span(
+            &prepared_subject.processing_state.key.eval_run_id.to_string(),
+            &prepared_subject.processing_state.key.runtime_run_id.to_string(),
+            &prepared_subject.processing_state.key.iteration_id.to_string(),
+        );
+
+        let mut first_error: Option<JudgeExecutionError> = None;
+        for suite_name in &enabled_suites {
+            let already_done = self
+                .store
+                .judge_result_exists(&prepared_subject.processing_state.key, suite_name)
+                .await?;
+            if already_done {
+                continue;
+            }
+            match execute_one_suite_for_subject(
                 &self.store,
                 &self.settings.judge,
+                suite_name,
                 catalog,
                 &prepared_subject,
                 client,
             )
+            .instrument(subject_span.clone())
             .await
-        };
-
-        match execution_result {
-            Ok(_) => {
-                self.store
-                    .update_eval_processing_state(
-                        &prepared_subject.processing_state.key,
-                        EvalStage::BuildEvalSummary,
-                        EvalProcessingStatus::Pending,
-                        0,
-                        None,
-                        None,
-                        None,
-                    )
-                    .await?;
-                Ok(true)
-            }
-            Err(error) => {
-                self.store
-                    .update_eval_processing_state(
-                        &prepared_subject.processing_state.key,
-                        EvalStage::JudgeRequestSuites,
-                        EvalProcessingStatus::Failed,
-                        next_attempt_count,
-                        Some(attempt_started_at),
-                        None,
-                        Some(&error.to_string()),
-                    )
-                    .await?;
-                Err(error.into())
+            {
+                Ok(()) => {}
+                Err(error) => {
+                    first_error = Some(error);
+                    break;
+                }
             }
         }
+
+        if let Some(error) = first_error {
+            subject_span.record("eval.subject_status", "failed");
+            record_error(&subject_span, "JudgeExecutionError", &error.to_string());
+            self.store
+                .update_eval_processing_state(
+                    &prepared_subject.processing_state.key,
+                    EvalStage::JudgeRequestSuites,
+                    EvalProcessingStatus::Failed,
+                    next_attempt_count,
+                    Some(attempt_started_at),
+                    None,
+                    Some(&error.to_string()),
+                )
+                .await?;
+            return Err(OrchestratorError::JudgeExecution(error));
+        }
+
+        subject_span.record("eval.subject_status", "completed");
+        self.store
+            .update_eval_processing_state(
+                &prepared_subject.processing_state.key,
+                EvalStage::BuildEvalSummary,
+                EvalProcessingStatus::Pending,
+                0,
+                None,
+                None,
+                None,
+            )
+            .await?;
+        Ok(true)
     }
 
     pub async fn drain_judge_request_suites_for_eval_run(
@@ -230,7 +253,7 @@ impl EvalOrchestrator {
     ) -> Result<JudgeDrainResult, OrchestratorError> {
         let mut attempted_subjects = 0_usize;
         let mut completed_subjects = 0_usize;
-        let failed_subjects = 0_usize;
+        let mut failed_subjects = 0_usize;
 
         loop {
             match self
@@ -248,6 +271,10 @@ impl EvalOrchestrator {
                 }
                 Ok(false) => {
                     break;
+                }
+                Err(OrchestratorError::JudgeExecution(_) | OrchestratorError::SubjectPreparation(_)) => {
+                    attempted_subjects += 1;
+                    failed_subjects += 1;
                 }
                 Err(error) => return Err(error),
             }

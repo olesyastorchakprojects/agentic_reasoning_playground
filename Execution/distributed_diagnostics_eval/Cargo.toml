@@ -24,6 +24,11 @@ sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "chron
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 tracing = "0.1"
+tracing-opentelemetry = "0.32.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+opentelemetry = { version = "0.31", features = ["trace"] }
+opentelemetry-otlp = { version = "0.31.1", default-features = false, features = ["trace", "grpc-tonic"] }
+opentelemetry_sdk = { version = "0.31", features = ["trace", "rt-tokio"] }
 async-trait = "0.1"
 url = "2"
 

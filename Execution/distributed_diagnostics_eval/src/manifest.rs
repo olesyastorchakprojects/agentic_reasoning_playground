@@ -219,9 +219,9 @@ mod tests {
                 enabled: Some(vec!["final_no_root_cause_claim".into()]),
             },
             observability: ObservabilitySettings {
-                tracing_enabled: true,
-                metrics_enabled: true,
+                tracing_enabled: false,
                 service_name: "distributed_diagnostics_eval".into(),
+                tracing_endpoint: "http://localhost:4317".into(),
             },
         }
     }

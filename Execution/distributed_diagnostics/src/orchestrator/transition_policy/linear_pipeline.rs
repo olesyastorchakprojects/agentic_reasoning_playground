@@ -285,6 +285,7 @@ mod tests {
             revision: 0,
             iterations: vec![RunIteration {
                 iteration_id: new_iteration_id(),
+                config_snapshot: None,
                 step_records: records,
             }],
         }
@@ -312,6 +313,7 @@ mod tests {
             revision: 0,
             iterations: vec![RunIteration {
                 iteration_id: new_iteration_id(),
+                config_snapshot: None,
                 step_records: vec![user_input_ok()],
             }],
         }
@@ -428,6 +430,7 @@ mod tests {
             StepResultEnvelope::PromptContextAssembly(PromptContextAssemblyOutput {
                 prompt: "prompt".to_string(),
                 response_schema: serde_json::Value::Object(serde_json::Map::new()),
+                evidence_topology: Default::default(),
                 incident_evidence_chunks: vec![],
                 theory_chunks: vec![],
             }),

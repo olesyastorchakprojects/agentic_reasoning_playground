@@ -9,6 +9,7 @@ use crate::request_pipeline::retrieval_metrics::{
 };
 use crate::shared_types::{
     CandidateCard, CandidateCardRetrievalMetrics, CandidateCardRetrievalOutput, Context,
+    RetrievalCallStats,
     NormalizedUserRequest,
 };
 use tracing::{info_span, field, Instrument};
@@ -335,6 +336,12 @@ impl CandidateCardRetrieval {
                 .map_err(|e| CandidateCardRetrievalError::MetricsComputation(e.to_string()))?;
                 let metrics = CandidateCardRetrievalMetrics {
                     retrieval_relevant_cards: computed,
+                    call_stats: RetrievalCallStats {
+                        hits_count: hits_count as u32,
+                        selected_count: total_count as u32,
+                        top_score: scores.iter().copied().reduce(f32::max),
+                        min_score: scores.iter().copied().reduce(f32::min),
+                    },
                 };
                 oi_span.in_scope(|| emit_candidate_card_metrics_oi_span(&oi_span, &metrics));
                 Some(metrics)

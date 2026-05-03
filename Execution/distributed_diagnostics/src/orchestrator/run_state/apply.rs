@@ -203,6 +203,7 @@ impl<'a> RunStateWriter<'a> {
         });
         self.state.iterations.push(RunIteration {
             iteration_id,
+            config_snapshot: None,
             step_records: vec![step_record],
         });
         self.state.status = RunStatus::Active;
@@ -431,6 +432,7 @@ mod tests {
         let iid = RunIterationId(Uuid::new_v4());
         state.iterations.push(RunIteration {
             iteration_id: iid,
+            config_snapshot: None,
             step_records: vec![
                 finished_ok_record(StepKind::UserInputReceived, user_input_result()),
                 pending_record(StepKind::InputNormalization),
@@ -852,6 +854,7 @@ mod tests {
         let mut state = archived_state();
         state.iterations.push(RunIteration {
             iteration_id: RunIterationId(Uuid::new_v4()),
+            config_snapshot: None,
             step_records: vec![finished_ok_record(
                 StepKind::UserInputReceived,
                 user_input_result(),
@@ -876,6 +879,7 @@ mod tests {
             let iid = RunIterationId(Uuid::new_v4());
             s.iterations.push(RunIteration {
                 iteration_id: iid,
+                config_snapshot: None,
                 step_records: vec![
                     finished_ok_record(StepKind::UserInputReceived, user_input_result()),
                     pending_record_of_kind(kind),
@@ -959,6 +963,7 @@ mod tests {
             let iid = RunIterationId(Uuid::new_v4());
             s.iterations.push(RunIteration {
                 iteration_id: iid,
+                config_snapshot: None,
                 step_records: vec![
                     finished_ok_record(StepKind::UserInputReceived, user_input_result()),
                     StepRecord::Pending(PendingStepRecord {
