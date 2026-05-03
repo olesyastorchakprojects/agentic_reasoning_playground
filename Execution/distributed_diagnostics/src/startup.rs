@@ -232,6 +232,8 @@ pub async fn build_orchestrator(
 
     let run_repository = RunRepository::new(run_state_store);
     let policy = LinearPipelineTransitionPolicy::new();
+    let config_snapshot = settings.build_run_config_snapshot();
 
-    Ok(Orchestrator::new(policy, executor, run_repository))
+    Ok(Orchestrator::new(policy, executor, run_repository)
+        .with_config_snapshot(config_snapshot))
 }

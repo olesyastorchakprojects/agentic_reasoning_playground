@@ -12,6 +12,7 @@ use crate::request_pipeline::retrieval_metrics::{
 use crate::shared_types::{
     CandidateCardRetrievalOutput, Context, IncidentEvidenceBranchRetrievalMetrics,
     IncidentEvidenceChunk, IncidentEvidenceRetrievalMetrics, IncidentEvidenceRetrievalOutput,
+    RetrievalCallStats,
     NormalizedUserRequest,
 };
 use tracing::{info_span, field, Instrument};
@@ -504,9 +505,21 @@ impl IncidentEvidenceRetrieval {
                 let metrics = IncidentEvidenceRetrievalMetrics {
                     primary_card_evidence_query: IncidentEvidenceBranchRetrievalMetrics {
                         relevance_judgments: primary_metrics,
+                        call_stats: RetrievalCallStats {
+                            hits_count: primary_chunks.len() as u32,
+                            selected_count: primary_chunks.len() as u32,
+                            top_score: primary_chunks.iter().map(|c| c.score).reduce(f32::max),
+                            min_score: primary_chunks.iter().map(|c| c.score).reduce(f32::min),
+                        },
                     },
                     alternative_cards_evidence_query: IncidentEvidenceBranchRetrievalMetrics {
                         relevance_judgments: alternative_metrics,
+                        call_stats: RetrievalCallStats {
+                            hits_count: alternative_chunks.len() as u32,
+                            selected_count: alternative_chunks.len() as u32,
+                            top_score: alternative_chunks.iter().map(|c| c.score).reduce(f32::max),
+                            min_score: alternative_chunks.iter().map(|c| c.score).reduce(f32::min),
+                        },
                     },
                 };
                 context.open_inference.root_span.in_scope(|| {

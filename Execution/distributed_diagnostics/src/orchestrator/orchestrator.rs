@@ -13,7 +13,8 @@ use crate::orchestrator::transition_policy::{
     PolicyError, PolicyTransition, TransitionPolicy,
 };
 use crate::shared_types::{
-    Context, OpenInferenceContext, ResponseValidationAndNormalizationOutput, UserRequest,
+    Context, OpenInferenceContext, ResponseValidationAndNormalizationOutput, RunConfigSnapshot,
+    UserRequest,
 };
 
 #[derive(Debug)]
@@ -21,6 +22,7 @@ pub struct Orchestrator<P> {
     policy: P,
     executor: StepExecutor,
     run_repository: RunRepository,
+    config_snapshot: Option<RunConfigSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,7 +64,13 @@ where
             policy,
             executor,
             run_repository,
+            config_snapshot: None,
         }
+    }
+
+    pub fn with_config_snapshot(mut self, snapshot: RunConfigSnapshot) -> Self {
+        self.config_snapshot = Some(snapshot);
+        self
     }
 
     pub async fn run(&self, user_input: UserRequest) -> Result<RunOutcome, OrchestratorError> {
@@ -84,6 +92,11 @@ where
         {
             let mut writer = RunStateWriter::new(state);
             writer.begin_iteration(user_input)?;
+        }
+        if let Some(snapshot) = &self.config_snapshot {
+            if let Some(iter) = state.iterations.last_mut() {
+                iter.config_snapshot = Some(snapshot.clone());
+            }
         }
         let iteration_sequence_no = RunStateView::new(state).iteration_count() as u64 - 1;
         let iteration_id = RunStateView::new(state)

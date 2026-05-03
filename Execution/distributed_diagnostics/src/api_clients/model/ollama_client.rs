@@ -310,6 +310,8 @@ mod tests {
             model_name: "llama-test".into(),
             timeout_sec: 5,
             retry: policy(),
+            input_cost_per_million_tokens: 0.0,
+            output_cost_per_million_tokens: 0.0,
         }
     }
 

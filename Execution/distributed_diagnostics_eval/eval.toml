@@ -2,6 +2,7 @@
 config_version = "v1"
 run_type = "golden_dataset"
 mode = "batch_golden"
+max_runtime_runs_per_new_eval_run = 5
 
 [judge]
 provider = "together"
@@ -26,10 +27,20 @@ write_markdown_report = true
 
 [suites]
 catalog_path = "../../Specification/evals/prompts.json"
-enabled = ["final_no_root_cause_claim"]
+enabled = [
+  "query_structuring_field_boundary_correctness",
+  "query_structuring_grounding_conservatism",
+  "evidence_pack_role_fit",
+  "evidence_pack_sufficiency",
+  "final_no_root_cause_claim",
+  "final_first_check_discriminates",
+  "final_hypothesis_source_alignment",
+  "final_alternative_context_handling",
+  "final_result_interpretation_usefulness",
+]
 required_for_mvp_only = false
 
 [observability]
 tracing_enabled = true
-metrics_enabled = true
 service_name = "distributed_diagnostics_eval"
+tracing_endpoint_env = "TRACING_ENDPOINT"

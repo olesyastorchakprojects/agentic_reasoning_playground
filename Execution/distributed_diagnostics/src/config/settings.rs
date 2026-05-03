@@ -1,4 +1,4 @@
-use crate::shared_types::IncidentChunkTag;
+use crate::shared_types::{IncidentChunkTag, RunConfigSnapshot};
 use crate::utils::retry::RetryPolicyConfig;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,30 +175,88 @@ pub struct LlmStructuredGenerationSettings {
     pub max_output_tokens: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModelSettings {
     pub transport: ModelTransportSettings,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ModelTransportSettings {
     Ollama(OllamaModelSettings),
     Together(TogetherModelSettings),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OllamaModelSettings {
     pub url: String,
     pub model_name: String,
     pub timeout_sec: u64,
     pub retry: RetryPolicyConfig,
+    pub input_cost_per_million_tokens: f64,
+    pub output_cost_per_million_tokens: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TogetherModelSettings {
     pub url: String,
     pub api_key: String,
     pub model_name: String,
     pub timeout_sec: u64,
     pub retry: RetryPolicyConfig,
+    pub input_cost_per_million_tokens: f64,
+    pub output_cost_per_million_tokens: f64,
+}
+
+impl ModelTransportSettings {
+    pub fn active_model_name(&self) -> &str {
+        match self {
+            ModelTransportSettings::Ollama(s) => &s.model_name,
+            ModelTransportSettings::Together(s) => &s.model_name,
+        }
+    }
+
+    pub fn transport_kind(&self) -> &'static str {
+        match self {
+            ModelTransportSettings::Ollama(_) => "ollama",
+            ModelTransportSettings::Together(_) => "together",
+        }
+    }
+
+    pub fn cost_per_million_tokens(&self) -> (f64, f64) {
+        match self {
+            ModelTransportSettings::Ollama(s) => {
+                (s.input_cost_per_million_tokens, s.output_cost_per_million_tokens)
+            }
+            ModelTransportSettings::Together(s) => {
+                (s.input_cost_per_million_tokens, s.output_cost_per_million_tokens)
+            }
+        }
+    }
+}
+
+impl CollectionSettings {
+    pub fn collection_name(&self) -> &str {
+        match self {
+            CollectionSettings::Dense(d) => &d.name,
+            CollectionSettings::Hybrid(_) => "hybrid",
+        }
+    }
+}
+
+impl Settings {
+    pub fn build_run_config_snapshot(&self) -> RunConfigSnapshot {
+        let (input_cost, output_cost) = self.model.transport.cost_per_million_tokens();
+        RunConfigSnapshot {
+            model_name: self.model.transport.active_model_name().to_string(),
+            transport_kind: self.model.transport.transport_kind().to_string(),
+            input_cost_per_million_tokens: input_cost,
+            output_cost_per_million_tokens: output_cost,
+            retrieval_cards_top_k: self.retrieval.cards.top_k,
+            retrieval_cards_collection: self.retrieval.cards.collection.collection_name().to_string(),
+            retrieval_practice_top_k: self.retrieval.practice.top_k,
+            retrieval_practice_collection: self.retrieval.practice.collection.collection_name().to_string(),
+            retrieval_theory_top_k: self.retrieval.theory.top_k,
+            retrieval_theory_collection: self.retrieval.theory.collection.collection_name().to_string(),
+        }
+    }
 }

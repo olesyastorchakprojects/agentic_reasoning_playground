@@ -121,7 +121,13 @@ struct WireMessage<'a> {
 struct WireResponseFormat {
     r#type: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    schema: Option<serde_json::Value>,
+    json_schema: Option<WireJsonSchema>,
+}
+
+#[derive(Serialize)]
+struct WireJsonSchema {
+    name: &'static str,
+    schema: serde_json::Value,
 }
 
 #[derive(Deserialize)]
@@ -175,11 +181,14 @@ impl ModelClient for TogetherModelClient {
             ModelResponseMode::Text => None,
             ModelResponseMode::JsonObject => Some(WireResponseFormat {
                 r#type: "json_object",
-                schema: None,
+                json_schema: None,
             }),
             ModelResponseMode::JsonSchema(schema) => Some(WireResponseFormat {
                 r#type: "json_schema",
-                schema: Some(schema.clone()),
+                json_schema: Some(WireJsonSchema {
+                    name: "judge_response",
+                    schema: schema.clone(),
+                }),
             }),
         };
 
@@ -334,6 +343,8 @@ mod tests {
             model_name: "gpt-test".into(),
             timeout_sec: 5,
             retry: policy(),
+            input_cost_per_million_tokens: 0.0,
+            output_cost_per_million_tokens: 0.0,
         }
     }
 

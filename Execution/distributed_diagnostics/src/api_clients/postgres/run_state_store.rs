@@ -330,7 +330,7 @@ impl PostgresRunStateStore {
         // 2. Load iterations ordered by sequence_no asc
         let iteration_rows = sqlx::query(
             r#"
-            SELECT iteration_id::text AS iteration_id, sequence_no
+            SELECT iteration_id::text AS iteration_id, sequence_no, config_snapshot
             FROM diagnostics.run_iterations
             WHERE run_id = $1::uuid
             ORDER BY sequence_no ASC
@@ -371,8 +371,15 @@ impl PostgresRunStateStore {
                 step_records.push(decode_step_record_row(sr)?);
             }
 
+            let config_snapshot: Option<crate::shared_types::RunConfigSnapshot> = iter_row
+                .try_get::<Option<serde_json::Value>, _>("config_snapshot")
+                .ok()
+                .flatten()
+                .and_then(|v| serde_json::from_value(v).ok());
+
             iterations.push(RunIteration {
                 iteration_id,
+                config_snapshot,
                 step_records,
             });
         }
@@ -545,15 +552,21 @@ async fn insert_iteration_query<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
+    let config_snapshot_json = iteration
+        .config_snapshot
+        .as_ref()
+        .map(|s| serde_json::to_value(s).expect("RunConfigSnapshot must serialize"));
+
     let result = sqlx::query(
         r#"
-        INSERT INTO diagnostics.run_iterations (iteration_id, run_id, sequence_no)
-        VALUES ($1::uuid, $2::uuid, $3)
+        INSERT INTO diagnostics.run_iterations (iteration_id, run_id, sequence_no, config_snapshot)
+        VALUES ($1::uuid, $2::uuid, $3, $4)
         "#,
     )
     .bind(iteration.iteration_id.0.to_string())
     .bind(run_id.0.to_string())
     .bind(sequence_no as i64)
+    .bind(config_snapshot_json)
     .execute(executor)
     .await;
 

@@ -264,6 +264,7 @@ mod tests {
     fn iteration(step_records: Vec<StepRecord>) -> RunIteration {
         RunIteration {
             iteration_id: new_iteration_id(),
+            config_snapshot: None,
             step_records,
         }
     }
@@ -321,10 +322,12 @@ mod tests {
         let state = state_with_iterations(vec![
             RunIteration {
                 iteration_id: id1,
+                config_snapshot: None,
                 step_records: vec![],
             },
             RunIteration {
                 iteration_id: id2,
+                config_snapshot: None,
                 step_records: vec![],
             },
         ]);
@@ -353,10 +356,12 @@ mod tests {
         let state = state_with_iterations(vec![
             RunIteration {
                 iteration_id: new_iteration_id(),
+                config_snapshot: None,
                 step_records: vec![],
             },
             RunIteration {
                 iteration_id: wanted,
+                config_snapshot: None,
                 step_records: vec![],
             },
         ]);
@@ -381,10 +386,12 @@ mod tests {
         let state = state_with_iterations(vec![
             RunIteration {
                 iteration_id: id1,
+                config_snapshot: None,
                 step_records: vec![],
             },
             RunIteration {
                 iteration_id: id2,
+                config_snapshot: None,
                 step_records: vec![],
             },
         ]);
@@ -406,6 +413,7 @@ mod tests {
         let iid = new_iteration_id();
         let state = state_with_iterations(vec![RunIteration {
             iteration_id: iid,
+            config_snapshot: None,
             step_records: vec![],
         }]);
         let view = RunStateView::new(&state);

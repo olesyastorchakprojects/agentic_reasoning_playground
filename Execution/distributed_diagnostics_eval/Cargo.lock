@@ -630,6 +630,9 @@ dependencies = [
  "config",
  "distributed_diagnostics",
  "dotenvy",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "serde",
  "serde_json",
  "sqlx",
@@ -637,6 +640,8 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
  "url",
  "uuid",
 ]

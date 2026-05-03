@@ -15,11 +15,13 @@ pub enum SnapshotIterationSelector {
     ExactIteration(RunIterationId),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RuntimeTokenUsageSummary {
     pub query_structuring: ModelTokenUsage,
     pub llm_structured_generation: ModelTokenUsage,
     pub total: ModelTokenUsage,
+    pub input_cost_per_million_tokens: f64,
+    pub output_cost_per_million_tokens: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -87,6 +89,12 @@ pub fn build_snapshot(
     let response_validation_and_normalization_output =
         expect_response_validation_and_normalization(iteration)?;
 
+    let (input_cost, output_cost) = iteration
+        .config_snapshot
+        .as_ref()
+        .map(|s| (s.input_cost_per_million_tokens, s.output_cost_per_million_tokens))
+        .unwrap_or((0.0, 0.0));
+
     let runtime_token_usage = RuntimeTokenUsageSummary {
         query_structuring: query_structuring_output.token_usage.clone(),
         llm_structured_generation: llm_structured_generation_output.token_usage.clone(),
@@ -94,6 +102,8 @@ pub fn build_snapshot(
             &query_structuring_output.token_usage,
             &llm_structured_generation_output.token_usage,
         ),
+        input_cost_per_million_tokens: input_cost,
+        output_cost_per_million_tokens: output_cost,
     };
 
     Ok(DiagnosticEvalIterationSnapshot {
@@ -377,6 +387,7 @@ mod tests {
     fn minimal_iteration(iteration_id: RunIterationId) -> RunIteration {
         RunIteration {
             iteration_id,
+            config_snapshot: None,
             step_records: vec![
                 step_record(
                     StepKind::UserInputReceived,
@@ -461,6 +472,7 @@ mod tests {
                     StepResultEnvelope::PromptContextAssembly(PromptContextAssemblyOutput {
                         prompt: "prompt".to_string(),
                         response_schema: json!({"type": "object"}),
+                        evidence_topology: Default::default(),
                         incident_evidence_chunks: vec![],
                         theory_chunks: vec![],
                     }),
@@ -543,6 +555,7 @@ mod tests {
         let completed = minimal_iteration(RunIterationId(Uuid::new_v4()));
         let incomplete = RunIteration {
             iteration_id: RunIterationId(Uuid::new_v4()),
+            config_snapshot: None,
             step_records: vec![step_record(
                 StepKind::UserInputReceived,
                 StepResultEnvelope::UserInputReceived(UserRequest {

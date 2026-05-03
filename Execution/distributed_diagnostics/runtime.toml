@@ -109,6 +109,8 @@ transport_kind = "together"
 [model.ollama]
 model_name = "qwen2.5:1.5b-instruct-ctx32k"
 timeout_sec = 120
+input_cost_per_million_tokens = 0.00
+output_cost_per_million_tokens = 0.00
 
 [model.ollama.retry]
 max_attempts = 3
@@ -117,6 +119,8 @@ backoff = "exponential"
 [model.together]
 model_name = "openai/gpt-oss-20b"
 timeout_sec = 120
+input_cost_per_million_tokens = 0.05
+output_cost_per_million_tokens = 0.20
 
 [model.together.retry]
 max_attempts = 3

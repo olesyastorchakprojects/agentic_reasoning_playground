@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use crate::config::{ChunkPackingSource, ChunkRolePackingSettings, PromptContextSettings};
 use crate::shared_types::{
-    CardHydrationOutput, Context, IncidentCard, IncidentChunkTag,
+    CardHydrationOutput, Context, EvidenceTopology, IncidentCard, IncidentChunkTag,
     IncidentEvidenceChunk, IncidentEvidenceRetrievalOutput, NormalizedUserRequest,
     PromptContextAssemblyOutput, PromptEvidenceRole, PromptIncidentEvidenceChunk,
     PromptTheoryEvidenceChunk, QueryStructuringOutput, StructuredUserQuery,
@@ -425,11 +425,19 @@ impl PromptContextAssembly {
             .filter(|c| seen_alt_cases.insert(c.case_id.clone()))
             .map(|c| c.case_id.clone())
             .collect();
+        let alternative_context_present = !ac.is_empty();
+        let theory_evidence_present = !theory_chunks.is_empty();
+        let evidence_topology_output = EvidenceTopology {
+            primary_evidence_roles: primary_roles.iter().map(|s| s.to_string()).collect(),
+            alternative_context_present,
+            alternative_context_case_ids: alt_case_ids.clone(),
+            theory_evidence_present,
+        };
         let evidence_topology = EvidenceTopologyDto {
             primary_evidence_roles: primary_roles,
-            alternative_context_present: !ac.is_empty(),
+            alternative_context_present,
             alternative_context_case_ids: alt_case_ids,
-            theory_evidence_present: !theory_chunks.is_empty(),
+            theory_evidence_present,
         };
 
         // Assemble incident chunks in role order
@@ -513,6 +521,7 @@ impl PromptContextAssembly {
         Ok(PromptContextAssemblyOutput {
             prompt,
             response_schema: self.prompt_asset.response_schema.clone(),
+            evidence_topology: evidence_topology_output,
             incident_evidence_chunks: incident_chunks,
             theory_chunks,
         })

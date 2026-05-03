@@ -17,7 +17,54 @@
           "wrong_fields",
           "explanation"
         ]
-      }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "wrong_fields": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "term": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "field",
+                "term",
+                "reason"
+              ]
+            }
+          },
+          "explanation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "wrong_fields",
+          "explanation"
+        ]
+      },
+      "what_it_checks": "Whether symptoms, affected_subsystems, failure_modes, and system_properties respect their intended meanings",
+      "why_it_matters": "Bad field separation poisons downstream retrieval and diagnosis \u2014 this is the most important semantic eval for query structuring",
+      "inputs_to_judge": [
+        "original user query",
+        "structured query output",
+        "controlled vocabulary definitions"
+      ]
     },
     "query_structuring_grounding_conservatism": {
       "id": "evals.diagnostics.query_structuring_grounding_conservatism",
@@ -36,7 +83,58 @@
           "unsupported_terms",
           "explanation"
         ]
-      }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "unsupported_terms": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "term": {
+                  "type": "string"
+                },
+                "claimed_support_level": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "field",
+                "term",
+                "claimed_support_level",
+                "reason"
+              ]
+            }
+          },
+          "explanation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "unsupported_terms",
+          "explanation"
+        ]
+      },
+      "what_it_checks": "Whether selected vocabulary terms are sufficiently supported by the user query, and whether the model avoids weak over-inference",
+      "why_it_matters": "Protects against hallucinated or overly eager labels that make retrieval look precise while being wrong",
+      "inputs_to_judge": [
+        "original user query",
+        "structured query output",
+        "selected terms with evidence_span and support_level"
+      ]
     },
     "evidence_pack_role_fit": {
       "id": "evals.diagnostics.evidence_pack_role_fit",
@@ -58,7 +156,55 @@
           "bad_chunks",
           "explanation"
         ]
-      }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "bad_chunks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "chunk_id": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "role",
+                "chunk_id",
+                "reason"
+              ]
+            }
+          },
+          "explanation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "bad_chunks",
+          "explanation"
+        ]
+      },
+      "what_it_checks": "Whether each selected chunk fits its assigned role: evidence_for_match, first_check_hint, supporting_explanation, alternative_context, mechanism_explanation",
+      "why_it_matters": "Chunks may be generally relevant but diagnostically misplaced; role fit is where evidence packing most often fails",
+      "inputs_to_judge": [
+        "user query",
+        "structured query",
+        "selected chunks with roles",
+        "role definitions"
+      ]
     },
     "evidence_pack_sufficiency": {
       "id": "evals.diagnostics.evidence_pack_sufficiency",
@@ -80,7 +226,40 @@
           "missing_support",
           "explanation"
         ]
-      }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "missing_support": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "explanation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "missing_support",
+          "explanation"
+        ]
+      },
+      "what_it_checks": "Whether the selected evidence pack is enough to support a useful first diagnostic move",
+      "why_it_matters": "Evaluates the pack as a whole \u2014 good individual chunks can still leave the model unable to form hypotheses",
+      "inputs_to_judge": [
+        "user query",
+        "structured query",
+        "primary card",
+        "selected incident chunks",
+        "selected theory chunks"
+      ]
     },
     "final_no_root_cause_claim": {
       "id": "evals.diagnostics.final_no_root_cause_claim",
@@ -99,7 +278,37 @@
           "violations",
           "explanation"
         ]
-      }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "violations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "explanation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "violations",
+          "explanation"
+        ]
+      },
+      "what_it_checks": "Whether the answer avoids claiming or implying a final root cause",
+      "why_it_matters": "The assistant produces a first diagnostic frame, not a final diagnosis \u2014 premature certainty is an epistemic failure",
+      "inputs_to_judge": [
+        "JSON context",
+        "final answer"
+      ]
     },
     "final_first_check_discriminates": {
       "id": "evals.diagnostics.final_first_check_discriminates",
@@ -119,7 +328,40 @@
           "is_discriminating",
           "reason"
         ]
-      }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "is_single_check": {
+            "type": "boolean"
+          },
+          "is_discriminating": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "is_single_check",
+          "is_discriminating",
+          "reason"
+        ]
+      },
+      "what_it_checks": "Whether first_check is exactly one actionable check that distinguishes between active hypotheses or primary vs competing interpretation",
+      "why_it_matters": "This is the core product value \u2014 a checklist or vague advice is not a first diagnostic move",
+      "inputs_to_judge": [
+        "JSON context",
+        "final answer",
+        "active hypotheses",
+        "result interpretation"
+      ]
     },
     "final_hypothesis_source_alignment": {
       "id": "evals.diagnostics.final_hypothesis_source_alignment",
@@ -141,7 +383,56 @@
           "misaligned_hypotheses",
           "explanation"
         ]
-      }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "misaligned_hypotheses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "hypothesis": {
+                  "type": "string"
+                },
+                "declared_source": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "hypothesis",
+                "declared_source",
+                "reason"
+              ]
+            }
+          },
+          "explanation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "misaligned_hypotheses",
+          "explanation"
+        ]
+      },
+      "what_it_checks": "Whether each hypothesis is supported by its declared source: primary_incident, alternative_context, or theory_mechanism",
+      "why_it_matters": "Explicit source labels are only useful if they are honest \u2014 misaligned sources mislead the user about confidence",
+      "inputs_to_judge": [
+        "evidence topology",
+        "matched card",
+        "incident chunks",
+        "theory chunks",
+        "final answer"
+      ]
     },
     "final_alternative_context_handling": {
       "id": "evals.diagnostics.final_alternative_context_handling",
@@ -161,7 +452,39 @@
           "should_have_used_alternative",
           "reason"
         ]
-      }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "used_as_hypothesis_matches_sources": {
+            "type": "boolean"
+          },
+          "should_have_used_alternative": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "used_as_hypothesis_matches_sources",
+          "should_have_used_alternative",
+          "reason"
+        ]
+      },
+      "what_it_checks": "Whether alternative context is used when genuinely useful and not forced when weak",
+      "why_it_matters": "Protects against both premature convergence and fake symmetry \u2014 both are epistemic failures",
+      "inputs_to_judge": [
+        "evidence topology",
+        "alternative context chunks",
+        "final answer"
+      ]
     },
     "final_result_interpretation_usefulness": {
       "id": "evals.diagnostics.final_result_interpretation_usefulness",
@@ -183,7 +506,43 @@
           "uncertainty_preserved",
           "reason"
         ]
-      }
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "primary_condition_clear": {
+            "type": "boolean"
+          },
+          "competing_condition_clear": {
+            "type": "boolean"
+          },
+          "uncertainty_preserved": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "primary_condition_clear",
+          "competing_condition_clear",
+          "uncertainty_preserved",
+          "reason"
+        ]
+      },
+      "what_it_checks": "Whether supports_primary_if, supports_competing_if, and inconclusive_if explain how to interpret the first check result",
+      "why_it_matters": "Makes the first check operational \u2014 without interpretation guidance, the check is decorative",
+      "inputs_to_judge": [
+        "final answer",
+        "active hypotheses",
+        "first check"
+      ]
     }
   }
 }

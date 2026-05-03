@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod config;
+pub mod observability;
 pub mod judge;
 pub mod manifest;
 pub mod orchestrator;

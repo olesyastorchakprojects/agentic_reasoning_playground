@@ -280,6 +280,7 @@ mod tests {
             revision: 0,
             iterations: vec![RunIteration {
                 iteration_id: RunIterationId(uuid::Uuid::new_v4()),
+                config_snapshot: None,
                 step_records: vec![],
             }],
         };

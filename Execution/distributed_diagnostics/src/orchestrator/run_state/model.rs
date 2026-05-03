@@ -4,6 +4,8 @@ use strum_macros::{AsRefStr, Display, EnumString};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::shared_types::RunConfigSnapshot;
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -352,6 +354,7 @@ mod tests {
             revision: 3,
             iterations: vec![RunIteration {
                 iteration_id: iteration_id(),
+                config_snapshot: None,
                 step_records: vec![finished_ok(
                     StepKind::UserInputReceived,
                     user_input_result(),
@@ -523,5 +526,6 @@ pub struct FinishedStepRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunIteration {
     pub iteration_id: RunIterationId,
+    pub config_snapshot: Option<RunConfigSnapshot>,
     pub step_records: Vec<StepRecord>,
 }

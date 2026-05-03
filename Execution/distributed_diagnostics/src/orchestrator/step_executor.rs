@@ -563,6 +563,7 @@ mod tests {
             revision: 0,
             iterations: vec![RunIteration {
                 iteration_id: new_iteration_id(),
+                config_snapshot: None,
                 step_records: records,
             }],
         }
@@ -745,6 +746,7 @@ mod tests {
         PromptContextAssemblyOutput {
             prompt: "Diagnose the incident based on the evidence provided.".to_string(),
             response_schema: serde_json::Value::Object(serde_json::Map::new()),
+            evidence_topology: Default::default(),
             incident_evidence_chunks: vec![],
             theory_chunks: vec![],
         }
@@ -1021,6 +1023,7 @@ mod tests {
             revision: 0,
             iterations: vec![RunIteration {
                 iteration_id: new_iteration_id(),
+                config_snapshot: None,
                 step_records: vec![finished_ok(
                     StepKind::UserInputReceived,
                     StepResultEnvelope::UserInputReceived(user_request()),
@@ -1051,6 +1054,7 @@ mod tests {
             revision: 0,
             iterations: vec![RunIteration {
                 iteration_id: new_iteration_id(),
+                config_snapshot: None,
                 step_records: vec![
                     finished_ok(
                         StepKind::UserInputReceived,
@@ -1086,6 +1090,7 @@ mod tests {
             revision: 0,
             iterations: vec![RunIteration {
                 iteration_id: new_iteration_id(),
+                config_snapshot: None,
                 step_records: vec![
                     finished_ok(
                         StepKind::UserInputReceived,
@@ -1231,6 +1236,7 @@ mod tests {
             iterations: vec![
                 RunIteration {
                     iteration_id: new_iteration_id(),
+                    config_snapshot: None,
                     step_records: vec![finished_ok(
                         StepKind::UserInputReceived,
                         StepResultEnvelope::UserInputReceived(user_request()),
@@ -1238,6 +1244,7 @@ mod tests {
                 },
                 RunIteration {
                     iteration_id: new_iteration_id(),
+                    config_snapshot: None,
                     step_records: vec![],
                 },
             ],

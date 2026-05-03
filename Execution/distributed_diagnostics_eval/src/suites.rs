@@ -16,6 +16,13 @@ pub struct JudgeSuiteDefinition {
     pub input_variables: Vec<String>,
     pub prompt_template: String,
     pub normalized_output_schema_hint: serde_json::Value,
+    pub response_schema: serde_json::Value,
+    #[serde(default)]
+    pub what_it_checks: String,
+    #[serde(default)]
+    pub why_it_matters: String,
+    #[serde(default)]
+    pub inputs_to_judge: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -106,7 +113,8 @@ mod tests {
       "required_for_mvp": true,
       "input_variables": ["final_answer"],
       "prompt_template": "x",
-      "normalized_output_schema_hint": {"required":["score"]}
+      "normalized_output_schema_hint": {"required":["score"]},
+      "response_schema": {"type":"object","properties":{"score":{"type":"integer"}},"required":["score"]}
     },
     "optional_suite": {
       "id": "b",
@@ -116,7 +124,8 @@ mod tests {
       "required_for_mvp": false,
       "input_variables": ["final_answer"],
       "prompt_template": "y",
-      "normalized_output_schema_hint": {"required":["score"]}
+      "normalized_output_schema_hint": {"required":["score"]},
+      "response_schema": {"type":"object","properties":{"score":{"type":"integer"}},"required":["score"]}
     }
   }
 }

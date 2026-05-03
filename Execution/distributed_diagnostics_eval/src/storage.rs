@@ -155,6 +155,11 @@ pub struct EvalIterationSummaryRow {
     pub final_hypothesis_source_alignment_score: i16,
     pub final_alternative_context_handling_score: i16,
     pub final_result_interpretation_usefulness_score: i16,
+    pub runtime_qs_metrics: Option<serde_json::Value>,
+    pub runtime_candidate_cards_metrics: Option<serde_json::Value>,
+    pub runtime_incident_primary_metrics: Option<serde_json::Value>,
+    pub runtime_incident_alternatives_metrics: Option<serde_json::Value>,
+    pub runtime_theory_evidence_metrics: Option<serde_json::Value>,
     pub runtime_prompt_tokens: i64,
     pub runtime_completion_tokens: i64,
     pub runtime_total_tokens: i64,
@@ -183,10 +188,26 @@ pub struct EvalRunSummaryRow {
     pub query_structuring_judge_score: f64,
     pub evidence_pack_judge_score: f64,
     pub final_answer_judge_score: f64,
+    pub query_structuring_no_hard_fail_rate: f64,
+    pub evidence_pack_no_hard_fail_rate: f64,
+    pub final_answer_no_hard_fail_rate: f64,
     pub query_structuring_strict_pass_rate: f64,
     pub evidence_pack_strict_pass_rate: f64,
     pub final_answer_strict_pass_rate: f64,
     pub diagnostic_move_hard_fail_rate: f64,
+    pub runtime_qs_core_success_rate: f64,
+    pub runtime_qs_macro_precision_soft: f64,
+    pub runtime_qs_macro_recall_strict: f64,
+    pub runtime_qs_macro_recall_soft: f64,
+    pub runtime_qs_grounded_strict_recall: f64,
+    pub runtime_retrieval_mean_ndcg: f64,
+    pub runtime_retrieval_all_strict_recall_success_rate: f64,
+    pub runtime_retrieval_all_soft_recall_success_rate: f64,
+    pub runtime_retrieval_zero_hit_rate: f64,
+    pub runtime_retrieval_candidate_cards_recall_strict: f64,
+    pub runtime_retrieval_incident_primary_recall_strict: f64,
+    pub runtime_retrieval_incident_alternatives_recall_strict: f64,
+    pub runtime_retrieval_theory_evidence_recall_strict: f64,
     pub gate_pass_rate: f64,
     pub bad_final_due_to_query_rate: f64,
     pub bad_final_due_to_evidence_rate: f64,
@@ -274,7 +295,7 @@ impl PostgresEvalStore {
                 WHERE eps.runtime_run_id = li.run_id
                   AND eps.iteration_id = li.iteration_id
             )
-            ORDER BY li.created_at ASC, li.run_id ASC
+            ORDER BY li.created_at DESC, li.run_id DESC
             LIMIT $1
             "#,
         )
@@ -688,6 +709,35 @@ impl PostgresEvalStore {
         rows.iter().map(decode_judge_llm_call_row).collect()
     }
 
+    pub async fn list_judge_llm_calls_for_eval_run(
+        &self,
+        eval_run_id: Uuid,
+    ) -> Result<Vec<JudgeLlmCallRow>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                call_id, eval_run_id, runtime_run_id, iteration_id, suite_name, stage_name,
+                judge_provider, judge_model, judge_base_url, judge_prompt_version,
+                token_count_source, prompt_tokens, completion_tokens, total_tokens,
+                input_cost_per_million_tokens::double precision AS input_cost_per_million_tokens,
+                output_cost_per_million_tokens::double precision AS output_cost_per_million_tokens,
+                prompt_cost_usd::double precision AS prompt_cost_usd,
+                completion_cost_usd::double precision AS completion_cost_usd,
+                total_cost_usd::double precision AS total_cost_usd,
+                raw_response
+            FROM diagnostics.judge_llm_calls
+            WHERE eval_run_id = $1::uuid
+            ORDER BY suite_name ASC, created_at ASC
+            "#,
+        )
+        .bind(eval_run_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| StorageError::Query(e.to_string()))?;
+
+        rows.iter().map(decode_judge_llm_call_row).collect()
+    }
+
     pub async fn upsert_eval_iteration_summary(
         &self,
         row: &EvalIterationSummaryRow,
@@ -728,13 +778,19 @@ impl PostgresEvalStore {
                 judge_total_tokens,
                 judge_total_cost_usd,
                 run_total_tokens,
-                run_total_cost_usd
+                run_total_cost_usd,
+                runtime_qs_metrics,
+                runtime_candidate_cards_metrics,
+                runtime_incident_primary_metrics,
+                runtime_incident_alternatives_metrics,
+                runtime_theory_evidence_metrics
             )
             VALUES (
                 $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-                $31, $32, $33, $34
+                $31, $32, $33, $34,
+                $35::jsonb, $36::jsonb, $37::jsonb, $38::jsonb, $39::jsonb
             )
             ON CONFLICT (eval_run_id, runtime_run_id, iteration_id)
             DO UPDATE SET
@@ -769,6 +825,11 @@ impl PostgresEvalStore {
                 judge_total_cost_usd = EXCLUDED.judge_total_cost_usd,
                 run_total_tokens = EXCLUDED.run_total_tokens,
                 run_total_cost_usd = EXCLUDED.run_total_cost_usd,
+                runtime_qs_metrics = EXCLUDED.runtime_qs_metrics,
+                runtime_candidate_cards_metrics = EXCLUDED.runtime_candidate_cards_metrics,
+                runtime_incident_primary_metrics = EXCLUDED.runtime_incident_primary_metrics,
+                runtime_incident_alternatives_metrics = EXCLUDED.runtime_incident_alternatives_metrics,
+                runtime_theory_evidence_metrics = EXCLUDED.runtime_theory_evidence_metrics,
                 updated_at = NOW()
             "#,
         )
@@ -806,6 +867,11 @@ impl PostgresEvalStore {
         .bind(row.judge_total_cost_usd)
         .bind(row.run_total_tokens)
         .bind(row.run_total_cost_usd)
+        .bind(row.runtime_qs_metrics.as_ref())
+        .bind(row.runtime_candidate_cards_metrics.as_ref())
+        .bind(row.runtime_incident_primary_metrics.as_ref())
+        .bind(row.runtime_incident_alternatives_metrics.as_ref())
+        .bind(row.runtime_theory_evidence_metrics.as_ref())
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Insert(e.to_string()))?;
@@ -852,7 +918,12 @@ impl PostgresEvalStore {
                 judge_total_tokens,
                 judge_total_cost_usd::double precision AS judge_total_cost_usd,
                 run_total_tokens,
-                run_total_cost_usd::double precision AS run_total_cost_usd
+                run_total_cost_usd::double precision AS run_total_cost_usd,
+                runtime_qs_metrics,
+                runtime_candidate_cards_metrics,
+                runtime_incident_primary_metrics,
+                runtime_incident_alternatives_metrics,
+                runtime_theory_evidence_metrics
             FROM diagnostics.eval_iteration_summaries
             WHERE eval_run_id = $1::uuid
             ORDER BY final_answer_judge_score ASC, runtime_run_id ASC, iteration_id ASC
@@ -887,14 +958,30 @@ impl PostgresEvalStore {
                 query_structuring_judge_score,
                 evidence_pack_judge_score,
                 final_answer_judge_score,
-                query_structuring_strict_pass_rate,
-                evidence_pack_strict_pass_rate,
-                final_answer_strict_pass_rate,
+                query_structuring_no_hard_fail_rate,
+                evidence_pack_no_hard_fail_rate,
+                final_answer_no_hard_fail_rate,
                 diagnostic_move_hard_fail_rate,
+                runtime_qs_core_success_rate,
+                runtime_qs_macro_precision_soft,
+                runtime_qs_macro_recall_strict,
+                runtime_qs_macro_recall_soft,
+                runtime_qs_grounded_strict_recall,
+                runtime_retrieval_mean_ndcg,
+                runtime_retrieval_all_strict_recall_success_rate,
+                runtime_retrieval_all_soft_recall_success_rate,
+                runtime_retrieval_zero_hit_rate,
+                runtime_retrieval_candidate_cards_recall_strict,
+                runtime_retrieval_incident_primary_recall_strict,
+                runtime_retrieval_incident_alternatives_recall_strict,
+                runtime_retrieval_theory_evidence_recall_strict,
                 gate_pass_rate,
                 bad_final_due_to_query_rate,
                 bad_final_due_to_evidence_rate,
                 bad_final_with_good_query_and_evidence_rate,
+                query_structuring_strict_pass_rate,
+                evidence_pack_strict_pass_rate,
+                final_answer_strict_pass_rate,
                 runtime_prompt_tokens,
                 runtime_completion_tokens,
                 runtime_total_tokens,
@@ -910,7 +997,8 @@ impl PostgresEvalStore {
                 $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb,
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-                $31, $32
+                $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
+                $41, $42, $43, $44, $45, $46, $47, $48
             )
             ON CONFLICT (eval_run_id)
             DO UPDATE SET
@@ -927,14 +1015,30 @@ impl PostgresEvalStore {
                 query_structuring_judge_score = EXCLUDED.query_structuring_judge_score,
                 evidence_pack_judge_score = EXCLUDED.evidence_pack_judge_score,
                 final_answer_judge_score = EXCLUDED.final_answer_judge_score,
-                query_structuring_strict_pass_rate = EXCLUDED.query_structuring_strict_pass_rate,
-                evidence_pack_strict_pass_rate = EXCLUDED.evidence_pack_strict_pass_rate,
-                final_answer_strict_pass_rate = EXCLUDED.final_answer_strict_pass_rate,
+                query_structuring_no_hard_fail_rate = EXCLUDED.query_structuring_no_hard_fail_rate,
+                evidence_pack_no_hard_fail_rate = EXCLUDED.evidence_pack_no_hard_fail_rate,
+                final_answer_no_hard_fail_rate = EXCLUDED.final_answer_no_hard_fail_rate,
                 diagnostic_move_hard_fail_rate = EXCLUDED.diagnostic_move_hard_fail_rate,
+                runtime_qs_core_success_rate = EXCLUDED.runtime_qs_core_success_rate,
+                runtime_qs_macro_precision_soft = EXCLUDED.runtime_qs_macro_precision_soft,
+                runtime_qs_macro_recall_strict = EXCLUDED.runtime_qs_macro_recall_strict,
+                runtime_qs_macro_recall_soft = EXCLUDED.runtime_qs_macro_recall_soft,
+                runtime_qs_grounded_strict_recall = EXCLUDED.runtime_qs_grounded_strict_recall,
+                runtime_retrieval_mean_ndcg = EXCLUDED.runtime_retrieval_mean_ndcg,
+                runtime_retrieval_all_strict_recall_success_rate = EXCLUDED.runtime_retrieval_all_strict_recall_success_rate,
+                runtime_retrieval_all_soft_recall_success_rate = EXCLUDED.runtime_retrieval_all_soft_recall_success_rate,
+                runtime_retrieval_zero_hit_rate = EXCLUDED.runtime_retrieval_zero_hit_rate,
+                runtime_retrieval_candidate_cards_recall_strict = EXCLUDED.runtime_retrieval_candidate_cards_recall_strict,
+                runtime_retrieval_incident_primary_recall_strict = EXCLUDED.runtime_retrieval_incident_primary_recall_strict,
+                runtime_retrieval_incident_alternatives_recall_strict = EXCLUDED.runtime_retrieval_incident_alternatives_recall_strict,
+                runtime_retrieval_theory_evidence_recall_strict = EXCLUDED.runtime_retrieval_theory_evidence_recall_strict,
                 gate_pass_rate = EXCLUDED.gate_pass_rate,
                 bad_final_due_to_query_rate = EXCLUDED.bad_final_due_to_query_rate,
                 bad_final_due_to_evidence_rate = EXCLUDED.bad_final_due_to_evidence_rate,
                 bad_final_with_good_query_and_evidence_rate = EXCLUDED.bad_final_with_good_query_and_evidence_rate,
+                query_structuring_strict_pass_rate = EXCLUDED.query_structuring_strict_pass_rate,
+                evidence_pack_strict_pass_rate = EXCLUDED.evidence_pack_strict_pass_rate,
+                final_answer_strict_pass_rate = EXCLUDED.final_answer_strict_pass_rate,
                 runtime_prompt_tokens = EXCLUDED.runtime_prompt_tokens,
                 runtime_completion_tokens = EXCLUDED.runtime_completion_tokens,
                 runtime_total_tokens = EXCLUDED.runtime_total_tokens,
@@ -962,14 +1066,30 @@ impl PostgresEvalStore {
         .bind(row.query_structuring_judge_score)
         .bind(row.evidence_pack_judge_score)
         .bind(row.final_answer_judge_score)
-        .bind(row.query_structuring_strict_pass_rate)
-        .bind(row.evidence_pack_strict_pass_rate)
-        .bind(row.final_answer_strict_pass_rate)
+        .bind(row.query_structuring_no_hard_fail_rate)
+        .bind(row.evidence_pack_no_hard_fail_rate)
+        .bind(row.final_answer_no_hard_fail_rate)
         .bind(row.diagnostic_move_hard_fail_rate)
+        .bind(row.runtime_qs_core_success_rate)
+        .bind(row.runtime_qs_macro_precision_soft)
+        .bind(row.runtime_qs_macro_recall_strict)
+        .bind(row.runtime_qs_macro_recall_soft)
+        .bind(row.runtime_qs_grounded_strict_recall)
+        .bind(row.runtime_retrieval_mean_ndcg)
+        .bind(row.runtime_retrieval_all_strict_recall_success_rate)
+        .bind(row.runtime_retrieval_all_soft_recall_success_rate)
+        .bind(row.runtime_retrieval_zero_hit_rate)
+        .bind(row.runtime_retrieval_candidate_cards_recall_strict)
+        .bind(row.runtime_retrieval_incident_primary_recall_strict)
+        .bind(row.runtime_retrieval_incident_alternatives_recall_strict)
+        .bind(row.runtime_retrieval_theory_evidence_recall_strict)
         .bind(row.gate_pass_rate)
         .bind(row.bad_final_due_to_query_rate)
         .bind(row.bad_final_due_to_evidence_rate)
         .bind(row.bad_final_with_good_query_and_evidence_rate)
+        .bind(row.query_structuring_strict_pass_rate)
+        .bind(row.evidence_pack_strict_pass_rate)
+        .bind(row.final_answer_strict_pass_rate)
         .bind(row.runtime_prompt_tokens)
         .bind(row.runtime_completion_tokens)
         .bind(row.runtime_total_tokens)
@@ -1256,6 +1376,11 @@ fn decode_eval_iteration_summary_row(
         run_total_cost_usd: row
             .try_get("run_total_cost_usd")
             .map_err(|_| StorageError::InvalidStoredRow("run_total_cost_usd"))?,
+        runtime_qs_metrics: row.try_get("runtime_qs_metrics").ok(),
+        runtime_candidate_cards_metrics: row.try_get("runtime_candidate_cards_metrics").ok(),
+        runtime_incident_primary_metrics: row.try_get("runtime_incident_primary_metrics").ok(),
+        runtime_incident_alternatives_metrics: row.try_get("runtime_incident_alternatives_metrics").ok(),
+        runtime_theory_evidence_metrics: row.try_get("runtime_theory_evidence_metrics").ok(),
     })
 }
 
