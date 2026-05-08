@@ -28,6 +28,54 @@ struct Cli {
     golden_cases_schema: Option<PathBuf>,
 }
 
+fn print_finished_result(result: &distributed_diagnostics::shared_types::ResponseValidationAndNormalizationOutput) {
+    let r = &result.response;
+    println!("Problem: {}", r.problem_understanding);
+    println!("Context: {}", r.similar_practical_context);
+    if !r.hypotheses.is_empty() {
+        println!("Hypotheses:");
+        for h in &r.hypotheses {
+            println!("  - [{}] {}", format!("{:?}", h.status), h.text);
+        }
+    }
+    println!("First check: {}", r.first_check);
+    println!(
+        "Result interpretation — supports primary if: {}",
+        r.result_interpretation.supports_primary_if
+    );
+    println!(
+        "Result interpretation — supports competing if: {}",
+        r.result_interpretation.supports_competing_if
+    );
+    if let Some(inconclusive) = &r.result_interpretation.inconclusive_if {
+        println!("Result interpretation — inconclusive if: {inconclusive}");
+    }
+    if let Some(competing) = &r.competing_interpretation {
+        println!("Competing interpretation: {competing}");
+    }
+}
+
+fn read_line(stdin: &io::Stdin, prompt: &str) -> Option<String> {
+    let stdout = io::stdout();
+    {
+        let mut out = stdout.lock();
+        write!(out, "{prompt}").expect("stdout write failed");
+        out.flush().expect("stdout flush failed");
+    }
+    let mut line = String::new();
+    match stdin.lock().read_line(&mut line) {
+        Ok(0) => None,
+        Ok(_) => {
+            let trimmed = line.trim().to_string();
+            if trimmed.is_empty() || trimmed == "exit" { None } else { Some(trimmed) }
+        }
+        Err(e) => {
+            eprintln!("read error: {e}");
+            None
+        }
+    }
+}
+
 fn resolve_golden_mode(
     golden_cases_file: Option<PathBuf>,
     golden_cases_schema: Option<PathBuf>,
@@ -82,31 +130,11 @@ async fn main() -> Result<(), RuntimeError> {
                 println!("[{case_id}]");
 
                 match orchestrator.run(request).await {
-                    Ok(RunOutcome::Finished { result, .. }) => {
-                        let r = &result.response;
-                        println!("Problem: {}", r.problem_understanding);
-                        println!("Context: {}", r.similar_practical_context);
-                        if !r.active_hypotheses.is_empty() {
-                            println!("Hypotheses:");
-                            for h in &r.active_hypotheses {
-                                println!("  - {}", h.hypothesis);
-                            }
-                        }
-                        println!("First check: {}", r.first_check);
-                        println!(
-                            "Result interpretation — supports primary if: {}",
-                            r.result_interpretation.supports_primary_if
-                        );
-                        println!(
-                            "Result interpretation — supports competing if: {}",
-                            r.result_interpretation.supports_competing_if
-                        );
-                        if let Some(inconclusive) = &r.result_interpretation.inconclusive_if {
-                            println!("Result interpretation — inconclusive if: {inconclusive}");
-                        }
-                        let aca = &r.alternative_context_assessment;
-                        if aca.used_as_hypothesis {
-                            println!("Alternative context used as hypothesis: {}", aca.reason);
+                    Ok(RunOutcome::Finished { result, .. }) => print_finished_result(&result),
+                    Ok(RunOutcome::WaitingForUser { follow_up_questions, .. }) => {
+                        eprintln!("[{case_id}] waiting for user — not supported in batch mode");
+                        for q in &follow_up_questions {
+                            eprintln!("  ? {q}");
                         }
                     }
                     Ok(RunOutcome::Failed { error, .. }) => {
@@ -122,69 +150,57 @@ async fn main() -> Result<(), RuntimeError> {
         }
         None => {
             let stdin = io::stdin();
-            let stdout = io::stdout();
 
             loop {
-                {
-                    let mut out = stdout.lock();
-                    write!(out, "> ").expect("stdout write failed");
-                    out.flush().expect("stdout flush failed");
-                }
-
-                let mut line = String::new();
-                match stdin.lock().read_line(&mut line) {
-                    Ok(0) => break,
-                    Ok(_) => {}
-                    Err(e) => {
-                        eprintln!("read error: {e}");
-                        break;
-                    }
-                }
-
-                let query = line.trim().to_string();
-
-                if query.is_empty() || query == "exit" {
-                    break;
-                }
-
-                let request = UserRequest {
-                    query,
-                    golden_question: None,
+                let query = match read_line(&stdin, "> ") {
+                    Some(q) => q,
+                    None => break,
                 };
 
-                match orchestrator.run(request).await {
-                    Ok(RunOutcome::Finished { result, .. }) => {
-                        let r = &result.response;
-                        println!("Problem: {}", r.problem_understanding);
-                        println!("Context: {}", r.similar_practical_context);
-                        if !r.active_hypotheses.is_empty() {
-                            println!("Hypotheses:");
-                            for h in &r.active_hypotheses {
-                                println!("  - {}", h.hypothesis);
+                let mut outcome = orchestrator
+                    .run(UserRequest { query, golden_question: None })
+                    .await;
+
+                loop {
+                    match outcome {
+                        Ok(RunOutcome::Finished { run_id, result }) => {
+                            print_finished_result(&result);
+                            match read_line(&stdin, ">> Observation (Enter to finish): ") {
+                                Some(observation) => {
+                                    outcome = orchestrator
+                                        .resume_with_input(
+                                            run_id,
+                                            UserRequest { query: observation, golden_question: None },
+                                        )
+                                        .await;
+                                }
+                                None => break,
                             }
                         }
-                        println!("First check: {}", r.first_check);
-                        println!(
-                            "Result interpretation — supports primary if: {}",
-                            r.result_interpretation.supports_primary_if
-                        );
-                        println!(
-                            "Result interpretation — supports competing if: {}",
-                            r.result_interpretation.supports_competing_if
-                        );
-                        if let Some(inconclusive) = &r.result_interpretation.inconclusive_if {
-                            println!("Result interpretation — inconclusive if: {inconclusive}");
+                        Ok(RunOutcome::WaitingForUser { run_id, follow_up_questions }) => {
+                            println!("Нужна дополнительная информация:");
+                            for (i, q) in follow_up_questions.iter().enumerate() {
+                                println!("  {}. {q}", i + 1);
+                            }
+                            let answer = match read_line(&stdin, ">> ") {
+                                Some(a) => a,
+                                None => break,
+                            };
+                            outcome = orchestrator
+                                .resume_with_input(
+                                    run_id,
+                                    UserRequest { query: answer, golden_question: None },
+                                )
+                                .await;
                         }
-                        let aca = &r.alternative_context_assessment;
-                        if aca.used_as_hypothesis {
-                            println!("Alternative context used as hypothesis: {}", aca.reason);
+                        Ok(RunOutcome::Failed { error, .. }) => {
+                            eprintln!("Run failed: {error}");
+                            break;
                         }
-                    }
-                    Ok(RunOutcome::Failed { error, .. }) => {
-                        eprintln!("Run failed: {error}");
-                    }
-                    Err(e) => {
-                        eprintln!("Orchestrator error: {e}");
+                        Err(e) => {
+                            eprintln!("Orchestrator error: {e}");
+                            break;
+                        }
                     }
                 }
 

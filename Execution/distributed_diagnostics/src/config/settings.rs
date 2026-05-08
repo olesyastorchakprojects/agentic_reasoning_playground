@@ -4,11 +4,15 @@ use crate::utils::retry::RetryPolicyConfig;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub runtime: RuntimeSettings,
+    pub retrieval: RetrievalSettings,
     pub input_normalization: InputNormalizationSettings,
     pub query_structuring: QueryStructuringSettings,
     pub llm_structured_generation: LlmStructuredGenerationSettings,
+    pub observation_boundary_resolver: ObservationBoundaryResolverRuntimeSettings,
+    pub observation_extraction: ObservationExtractionRuntimeSettings,
+    pub incident_evidence_retrieval: IncidentEvidenceRetrievalSettings,
     pub prompt_context: PromptContextSettings,
-    pub retrieval: RetrievalSettings,
+    pub diagnostic_update_prompt_context: DiagnosticUpdatePromptContextSettings,
     pub model: ModelSettings,
     pub embedding_model: EmbeddingModelSettings,
     pub observability: ObservabilitySettings,
@@ -58,6 +62,55 @@ pub struct QueryStructuringSettings {
     pub controlled_vocabulary_path: String,
     pub prompt_asset_path: String,
     pub max_output_tokens: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservationBoundaryResolverRuntimeSettings {
+    pub provider: String,
+    pub model: String,
+    pub prompt_asset_path: String,
+    pub max_output_tokens: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObservationExtractionRuntimeSettings {
+    pub provider: String,
+    pub model: String,
+    pub prompt_asset_path: String,
+    pub max_output_tokens: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncidentEvidenceRetrievalSettings {
+    pub retrieval: CollectionRetrievalSettings,
+    pub profiles: IncidentEvidenceRetrievalProfiles,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncidentEvidenceRetrievalProfiles {
+    pub initial: IncidentEvidenceTagProfile,
+    pub continuation: IncidentEvidenceTagProfile,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct IncidentEvidenceTagProfile {
+    pub primary_tags: Vec<IncidentChunkTag>,
+    pub alternative_tags: Vec<IncidentChunkTag>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagnosticUpdatePromptContextSettings {
+    pub prompt_asset_path: String,
+    pub chunk_packing: DiagnosticUpdateChunkPackingSettings,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiagnosticUpdateChunkPackingSettings {
+    pub evidence_for_match: ChunkRolePackingSettings,
+    pub next_check_hint: ChunkRolePackingSettings,
+    pub supporting_explanation: ChunkRolePackingSettings,
+    pub alternative_context: ChunkRolePackingSettings,
+    pub mechanism_explanation: ChunkRolePackingSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

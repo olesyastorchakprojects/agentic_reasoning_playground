@@ -104,6 +104,12 @@ impl PostgresRunStateStore {
         revision: u64,
     ) -> Result<(), RunStateStoreError>;
 
+    pub async fn update_iteration_status(
+        &self,
+        iteration_id: RunIterationId,
+        status: RunIterationStatus,
+    ) -> Result<(), RunStateStoreError>;
+
     pub async fn load_run(
         &self,
         run_id: RunId,
@@ -146,6 +152,12 @@ impl<'tx> PostgresRunStateStoreTx<'tx> {
         updated_at: chrono::DateTime<chrono::Utc>,
         revision: u64,
     ) -> Result<(), RunStateStoreError>;
+
+    pub async fn update_iteration_status(
+        &mut self,
+        iteration_id: RunIterationId,
+        status: RunIterationStatus,
+    ) -> Result<(), RunStateStoreError>;
 }
 ```
 
@@ -158,9 +170,12 @@ Interface rules:
   insert child iterations or step records;
 - `insert_iteration` writes one child iteration row and does not implicitly
   write step records;
+- `insert_iteration` writes the canonical iteration status from
+  `RunIteration.status`;
 - `insert_step_record` writes one child step-record row;
 - `finish_step_record` updates one existing persisted pending step record into
   its finished representation;
+- `update_iteration_status` updates one existing persisted iteration row;
 - `load_run` reconstructs the full hierarchical `RunState`;
 - `list_run_ids` returns persisted run ids ordered by `created_at desc`;
 - `list_run_summaries` returns one repository-facing summary row per stored run
@@ -190,6 +205,7 @@ use crate::orchestrator::run_state::model::{
     RunId,
     RunIteration,
     RunIterationId,
+    RunIterationStatus,
     RunState,
     RunStatus,
     StepError,
@@ -242,6 +258,7 @@ The executable SQL schema is:
 `insert_iteration(run_id, sequence_no, iteration)` must:
 
 - insert one row into `diagnostics.run_iterations`;
+- serialize `RunIteration.status` into the iteration row `status` column;
 - preserve the supplied `sequence_no`;
 - fail when the parent `run_id` does not exist;
 - fail when `(run_id, sequence_no)` already exists.
@@ -283,6 +300,14 @@ The executable SQL schema is:
   `run_id` does not exist;
 - not implicitly update child rows.
 
+`update_iteration_status(iteration_id, status)` must:
+
+- update only the target row in `diagnostics.run_iterations`;
+- persist the supplied `RunIterationStatus` value in the iteration-row
+  `status` column;
+- fail when the target `iteration_id` does not exist;
+- not implicitly update run-header rows or step-record rows.
+
 ## 7) Read Behavior
 
 `load_run(run_id)` must:
@@ -291,6 +316,8 @@ The executable SQL schema is:
 - read child iterations ordered by `sequence_no asc`;
 - read child step records ordered by `sequence_no asc`;
 - reconstruct one `RunState` with the same hierarchy and order;
+- reconstruct `RunIteration.status` from the persisted iteration-row
+  `status` value;
 - return `Ok(None)` when the run header row does not exist.
 
 The current version may perform multiple SQL queries during `load_run` as long
@@ -353,6 +380,7 @@ Before write, the module must reject:
 During read, the module must reject:
 
 - unknown `status` strings;
+- unknown iteration-status strings;
 - unknown `step` strings;
 - malformed `result_json`;
 - malformed `error_json`;

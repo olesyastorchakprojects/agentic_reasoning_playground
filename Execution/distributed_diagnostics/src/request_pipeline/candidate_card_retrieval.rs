@@ -236,6 +236,7 @@ impl CandidateCardRetrieval {
             tracing::Span::current().record("status", "ok");
 
             return Ok(CandidateCardRetrievalOutput {
+                ranked_candidates: vec![],
                 primary: None,
                 alternatives: vec![],
                 metrics: None,
@@ -350,7 +351,14 @@ impl CandidateCardRetrieval {
             None
         };
 
+        let ranked_candidates: Vec<CandidateCard> = primary
+            .iter()
+            .cloned()
+            .chain(alternatives.iter().cloned())
+            .collect();
+
         Ok(CandidateCardRetrievalOutput {
+            ranked_candidates,
             primary,
             alternatives,
             metrics,

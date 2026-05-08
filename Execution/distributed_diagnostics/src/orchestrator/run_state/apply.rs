@@ -3,8 +3,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::orchestrator::run_state::model::{
-    FinishedStepRecord, PendingStepRecord, RunIteration, RunIterationId, RunState, RunStatus,
-    StepError, StepKind, StepRecord, StepRecordId, StepResultEnvelope,
+    FinishedStepRecord, PendingStepRecord, RunIteration, RunIterationId, RunIterationStatus,
+    RunState, RunStatus, StepError, StepKind, StepRecord, StepRecordId, StepResultEnvelope,
 };
 use crate::shared_types::UserRequest;
 
@@ -56,6 +56,9 @@ pub enum StateApplyError {
 
     #[error("pending step already exists")]
     PendingStepAlreadyExists,
+
+    #[error("current iteration is closed")]
+    CurrentIterationClosed,
 
     #[error("pending step handle is stale")]
     StalePendingStep,
@@ -110,6 +113,27 @@ fn result_matches_step(result: &StepResultEnvelope, step: StepKind) -> bool {
         ) | (
             StepResultEnvelope::ResponseValidationAndNormalization(_),
             StepKind::ResponseValidationAndNormalization,
+        ) | (
+            StepResultEnvelope::CardBranchReranking(_),
+            StepKind::CardBranchReranking,
+        ) | (
+            StepResultEnvelope::DiagnosticUpdatePromptContextAssembly(_),
+            StepKind::DiagnosticUpdatePromptContextAssembly,
+        ) | (
+            StepResultEnvelope::ObservationBoundaryResolver(_),
+            StepKind::ObservationBoundaryResolver,
+        ) | (
+            StepResultEnvelope::ObservationExtraction(_),
+            StepKind::ObservationExtraction,
+        ) | (
+            StepResultEnvelope::InformationAdequacy(_),
+            StepKind::InformationAdequacyInitial,
+        ) | (
+            StepResultEnvelope::InformationAdequacy(_),
+            StepKind::InformationAdequacySupportedObservation,
+        ) | (
+            StepResultEnvelope::InformationAdequacy(_),
+            StepKind::InformationAdequacyUnsupportedObservation,
         )
     )
 }
@@ -126,6 +150,11 @@ fn step_specific_error_mismatch(error: &StepError, step: StepKind) -> Option<Ste
             | StepError::PromptContextAssembly(_)
             | StepError::LlmStructuredGeneration(_)
             | StepError::ResponseValidationAndNormalization(_)
+            | StepError::CardBranchReranking(_)
+            | StepError::DiagnosticUpdatePromptContextAssembly(_)
+            | StepError::ObservationBoundaryResolver(_)
+            | StepError::ObservationExtraction(_)
+            | StepError::InformationAdequacy(_)
     );
     if !is_step_specific {
         return None;
@@ -161,6 +190,28 @@ fn step_specific_error_mismatch(error: &StepError, step: StepKind) -> Option<Ste
                 StepError::ResponseValidationAndNormalization(_),
                 StepKind::ResponseValidationAndNormalization,
             )
+            | (StepError::CardBranchReranking(_), StepKind::CardBranchReranking)
+            | (
+                StepError::DiagnosticUpdatePromptContextAssembly(_),
+                StepKind::DiagnosticUpdatePromptContextAssembly,
+            )
+            | (
+                StepError::ObservationBoundaryResolver(_),
+                StepKind::ObservationBoundaryResolver,
+            )
+            | (StepError::ObservationExtraction(_), StepKind::ObservationExtraction)
+            | (
+                StepError::InformationAdequacy(_),
+                StepKind::InformationAdequacyInitial,
+            )
+            | (
+                StepError::InformationAdequacy(_),
+                StepKind::InformationAdequacySupportedObservation,
+            )
+            | (
+                StepError::InformationAdequacy(_),
+                StepKind::InformationAdequacyUnsupportedObservation,
+            )
     );
     if matches_step {
         None
@@ -170,7 +221,7 @@ fn step_specific_error_mismatch(error: &StepError, step: StepKind) -> Option<Ste
 }
 
 fn apply_bookkeeping(state: &mut RunState) {
-    state.updated_at = Utc::now();
+    state.updated_at = Utc::now().max(state.created_at);
     state.revision += 1;
 }
 
@@ -204,6 +255,7 @@ impl<'a> RunStateWriter<'a> {
         self.state.iterations.push(RunIteration {
             iteration_id,
             config_snapshot: None,
+            status: RunIterationStatus::Active,
             step_records: vec![step_record],
         });
         self.state.status = RunStatus::Active;
@@ -229,13 +281,61 @@ impl<'a> RunStateWriter<'a> {
         })
     }
 
-    pub fn wait_for_user(&mut self) -> Result<(), StateApplyError> {
+    pub fn finish_current_iteration_success(&mut self) -> Result<(), StateApplyError> {
         if self.state.status == RunStatus::Archived {
             return Err(StateApplyError::RunArchived);
+        }
+        if self.state.iterations.is_empty() {
+            return Err(StateApplyError::NoCurrentIteration);
         }
         if has_pending_step(self.state) {
             return Err(StateApplyError::PendingStepAlreadyExists);
         }
+        let idx = self.state.iterations.len() - 1;
+        if self.state.iterations[idx].status != RunIterationStatus::Active {
+            return Err(StateApplyError::CurrentIterationClosed);
+        }
+        self.state.iterations[idx].status = RunIterationStatus::FinishedWithSuccess;
+        self.state.status = RunStatus::Active;
+        apply_bookkeeping(self.state);
+        Ok(())
+    }
+
+    pub fn finish_current_iteration_error(&mut self) -> Result<(), StateApplyError> {
+        if self.state.status == RunStatus::Archived {
+            return Err(StateApplyError::RunArchived);
+        }
+        if self.state.iterations.is_empty() {
+            return Err(StateApplyError::NoCurrentIteration);
+        }
+        if has_pending_step(self.state) {
+            return Err(StateApplyError::PendingStepAlreadyExists);
+        }
+        let idx = self.state.iterations.len() - 1;
+        if self.state.iterations[idx].status != RunIterationStatus::Active {
+            return Err(StateApplyError::CurrentIterationClosed);
+        }
+        self.state.iterations[idx].status = RunIterationStatus::FinishedWithError;
+        self.state.status = RunStatus::Error;
+        apply_bookkeeping(self.state);
+        Ok(())
+    }
+
+    pub fn wait_for_user(&mut self) -> Result<(), StateApplyError> {
+        if self.state.status == RunStatus::Archived {
+            return Err(StateApplyError::RunArchived);
+        }
+        if self.state.iterations.is_empty() {
+            return Err(StateApplyError::NoCurrentIteration);
+        }
+        if has_pending_step(self.state) {
+            return Err(StateApplyError::PendingStepAlreadyExists);
+        }
+        let idx = self.state.iterations.len() - 1;
+        if self.state.iterations[idx].status != RunIterationStatus::Active {
+            return Err(StateApplyError::CurrentIterationClosed);
+        }
+        self.state.iterations[idx].status = RunIterationStatus::FinishedWithWaitInput;
         self.state.status = RunStatus::WaitingForUser;
         apply_bookkeeping(self.state);
         Ok(())
@@ -264,6 +364,9 @@ impl<'a> CurrentIterationWriter<'a> {
         }
         if has_pending_step(self.state) {
             return Err(StateApplyError::PendingStepAlreadyExists);
+        }
+        if self.state.iterations[self.iteration_index].status != RunIterationStatus::Active {
+            return Err(StateApplyError::CurrentIterationClosed);
         }
         let record_id = StepRecordId(Uuid::new_v4());
         let pending = PendingStepRecord {
@@ -361,6 +464,7 @@ impl<'a> PendingStepWriter<'a> {
         };
         self.state.iterations[self.iteration_index].step_records[self.step_index] =
             StepRecord::Finished(finished);
+        self.state.iterations[self.iteration_index].status = RunIterationStatus::FinishedWithError;
         self.state.status = RunStatus::Error;
         apply_bookkeeping(self.state);
         Ok(())
@@ -376,8 +480,9 @@ mod tests {
 
     use crate::orchestrator::run_state::apply::{RunStateWriter, StateApplyError};
     use crate::orchestrator::run_state::model::{
-        FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId, RunState,
-        RunStatus, StepError, StepKind, StepRecord, StepRecordId, StepResultEnvelope,
+        FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId,
+        RunIterationStatus, RunState, RunStatus, StepError, StepKind, StepRecord, StepRecordId,
+        StepResultEnvelope,
     };
     use crate::request_pipeline::input_normalization::InputNormalizationError;
     use crate::request_pipeline::query_structuring::QueryStructuringError;
@@ -433,6 +538,7 @@ mod tests {
         state.iterations.push(RunIteration {
             iteration_id: iid,
             config_snapshot: None,
+            status: RunIterationStatus::Active,
             step_records: vec![
                 finished_ok_record(StepKind::UserInputReceived, user_input_result()),
                 pending_record(StepKind::InputNormalization),
@@ -786,6 +892,209 @@ mod tests {
         assert_eq!(state.revision, rev_before + 1);
     }
 
+    #[test]
+    fn wait_for_user_sets_iteration_status_to_finished_with_wait_input() {
+        let mut state = fresh_state();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.wait_for_user().unwrap();
+        }
+        assert_eq!(state.iterations[0].status, RunIterationStatus::FinishedWithWaitInput);
+    }
+
+    #[test]
+    fn wait_for_user_returns_no_current_iteration_when_no_iterations() {
+        let mut state = fresh_state();
+        let mut writer = RunStateWriter::new(&mut state);
+        let err = writer.wait_for_user().unwrap_err();
+        assert!(matches!(err, StateApplyError::NoCurrentIteration));
+    }
+
+    #[test]
+    fn wait_for_user_returns_current_iteration_closed_when_already_closed() {
+        let mut state = fresh_state();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        state.iterations[0].status = RunIterationStatus::FinishedWithSuccess;
+        let mut writer = RunStateWriter::new(&mut state);
+        let err = writer.wait_for_user().unwrap_err();
+        assert!(matches!(err, StateApplyError::CurrentIterationClosed));
+    }
+
+    // ─── finish_current_iteration_success ─────────────────────────────────────
+
+    #[test]
+    fn finish_current_iteration_success_sets_iteration_status() {
+        let mut state = fresh_state();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.finish_current_iteration_success().unwrap();
+        }
+        assert_eq!(state.iterations[0].status, RunIterationStatus::FinishedWithSuccess);
+    }
+
+    #[test]
+    fn finish_current_iteration_success_sets_run_status_active() {
+        let mut state = fresh_state();
+        state.status = RunStatus::Error;
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        state.status = RunStatus::Error;
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.finish_current_iteration_success().unwrap();
+        }
+        assert_eq!(state.status, RunStatus::Active);
+    }
+
+    #[test]
+    fn finish_current_iteration_success_returns_no_current_iteration_when_empty() {
+        let mut state = fresh_state();
+        let mut writer = RunStateWriter::new(&mut state);
+        let err = writer.finish_current_iteration_success().unwrap_err();
+        assert!(matches!(err, StateApplyError::NoCurrentIteration));
+    }
+
+    #[test]
+    fn finish_current_iteration_success_returns_pending_step_already_exists() {
+        let mut state = state_with_pending_step();
+        let mut writer = RunStateWriter::new(&mut state);
+        let err = writer.finish_current_iteration_success().unwrap_err();
+        assert!(matches!(err, StateApplyError::PendingStepAlreadyExists));
+    }
+
+    #[test]
+    fn finish_current_iteration_success_returns_current_iteration_closed_when_already_closed() {
+        let mut state = fresh_state();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        state.iterations[0].status = RunIterationStatus::FinishedWithSuccess;
+        let mut writer = RunStateWriter::new(&mut state);
+        let err = writer.finish_current_iteration_success().unwrap_err();
+        assert!(matches!(err, StateApplyError::CurrentIterationClosed));
+    }
+
+    #[test]
+    fn finish_current_iteration_success_increments_revision() {
+        let mut state = fresh_state();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        let rev_before = state.revision;
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.finish_current_iteration_success().unwrap();
+        }
+        assert_eq!(state.revision, rev_before + 1);
+    }
+
+    // ─── finish_current_iteration_error ───────────────────────────────────────
+
+    #[test]
+    fn finish_current_iteration_error_sets_iteration_status() {
+        let mut state = fresh_state();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.finish_current_iteration_error().unwrap();
+        }
+        assert_eq!(state.iterations[0].status, RunIterationStatus::FinishedWithError);
+    }
+
+    #[test]
+    fn finish_current_iteration_error_sets_run_status_error() {
+        let mut state = fresh_state();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.finish_current_iteration_error().unwrap();
+        }
+        assert_eq!(state.status, RunStatus::Error);
+    }
+
+    #[test]
+    fn finish_current_iteration_error_returns_no_current_iteration_when_empty() {
+        let mut state = fresh_state();
+        let mut writer = RunStateWriter::new(&mut state);
+        let err = writer.finish_current_iteration_error().unwrap_err();
+        assert!(matches!(err, StateApplyError::NoCurrentIteration));
+    }
+
+    #[test]
+    fn finish_current_iteration_error_returns_pending_step_already_exists() {
+        let mut state = state_with_pending_step();
+        let mut writer = RunStateWriter::new(&mut state);
+        let err = writer.finish_current_iteration_error().unwrap_err();
+        assert!(matches!(err, StateApplyError::PendingStepAlreadyExists));
+    }
+
+    #[test]
+    fn finish_current_iteration_error_returns_current_iteration_closed_when_already_closed() {
+        let mut state = fresh_state();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        state.iterations[0].status = RunIterationStatus::FinishedWithError;
+        let mut writer = RunStateWriter::new(&mut state);
+        let err = writer.finish_current_iteration_error().unwrap_err();
+        assert!(matches!(err, StateApplyError::CurrentIterationClosed));
+    }
+
+    // ─── begin_step: CurrentIterationClosed guard ─────────────────────────────
+
+    #[test]
+    fn begin_step_returns_current_iteration_closed_when_iteration_not_active() {
+        let mut state = fresh_state();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.begin_iteration(user_req()).unwrap();
+        }
+        state.iterations[0].status = RunIterationStatus::FinishedWithSuccess;
+        let mut writer = RunStateWriter::new(&mut state);
+        let mut cw = writer.current_iteration().unwrap();
+        let err = cw.begin_step(StepKind::InputNormalization).unwrap_err();
+        assert!(matches!(err, StateApplyError::CurrentIterationClosed));
+    }
+
+    // ─── record_failure sets iteration status ─────────────────────────────────
+
+    #[test]
+    fn record_failure_sets_iteration_status_to_finished_with_error() {
+        let mut state = state_with_pending_step();
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            let mut cw = writer.current_iteration().unwrap();
+            let pw = cw.pending_step().unwrap();
+            pw.record_failure(StepError::InputNormalization(
+                InputNormalizationError::EmptyQuery,
+            ))
+            .unwrap();
+        }
+        assert_eq!(state.iterations[0].status, RunIterationStatus::FinishedWithError);
+    }
+
     // ─── archive_run ──────────────────────────────────────────────────────────
 
     #[test]
@@ -855,6 +1164,7 @@ mod tests {
         state.iterations.push(RunIteration {
             iteration_id: RunIterationId(Uuid::new_v4()),
             config_snapshot: None,
+            status: RunIterationStatus::Active,
             step_records: vec![finished_ok_record(
                 StepKind::UserInputReceived,
                 user_input_result(),
@@ -880,7 +1190,8 @@ mod tests {
             s.iterations.push(RunIteration {
                 iteration_id: iid,
                 config_snapshot: None,
-                step_records: vec![
+            status: RunIterationStatus::Active,
+            step_records: vec![
                     finished_ok_record(StepKind::UserInputReceived, user_input_result()),
                     pending_record_of_kind(kind),
                 ],
@@ -909,6 +1220,7 @@ mod tests {
             (
                 StepKind::CandidateCardRetrieval,
                 StepResultEnvelope::CandidateCardRetrieval(CandidateCardRetrievalOutput {
+                    ranked_candidates: vec![],
                     primary: None,
                     alternatives: vec![],
             metrics: None,
@@ -935,6 +1247,60 @@ mod tests {
                     chunks: vec![],
             metrics: None,
                 }),
+            ),
+            (
+                StepKind::CardBranchReranking,
+                StepResultEnvelope::CardBranchReranking(
+                    crate::shared_types::CardBranchRerankingOutput {
+                        primary_card_id: "c1".to_string(),
+                        primary_card_status: crate::shared_types::PrimaryCardStatus::Tentative,
+                        alternative_card_ids: vec![],
+                        challenger_card_ids: vec![],
+                    },
+                ),
+            ),
+            (
+                StepKind::DiagnosticUpdatePromptContextAssembly,
+                StepResultEnvelope::DiagnosticUpdatePromptContextAssembly(
+                    crate::shared_types::PromptContextAssemblyOutput {
+                        prompt: "p".to_string(),
+                        response_schema: serde_json::json!({}),
+                        evidence_topology: crate::shared_types::EvidenceTopology::default(),
+                        incident_evidence_chunks: vec![],
+                        theory_chunks: vec![],
+                    },
+                ),
+            ),
+            (
+                StepKind::ObservationBoundaryResolver,
+                StepResultEnvelope::ObservationBoundaryResolver(
+                    crate::shared_types::ObservationBoundaryResolverOutput {
+                        normalized_user_input: "q".to_string(),
+                        confidence: crate::shared_types::Confidence::High,
+                        reason: "ok".to_string(),
+                        resolution: crate::shared_types::ObservationBoundaryResolution::Unsupported,
+                    },
+                ),
+            ),
+            (
+                StepKind::ObservationExtraction,
+                StepResultEnvelope::ObservationExtraction(
+                    crate::shared_types::ObservationExtractionOutput {
+                        normalized_user_input: "q".to_string(),
+                        resolved_observation: crate::shared_types::ResolvedObservation {
+                            text: "obs".to_string(),
+                        },
+                        confidence: crate::shared_types::Confidence::Medium,
+                        observations: vec![],
+                        needs_more_context: false,
+                        missing_context_questions: vec![],
+                        token_usage: crate::shared_types::ModelTokenUsage {
+                            prompt_tokens: None,
+                            completion_tokens: None,
+                            total_tokens: None,
+                        },
+                    },
+                ),
             ),
         ];
 
@@ -964,7 +1330,8 @@ mod tests {
             s.iterations.push(RunIteration {
                 iteration_id: iid,
                 config_snapshot: None,
-                step_records: vec![
+            status: RunIterationStatus::Active,
+            step_records: vec![
                     finished_ok_record(StepKind::UserInputReceived, user_input_result()),
                     StepRecord::Pending(PendingStepRecord {
                         record_id: StepRecordId(Uuid::new_v4()),
@@ -994,6 +1361,36 @@ mod tests {
                 StepError::TheoryEvidenceRetrieval(TheoryEvidenceRetrievalError::Collection(
                     TheoryChunksCollectionError::InvalidRequest("invalid request".to_string()),
                 )),
+            ),
+            (
+                StepKind::CardBranchReranking,
+                StepError::CardBranchReranking(
+                    crate::request_pipeline::card_branch_reranking::CardBranchRerankingError::EmptyCardSelectionHistory,
+                ),
+            ),
+            (
+                StepKind::DiagnosticUpdatePromptContextAssembly,
+                StepError::DiagnosticUpdatePromptContextAssembly(
+                    crate::request_pipeline::diagnostic_update_prompt_context_assembly::DiagnosticUpdatePromptContextAssemblyError::InvalidSettings(
+                        "test".to_string(),
+                    ),
+                ),
+            ),
+            (
+                StepKind::ObservationBoundaryResolver,
+                StepError::ObservationBoundaryResolver(
+                    crate::request_pipeline::observation_boundary_resolver::ObservationBoundaryResolverError::InvalidSettings(
+                        "test".to_string(),
+                    ),
+                ),
+            ),
+            (
+                StepKind::ObservationExtraction,
+                StepError::ObservationExtraction(
+                    crate::request_pipeline::observation_extraction::ObservationExtractionError::InvalidSettings(
+                        "test".to_string(),
+                    ),
+                ),
             ),
         ];
 

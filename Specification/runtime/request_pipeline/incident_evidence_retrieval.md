@@ -4,8 +4,9 @@ This document defines the runtime leaf-module contract for
 `incident_evidence_retrieval`.
 
 This module exists to:
-- accept the shared `CandidateCardRetrievalOutput`;
-- accept the shared `NormalizedUserRequest`;
+- accept the shared `IncidentEvidenceCardBranchesInput`;
+- accept the shared `RetrievalQueryInput`;
+- accept the shared `IterationProfile`;
 - depend on the Qdrant-backed `PracticeChunksCollection` client through dependency injection;
 - issue one practice-chunk search for the selected primary card when a primary card exists;
 - issue one practice-chunk search for the selected alternative cards when alternative cards exist;
@@ -21,6 +22,7 @@ This document is the source of truth for:
 
 This document does not define:
 - semantic card retrieval from Qdrant;
+- how `IncidentEvidenceCardBranchesInput` is produced upstream;
 - PostgreSQL card hydration;
 - prompt-time semantic bucketing such as `evidence_for_match`, `first_check_hint`, or `alternative_context`;
 - chunk-ingest contracts or how `chunk_tags` are produced during ingest;
@@ -41,8 +43,9 @@ The generated Rust module file for the current version is:
 ## 2) Required Shared Types
 
 This module must use the shared runtime types:
-- `NormalizedUserRequest`
-- `CandidateCardRetrievalOutput`
+- `RetrievalQueryInput`
+- `IncidentEvidenceCardBranchesInput`
+- `IterationProfile`
 - `IncidentEvidenceChunk`
 - `IncidentEvidenceRetrievalOutput`
 - `IncidentEvidenceBranchRetrievalMetrics`
@@ -90,7 +93,7 @@ Shared-type rules:
   execution context.
 
 Import rule for the generated Rust module:
-- shared input and output types used by this module, including `NormalizedUserRequest`, `CandidateCardRetrievalOutput`, `IncidentEvidenceChunk`, and `IncidentEvidenceRetrievalOutput`, must be imported from `crate::shared_types`;
+- shared input and output types used by this module, including `RetrievalQueryInput`, `IncidentEvidenceCardBranchesInput`, `IterationProfile`, `IncidentEvidenceChunk`, and `IncidentEvidenceRetrievalOutput`, must be imported from `crate::shared_types`;
 - `IncidentEvidenceBranchRetrievalMetrics` and
   `IncidentEvidenceRetrievalMetrics` must be imported from
   `crate::shared_types` when request-local retrieval metrics are attached to
@@ -101,23 +104,26 @@ Import rule for the generated Rust module:
 - `NormalizedUserQuery` must be imported through `crate::api_clients::qdrant::...`.
 
 Shared-type placement rule:
-- before code generation for this module, `CandidateCard`, `CandidateCardRetrievalOutput`, `IncidentEvidenceChunk`, and `IncidentEvidenceRetrievalOutput` must exist in `src/shared_types.rs`.
+- before code generation for this module, `RetrievalQueryInput`, `IncidentEvidenceCardBranchesInput`, `IterationProfile`, `IncidentEvidenceChunk`, and `IncidentEvidenceRetrievalOutput` must exist in `src/shared_types/mod.rs`.
 
 ## 3) Settings Dependency
 
 This module must receive the typed settings slice:
-- `CollectionRetrievalSettings`
+- `IncidentEvidenceRetrievalSettings`
 
-`CollectionRetrievalSettings` is defined at the crate-level runtime boundary in:
+`IncidentEvidenceRetrievalSettings` is defined at the crate-level runtime boundary in:
 - `Specification/runtime/runtime.md`
 
 Rules:
-- this module must receive the practice-chunks-specific `CollectionRetrievalSettings` slice through its constructor;
+- this module must receive the typed `IncidentEvidenceRetrievalSettings` slice through its constructor;
 - this module must not read raw TOML or raw environment variables directly;
-- `top_k` is the retrieval request limit passed through to both collection search calls;
-- `score_threshold` is the retrieval score threshold passed through to both collection search calls;
-- `top_k = 0` is invalid and the constructor must fail fast in the current version;
-- the current version uses one shared `CollectionRetrievalSettings` value for both the primary search and the alternative search.
+- `settings.retrieval.top_k` is the retrieval request limit passed through to both collection search calls;
+- `settings.retrieval.score_threshold` is the retrieval score threshold passed through to both collection search calls;
+- `settings.retrieval.top_k = 0` is invalid and the constructor must fail fast in the current version;
+- the current version uses one shared `settings.retrieval` value for both the primary search and the alternative search;
+- tag selection is profile-based and must be resolved from:
+  - `settings.profiles.initial` when `iteration_profile = IterationProfile::Initial`
+  - `settings.profiles.continuation` when `iteration_profile = IterationProfile::Continuation`
 
 ## 4) Collection Dependency
 
@@ -151,19 +157,21 @@ pub struct IncidentEvidenceRetrieval {
 impl IncidentEvidenceRetrieval {
     pub fn new(
         collection: std::sync::Arc<dyn PracticeChunksCollection>,
-        settings: CollectionRetrievalSettings,
+        settings: IncidentEvidenceRetrievalSettings,
     ) -> Result<Self, IncidentEvidenceRetrievalError>;
 
     pub async fn retrieve(
         &self,
-        request: &NormalizedUserRequest,
-        candidates: &CandidateCardRetrievalOutput,
+        request: &RetrievalQueryInput,
+        card_branches: &IncidentEvidenceCardBranchesInput,
+        iteration_profile: IterationProfile,
     ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError>;
 
     pub async fn retrieve_with_context(
         &self,
-        request: &NormalizedUserRequest,
-        candidates: &CandidateCardRetrievalOutput,
+        request: &RetrievalQueryInput,
+        card_branches: &IncidentEvidenceCardBranchesInput,
+        iteration_profile: IterationProfile,
         context: &Context,
     ) -> Result<IncidentEvidenceRetrievalOutput, IncidentEvidenceRetrievalError>;
 }
@@ -171,14 +179,14 @@ impl IncidentEvidenceRetrieval {
 
 For the current version, the implementation-owned fields must contain exactly:
 - `collection: Arc<dyn PracticeChunksCollection>`
-- `settings: CollectionRetrievalSettings`
+- `settings: IncidentEvidenceRetrievalSettings`
 
 Rules:
 - `new(...)` must retain the injected dependency and typed settings for reuse;
-- `new(...)` must fail fast when `settings.top_k = 0`;
+- `new(...)` must fail fast when `settings.retrieval.top_k = 0`;
 - `new(...)` constructor validation failures must be returned through `IncidentEvidenceRetrievalError` rather than through panic;
 - `retrieve(...)` must delegate to
-  `retrieve_with_context(request, candidates, &Context::noop())`;
+  `retrieve_with_context(request, card_branches, iteration_profile, &Context::noop())`;
 - `retrieve_with_context(...)` is the context-aware request-time entrypoint used
   by the orchestrator;
 - `retrieve_with_context(...)` must treat `context.open_inference.root_span` as
@@ -189,8 +197,8 @@ Rules:
   `retrieve_with_context(...)` must also emit the companion OpenInference
   metrics span `oi.chain.incident_evidence_retrieval_metrics` as defined by
   `Specification/runtime/observability/open_inference_spans.md`;
-- `retrieve(...)` must not mutate the input `NormalizedUserRequest`;
-- `retrieve(...)` must not mutate the input `CandidateCardRetrievalOutput`;
+- `retrieve(...)` must not mutate the input `RetrievalQueryInput`;
+- `retrieve(...)` must not mutate the input `IncidentEvidenceCardBranchesInput`;
 - `retrieve(...)` must not re-rank, deduplicate, or semantically reinterpret returned chunks;
 - when `context.golden_question = Some(...)`, `retrieve_with_context(...)` must
   compute retrieval metrics twice:
@@ -215,66 +223,56 @@ Debug rules:
 - the generated Rust module must provide a manual `impl Debug for IncidentEvidenceRetrieval`;
 - the manual `Debug` output must omit internal trait-object state and may print only stable structural fields such as `settings`.
 
-## 6) Hardcoded Tag Policy
+## 6) Profile-Based Tag Policy
 
-For the current version, this module owns two hardcoded chunk-tag sets.
+For the current version, this module must select chunk-tag policy from
+`IncidentEvidenceRetrievalSettings.profiles`.
 
-Primary-search tag set:
-- `chunk_role:symptom`
-- `chunk_role:impact`
-- `chunk_role:timeline`
-- `chunk_role:symptom_change`
-- `chunk_role:investigation`
-- `chunk_role:diagnostic_step`
-- `chunk_role:hypothesis_update`
-- `chunk_role:recovery`
-
-Alternative-search tag set:
-- `chunk_role:failure_mode`
-- `chunk_role:root_cause`
-- `chunk_role:contributing_factor`
-- `chunk_role:uncertainty`
-- `chunk_role:lesson`
-
-Tag-policy rules:
-- these tag sets must be hardcoded inside the module in the current version;
-- these tag sets must not be loaded from runtime config in the current version;
-- the primary-search call must use exactly the primary-search tag set;
-- the alternative-search call must use exactly the alternative-search tag set.
+Profile-selection rules:
+- when `iteration_profile = IterationProfile::Initial`, the module must use:
+  - `settings.profiles.initial.primary_tags`
+  - `settings.profiles.initial.alternative_tags`
+- when `iteration_profile = IterationProfile::Continuation`, the module must use:
+  - `settings.profiles.continuation.primary_tags`
+  - `settings.profiles.continuation.alternative_tags`
+- before issuing any collection search, the module must resolve:
+  - `selected_primary_tags`
+  - `selected_alternative_tags`
+  from exactly one selected profile determined by `iteration_profile`;
+- the module must not hardcode tag sets in the current version;
+- the module must not read tag configuration from any source other than the injected typed settings.
 
 ## 7) Retrieval Behavior
 
 This module performs at most two collection calls per request.
 
 Primary-search rules:
-- if `candidates.primary` is `Some(...)`, the module must issue one collection search;
+- the module must issue one primary-branch collection search for every valid call;
 - the primary search request must use exactly one requested card id:
-  - `candidates.primary.case_id`
+  - `card_branches.primary_card_id`
 - the primary search request must use:
-  - `user_query = NormalizedUserQuery(request.query.clone())`
-  - `filter.case_ids = vec![candidates.primary.case_id.clone()]`
-  - `filter.chunk_tags = primary-search tag set`
-  - `limit = settings.top_k`
-  - `score_threshold = settings.score_threshold`
+  - `user_query = NormalizedUserQuery(request.query_text.clone())`
+  - `filter.case_ids = vec![card_branches.primary_card_id.clone()]`
+  - `filter.chunk_tags = selected primary-tags profile`
+  - `limit = settings.retrieval.top_k`
+  - `score_threshold = settings.retrieval.score_threshold`
 
 Alternative-search rules:
-- if `candidates.alternatives` is not empty, the module must issue one collection search;
+- if `card_branches.alternative_card_ids` is not empty, the module must issue one collection search;
 - all alternative `case_id` values must be searched in one collection call in the current version;
-- the alternative search request must use requested card ids in the same order as `candidates.alternatives[*].case_id`;
+- the alternative search request must use requested card ids in the same order as `card_branches.alternative_card_ids[*]`;
 - the alternative search request must use:
-  - `user_query = NormalizedUserQuery(request.query.clone())`
-  - `filter.case_ids = candidates.alternatives[*].case_id`
-  - `filter.chunk_tags = alternative-search tag set`
-  - `limit = settings.top_k`
-  - `score_threshold = settings.score_threshold`
+  - `user_query = NormalizedUserQuery(request.query_text.clone())`
+  - `filter.case_ids = card_branches.alternative_card_ids[*]`
+  - `filter.chunk_tags = selected alternative-tags profile`
+  - `limit = settings.retrieval.top_k`
+  - `score_threshold = settings.retrieval.score_threshold`
 
 General retrieval rules:
-- if `candidates.primary` is `None`, the primary search must not be called;
-- if `candidates.alternatives.is_empty()`, the alternative search must not be called;
-- if both input branches are absent, the module must return a successful empty output without issuing any collection search;
-- each executed search call returns at most `settings.top_k` chunks because the collection request limit must be set to `settings.top_k`;
+- if `card_branches.alternative_card_ids.is_empty()`, the alternative search must not be called;
+- each executed search call returns at most `settings.retrieval.top_k` chunks because the collection request limit must be set to `settings.retrieval.top_k`;
 - the module must not perform additional truncation after receiving successful collection results;
-- the module must build collection-level `NormalizedUserQuery` from the unchanged `NormalizedUserRequest.query` string;
+- the module must build collection-level `NormalizedUserQuery` from the unchanged `RetrievalQueryInput.query_text` string;
 - request-local retrieval metrics, when computed, must use:
   - `actual_ranked_ids = primary_chunks[*].chunk_id` for the primary branch
   - `actual_ranked_ids = alternative_chunks[*].chunk_id` for the alternatives
@@ -285,7 +283,7 @@ General retrieval rules:
     `golden_question.expected_incident_evidence.primary_card_evidence_query.relevance_judgments`
     and `golden_question.expected_incident_evidence.alternative_cards_evidence_query.relevance_judgments`
   - branch-local `actual_ranked_ids`
-  - `k = settings.top_k`
+  - `k = settings.retrieval.top_k`
 - after both helper calls succeed, the module must attach:
 
 ```rust
@@ -301,9 +299,11 @@ IncidentEvidenceRetrievalMetrics {
 - the OpenInference input/output payload contracts for the primary and
   alternative retrieval branches are owned by
   `Specification/runtime/observability/open_inference_spans.md`;
-- the module must not paraphrase, tokenize, rewrite, or otherwise mutate `NormalizedUserRequest.query` before constructing `NormalizedUserQuery`;
-- the module must not validate cross-branch uniqueness of candidate `case_id` values;
-- the module must trust the supplied `CandidateCardRetrievalOutput`, even if the same `case_id` appears in both `primary` and `alternatives`;
+- the module must not paraphrase, tokenize, rewrite, or otherwise mutate `RetrievalQueryInput.query_text` before constructing `NormalizedUserQuery`;
+- `IncidentEvidenceCardBranchesInput.primary_card_id` must be non-empty for every valid call;
+- if `card_branches.primary_card_id.trim().is_empty()`, the module must fail with `IncidentEvidenceRetrievalError::InvalidSettings` in the current version;
+- the module must not validate cross-branch uniqueness of card ids in the current version;
+- the module must trust the supplied `IncidentEvidenceCardBranchesInput`, even if the same card id appears in both branches;
 - the module must not merge the two search calls into one combined collection request in the current version.
 
 ## 8) Output Mapping And Ordering Rules
@@ -327,26 +327,9 @@ Ordering rules:
 - the module must not deduplicate returned chunks;
 - the module must not repartition alternative chunks by `case_id` in the current version.
 
-Empty-input success rule:
-- if the incoming candidates are:
-
-```rust
-CandidateCardRetrievalOutput {
-    primary: None,
-    alternatives: vec![],
-}
-```
-
-then the module must return:
-
-```rust
-IncidentEvidenceRetrievalOutput {
-    primary_chunks: vec![],
-    alternative_chunks: vec![],
-}
-```
-
-without issuing any collection search.
+There is no empty-primary success case in the current version.
+If upstream cannot provide a valid non-empty `primary_card_id`, it must not
+call this module.
 
 ## 9) Error Boundary
 
@@ -365,6 +348,7 @@ pub enum IncidentEvidenceRetrievalError {
 
 Error rules:
 - constructor validation failures such as `top_k = 0` must return `IncidentEvidenceRetrievalError::InvalidSettings`;
+- request-time validation failure for empty `primary_card_id` must return `IncidentEvidenceRetrievalError::InvalidSettings`;
 - `retrieve(...)` must return `IncidentEvidenceRetrievalError`;
 - collection failures from either the primary search or the alternative search must be wrapped as `IncidentEvidenceRetrievalError::Collection`;
 - if one search succeeds and the other fails, the whole module call must fail;

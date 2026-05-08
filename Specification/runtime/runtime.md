@@ -29,7 +29,9 @@ This document is the crate-level source of truth for:
 - `src/golden_eval_input.rs`
 - `src/startup.rs`
 - `src/errors/mod.rs`
-- `src/shared_types.rs`
+- `src/shared_types/mod.rs`
+- `src/shared_types/diagnostic_context.rs`
+- `src/shared_types/card_selection_context.rs`
 - `src/api_clients/mod.rs`
 - `src/config/mod.rs`
 - crate-level composition and re-export rules
@@ -82,6 +84,8 @@ The current required crate-level module tree is:
   - `request_pipeline`
     - `input_normalization`
     - `query_structuring`
+    - `information_adequacy_analyzer`
+    - `observation_extraction`
     - `query_structuring_metrics`
     - `retrieval_metrics`
     - `candidate_card_retrieval`
@@ -91,6 +95,7 @@ The current required crate-level module tree is:
     - `prompt_context_assembly`
     - `llm_structured_generation`
     - `response_validation_and_normalization`
+    - `observation_boundary_resolver`
   - `orchestrator`
     - `orchestrator`
     - `transition_policy`
@@ -127,6 +132,8 @@ Structure rules:
 Current request-pipeline file-layout rule:
 - `request_pipeline::input_normalization` is generated as `src/request_pipeline/input_normalization.rs`;
 - `request_pipeline::query_structuring` is generated as `src/request_pipeline/query_structuring.rs`;
+- `request_pipeline::information_adequacy_analyzer` is generated as `src/request_pipeline/information_adequacy_analyzer.rs`;
+- `request_pipeline::observation_extraction` is generated as `src/request_pipeline/observation_extraction.rs`;
 - `request_pipeline::query_structuring_metrics` is generated as `src/request_pipeline/query_structuring_metrics.rs`;
 - `request_pipeline::retrieval_metrics` is generated as `src/request_pipeline/retrieval_metrics.rs`;
 - `request_pipeline::candidate_card_retrieval` is generated as `src/request_pipeline/candidate_card_retrieval.rs`;
@@ -136,6 +143,7 @@ Current request-pipeline file-layout rule:
 - `request_pipeline::prompt_context_assembly` is generated as `src/request_pipeline/prompt_context_assembly.rs`;
 - `request_pipeline::llm_structured_generation` is generated as `src/request_pipeline/llm_structured_generation.rs`;
 - `request_pipeline::response_validation_and_normalization` is generated as `src/request_pipeline/response_validation_and_normalization.rs`;
+- `request_pipeline::observation_boundary_resolver` is generated as `src/request_pipeline/observation_boundary_resolver.rs`;
 - the current version must not split `query_structuring` into a nested `mod.rs` subtree;
 - future refactoring into a directory module is allowed only after the crate-level runtime specification is updated.
 
@@ -151,6 +159,16 @@ Current golden-eval-input file-layout rule:
 - `golden_eval_input` is generated as `src/golden_eval_input.rs`;
 - `golden_eval_input` is a dedicated crate-level module and must not be folded
   into `lib.rs`, `main.rs`, `config`, or `orchestrator`.
+
+Current shared-types file-layout rule:
+- `shared_types` is generated as a **directory module** `src/shared_types/mod.rs` (not a single `src/shared_types.rs` file);
+- `src/shared_types/mod.rs` contains all shared type definitions listed in the Shared Types section of this document;
+- `src/shared_types/diagnostic_context.rs` is a **private** submodule of `shared_types`, declared as `mod diagnostic_context;` in `mod.rs` (not `pub mod`);
+- `src/shared_types/card_selection_context.rs` is a **private** submodule of `shared_types`, declared as `mod card_selection_context;` in `mod.rs` (not `pub mod`);
+- `src/shared_types/mod.rs` re-exports all public items from `diagnostic_context` via `pub use diagnostic_context::{...}`;
+- `src/shared_types/mod.rs` re-exports all public items from `card_selection_context` via `pub use card_selection_context::{...}`;
+- external modules must import `DiagnosticContext` and its supporting types only through `crate::shared_types`, never through `crate::shared_types::diagnostic_context`.
+- external modules must import `CardSelectionContext` and its supporting types only through `crate::shared_types`, never through `crate::shared_types::card_selection_context`.
 
 ## 3) Module Boundary Rules
 
@@ -239,6 +257,59 @@ Interface rules:
 - load or merge config files directly;
 - validate or parse golden input files;
 - own interactive-loop or batch-loop control flow.
+
+Startup wiring rules:
+- startup must construct the request-pipeline leaf modules required by the
+  active runtime stage, including:
+  - `InputNormalization`
+  - `QueryStructuring`
+  - `ObservationBoundaryResolver`
+  - `ObservationExtraction`
+  - `InformationAdequacyAnalyzer`
+  - `CandidateCardRetrieval`
+  - `CardBranchReranking`
+  - `CardHydration`
+  - `IncidentEvidenceRetrieval`
+  - `TheoryEvidenceRetrieval`
+  - `PromptContextAssembly`
+  - `DiagnosticUpdatePromptContextAssembly`
+  - `LlmStructuredGeneration`
+  - `ResponseValidationAndNormalization`
+- startup must construct one `StepExecutorModules` value containing those leaf
+  modules and then construct one `StepExecutor`;
+- startup must construct one `RunRepository` from the configured postgres
+  run-state store;
+- startup must construct the continuation-capable policy as
+  `DiagnosticLoopTransitionPolicy` for the current diagnostic-loop runtime
+  stage;
+- startup may continue to support construction of
+  `LinearPipelineTransitionPolicy` as a separate MVP policy artifact, but it
+  must not be selected as the default policy for the continuation-capable
+  diagnostic-loop runtime stage;
+- startup must then construct the root `Orchestrator<DiagnosticLoopTransitionPolicy>`.
+
+Startup adapter/wiring rules:
+- startup must inject `CollectionRetrievalSettings` into
+  `CandidateCardRetrieval`;
+- startup must inject `IncidentEvidenceRetrievalSettings` into
+  `IncidentEvidenceRetrieval`;
+- startup must inject `PromptContextSettings` into `PromptContextAssembly`;
+- startup must inject `DiagnosticUpdatePromptContextSettings` into
+  `DiagnosticUpdatePromptContextAssembly`;
+- startup must construct `ObservationBoundaryResolver` using
+  `Settings.observation_boundary_resolver`, provider/model selection from that
+  runtime slice, and the selected `Arc<dyn ModelClient>`;
+- startup must construct `ObservationExtraction` using
+  `Settings.observation_extraction`, provider/model selection from that runtime
+  slice, and the selected `Arc<dyn ModelClient>`;
+- startup may construct `InformationAdequacyAnalyzer` through its infallible
+  `new()` constructor because the current version is stateless and has no
+  runtime settings slice;
+- startup must store `InformationAdequacyAnalyzer` inside
+  `StepExecutorModules`;
+- startup must construct `CardBranchReranking` through its infallible
+  `new()` constructor because the current version is stateless and has no
+  runtime settings slice.
 
 ### `errors`
 
@@ -540,11 +611,17 @@ pub struct Settings {
     pub retrieval: RetrievalSettings,
     pub input_normalization: InputNormalizationSettings,
     pub query_structuring: QueryStructuringSettings,
+    pub llm_structured_generation: LlmStructuredGenerationSettings,
+    pub observation_boundary_resolver: ObservationBoundaryResolverRuntimeSettings,
+    pub observation_extraction: ObservationExtractionRuntimeSettings,
+    pub incident_evidence_retrieval: IncidentEvidenceRetrievalSettings,
     pub prompt_context: PromptContextSettings,
+    pub diagnostic_update_prompt_context: DiagnosticUpdatePromptContextSettings,
     pub model: ModelSettings,
     pub embedding_model: EmbeddingModelSettings,
     pub observability: ObservabilitySettings,
     pub postgres: PostgresSettings,
+    pub chunk_audit_log_path: Option<String>,
 }
 
 pub struct RuntimeSettings {
@@ -560,6 +637,35 @@ pub struct QueryStructuringSettings {
     pub controlled_vocabulary_path: String,
     pub prompt_asset_path: String,
     pub max_output_tokens: u32,
+}
+
+pub struct ObservationBoundaryResolverRuntimeSettings {
+    pub provider: String,
+    pub model: String,
+    pub prompt_asset_path: String,
+    pub max_output_tokens: u32,
+}
+
+pub struct ObservationExtractionRuntimeSettings {
+    pub provider: String,
+    pub model: String,
+    pub prompt_asset_path: String,
+    pub max_output_tokens: u32,
+}
+
+pub struct IncidentEvidenceRetrievalSettings {
+    pub retrieval: CollectionRetrievalSettings,
+    pub profiles: IncidentEvidenceRetrievalProfiles,
+}
+
+pub struct IncidentEvidenceRetrievalProfiles {
+    pub initial: IncidentEvidenceTagProfile,
+    pub continuation: IncidentEvidenceTagProfile,
+}
+
+pub struct IncidentEvidenceTagProfile {
+    pub primary_tags: Vec<IncidentChunkTag>,
+    pub alternative_tags: Vec<IncidentChunkTag>,
 }
 
 pub struct EmbeddingModelSettings {
@@ -622,6 +728,7 @@ For the current request-pipeline stage, the required shared types are:
 - `DiscriminatingCheck`
 - `ExpectedObservation`
 - `NormalizedUserRequest`
+- `RetrievalQueryInput`
 - `StructuredUserQuery`
 - `QueryStructuringOutput`
 - `QueryStructuringControlledVocabulary`
@@ -629,6 +736,10 @@ For the current request-pipeline stage, the required shared types are:
 - `ModelTokenUsage`
 - `CandidateCard`
 - `CandidateCardRetrievalOutput`
+- `PrimaryCardStatus`
+- `CardBranchRerankingOutput`
+- `IterationProfile`
+- `IncidentEvidenceCardBranchesInput`
 - `CardHydrationOutput`
 - `IncidentEvidenceChunk`
 - `IncidentEvidenceRetrievalOutput`
@@ -639,6 +750,32 @@ For the current request-pipeline stage, the required shared types are:
 - `PromptIncidentEvidenceChunk`
 - `PromptTheoryEvidenceChunk`
 - `PromptContextAssemblyOutput`
+- `HypothesisId`
+- `HypothesisEvidenceSource`
+- `HypothesisStatus`
+- `Confidence`
+- `Hypothesis`
+- `ResolvedObservation`
+- `ObservationBoundaryResolution`
+- `ObservationBoundaryResolverOutput`
+- `ObservationPolarity`
+- `ExtractedObservation`
+- `ObservationExtractionOutput`
+- `AdequacyStatus`
+- `MissingInformationTopic`
+- `AdequacyAssessment`
+- `CardSelectionContext`
+- `CardSelectionContextError`
+- `CardSelectionSnapshot`
+- `DiagnosticContext`
+- `DiagnosticContextError`
+- `ProblemUnderstanding`
+- `ProblemUnderstandingSource`
+- `TrackedHypothesis`
+- `HypothesisState`
+- `Observation`
+- `ObservationStatus`
+- `SuggestedCheck`
 
 The generated Rust runtime must define shared types equivalent in ownership to:
 
@@ -817,6 +954,11 @@ pub struct NormalizedUserRequest {
     pub input_token_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetrievalQueryInput {
+    pub query_text: String,
+}
+
 pub struct StructuredUserQuery {
     pub intent: String,
     pub scenario: String,
@@ -916,14 +1058,63 @@ pub struct CandidateCard {
     pub score: f32,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct CandidateCardRetrievalOutput {
+    pub ranked_candidates: Vec<CandidateCard>,
     pub primary: Option<CandidateCard>,
     pub alternatives: Vec<CandidateCard>,
     pub metrics: Option<CandidateCardRetrievalMetrics>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PrimaryCardStatus {
+    Tentative,
+    Sticky,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CardBranchRerankingOutput {
+    pub primary_card_id: String,
+    pub primary_card_status: PrimaryCardStatus,
+    pub alternative_card_ids: Vec<String>,
+    pub challenger_card_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IterationProfile {
+    Initial,
+    Continuation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncidentEvidenceCardBranchesInput {
+    pub primary_card_id: String,
+    pub alternative_card_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardSelectionContext {
+    pub history: Vec<CardSelectionSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CardSelectionSnapshot {
+    pub iteration_id: RunIterationId,
+    pub primary_card_id: String,
+    pub primary_card_status: PrimaryCardStatus,
+    pub alternative_card_ids: Vec<String>,
+    pub challenger_card_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct CardHydrationOutput {
     pub primary: Option<IncidentCard>,
+    pub alternatives: Vec<IncidentCard>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HydratedCardBranchesInput {
+    pub primary: IncidentCard,
     pub alternatives: Vec<IncidentCard>,
 }
 
@@ -1023,9 +1214,19 @@ pub struct PromptTheoryEvidenceChunk {
     pub text: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EvidenceTopology {
+    pub primary_evidence_roles: Vec<String>,
+    pub alternative_context_present: bool,
+    pub alternative_context_case_ids: Vec<String>,
+    pub theory_evidence_present: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromptContextAssemblyOutput {
     pub prompt: String,
+    pub response_schema: serde_json::Value,
+    pub evidence_topology: EvidenceTopology,
     pub incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>,
     pub theory_chunks: Vec<PromptTheoryEvidenceChunk>,
 }
@@ -1034,6 +1235,110 @@ pub struct ModelTokenUsage {
     pub prompt_tokens: Option<usize>,
     pub completion_tokens: Option<usize>,
     pub total_tokens: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ResolvedObservation {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ObservationBoundaryResolution {
+    Supported(ResolvedObservation),
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObservationBoundaryResolverOutput {
+    pub normalized_user_input: String,
+    pub confidence: Confidence,
+    pub reason: String,
+    pub resolution: ObservationBoundaryResolution,
+}
+
+pub enum ObservationPolarity {
+    Present,
+    Absent,
+    Corrected,
+}
+
+pub struct ExtractedObservation {
+    pub statement: String,
+    pub confidence: Confidence,
+    pub condition: Option<String>,
+    pub polarity: ObservationPolarity,
+    pub time_relation: Option<String>,
+    pub source_span: String,
+}
+
+pub struct ObservationExtractionOutput {
+    pub normalized_user_input: String,
+    pub resolved_observation: ResolvedObservation,
+    pub confidence: Confidence,
+    pub observations: Vec<ExtractedObservation>,
+    pub needs_more_context: bool,
+    pub missing_context_questions: Vec<String>,
+    pub token_usage: ModelTokenUsage,
+}
+
+pub enum AdequacyStatus {
+    Blocking,
+    WeakButRunnable,
+    Sufficient,
+}
+
+pub enum MissingInformationTopic {
+    SymptomDescription,
+    AffectedComponent,
+    TriggerOrRecentChange,
+    FailureMechanismHint,
+    ExpectedVsActual,
+    ObservedResult,
+    ExecutionContext,
+    CheckOutcome,
+    ScopeOrBlastRadius,
+    CorrectionTarget,
+    TermClarification,
+}
+
+pub struct AdequacyAssessment {
+    pub status: AdequacyStatus,
+    pub missing_information_topics: Vec<MissingInformationTopic>,
+    pub follow_up_questions: Vec<String>,
+    pub summary_reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct HypothesisId(pub Uuid);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HypothesisEvidenceSource {
+    PrimaryIncident,
+    AlternativeContext,
+    TheoryMechanism,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HypothesisStatus {
+    Active,
+    Weakened,
+    Rejected(String), // carries the rejection reason
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Confidence {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Hypothesis {
+    pub id: HypothesisId,
+    pub text: String,
+    pub status: HypothesisStatus,
+    pub source: HypothesisEvidenceSource,
+    pub confidence: Confidence,
 }
 
 pub struct StructuredUserQueryTerm {
@@ -1187,15 +1492,15 @@ Shared type rules:
 
 18. `IncidentPhase`
    - `IncidentPhase` is a shared nested component type used by `IncidentCard`;
-   - it must be defined in `src/shared_types.rs` together with `IncidentCard`.
+   - it must be defined in `src/shared_types/mod.rs` together with `IncidentCard`.
 
 19. `DiscriminatingCheck`
    - `DiscriminatingCheck` is a shared nested component type used by `IncidentCard`;
-   - it must be defined in `src/shared_types.rs` together with `IncidentCard`.
+   - it must be defined in `src/shared_types/mod.rs` together with `IncidentCard`.
 
 20. `ExpectedObservation`
    - `ExpectedObservation` is a shared nested component type used by `IncidentCard`;
-   - it must be defined in `src/shared_types.rs` together with `IncidentCard`.
+   - it must be defined in `src/shared_types/mod.rs` together with `IncidentCard`.
 
 21. `NormalizedUserRequest`
    - `NormalizedUserRequest` is the normalized request produced by the input-normalization boundary;
@@ -1206,7 +1511,14 @@ Shared type rules:
    - `input_token_count` is the token count computed for `NormalizedUserRequest.query` using the tokenizer defined by the input-normalization contract;
    - `NormalizedUserRequest` must not contain raw input copies, config values, or module-private processing metadata.
 
-22. `StructuredUserQuery`
+22. `RetrievalQueryInput`
+   - `RetrievalQueryInput` is the shared neutral retrieval-query surface used by retrieval-facing runtime modules that should not depend directly on `NormalizedUserRequest`;
+   - `RetrievalQueryInput` must contain exactly one field:
+     - `query_text: String`
+   - `query_text` is the retrieval query string passed unchanged into retrieval-facing request construction;
+   - `RetrievalQueryInput` must not contain token counts, raw input copies, config values, or module-private processing metadata.
+
+23. `StructuredUserQuery`
    - `StructuredUserQuery` is the shared structured interpretation produced by the `query_structuring` boundary;
    - it must contain only cross-module data needed by downstream runtime modules;
    - it must not contain raw prompt text, raw model responses, file paths, or module-private parsing metadata;
@@ -1214,7 +1526,7 @@ Shared type rules:
    - rejected nearby candidates must be represented through `RejectedNearbyTerm`;
    - confidence must be represented through `StructuredUserQueryConfidence` rather than raw string values.
 
-23. `QueryStructuringOutput`
+24. `QueryStructuringOutput`
    - `QueryStructuringOutput` is the shared runtime output of the `query_structuring` boundary;
    - it wraps the semantic result plus execution metadata from the model call;
    - `structured_query` must contain the parsed domain interpretation;
@@ -1225,7 +1537,7 @@ Shared type rules:
    - `metrics = None` is allowed for executions that do not carry matching
      golden query-structuring targets.
 
-24. `QueryStructuringControlledVocabulary`
+25. `QueryStructuringControlledVocabulary`
    - `QueryStructuringControlledVocabulary` is the shared typed controlled-
      vocabulary asset shape used by `query_structuring` and the query-
      structuring metrics helper;
@@ -1238,7 +1550,7 @@ Shared type rules:
      `query_structuring` module boundary into a dedicated internal metrics
      helper module.
 
-25. `QueryStructuringMetrics`
+26. `QueryStructuringMetrics`
    - `QueryStructuringMetrics` is the shared request-local metric bundle for one
      query-structuring output;
    - it must contain:
@@ -1247,12 +1559,12 @@ Shared type rules:
      - `non_vocab_fields`
      - `aggregates`
 
-26. `ModelTokenUsage`
+27. `ModelTokenUsage`
    - `ModelTokenUsage` is shared execution metadata for one model call;
    - `prompt_tokens`, `completion_tokens`, and `total_tokens` must remain `Option<usize>` because providers may omit some or all usage fields;
    - this type is metadata-only and must not be treated as part of the semantic query structure.
 
-27. `CandidateCard`
+28. `CandidateCard`
    - `CandidateCard` is the shared runtime representation of one candidate incident card selected by the `candidate_card_retrieval` boundary;
    - `CandidateCard` must contain exactly two fields:
      - `case_id: String`
@@ -1262,16 +1574,122 @@ Shared type rules:
    - `score` must preserve the original retrieval `f32` value without rounding, bucketing, normalization, or rescaling;
    - `CandidateCard` must not contain collection-layer request types, Qdrant payloads, hydration data, or module-private ranking metadata.
 
-28. `CandidateCardRetrievalOutput`
+29. `CandidateCardRetrievalOutput`
    - `CandidateCardRetrievalOutput` is the shared runtime output of the `candidate_card_retrieval` boundary;
-   - it must contain exactly two fields:
+   - it must contain exactly four fields:
+     - `ranked_candidates: Vec<CandidateCard>`
      - `primary: Option<CandidateCard>`
      - `alternatives: Vec<CandidateCard>`
+     - `metrics: Option<CandidateCardRetrievalMetrics>`
+   - `ranked_candidates` is the full ordered candidate-card list produced by retrieval before branch-aware reranking;
+   - `ranked_candidates` must preserve retrieval order exactly as returned by upstream retrieval;
+   - `ranked_candidates` must not contain duplicate card ids;
    - `primary` is the highest-ranked candidate when at least one candidate exists;
    - `primary` must be `None` when retrieval returns zero candidates;
+   - when `primary = Some(card)`, producing modules must populate `ranked_candidates.first()` with the same `case_id` as `primary`;
+   - this `primary`/`ranked_candidates[0]` correspondence is a producer-consumer contract, not a constructor-validated invariant of the shared struct itself;
+   - consumers that require the correspondence for correctness must validate it explicitly at their own boundary;
    - `alternatives` contains the remaining selected candidates after excluding `primary`, in retrieval order.
+   - `alternatives` is a compatibility projection for downstream modules that still consume the legacy `primary + alternatives` shape;
+   - every card in `alternatives` must also appear in `ranked_candidates`;
+   - `metrics` contains request-local retrieval metrics when such metrics were computed for the current execution.
 
-29. `CardHydrationOutput`
+30. `PrimaryCardStatus`
+   - `PrimaryCardStatus` is the shared typed status of the current primary-card anchor used by card-branch reranking history;
+   - it must be parsed from runtime-owned branch-selection state, not from model output;
+   - it must contain exactly two variants:
+     - `Tentative`
+     - `Sticky`
+   - `Tentative` means the current primary-card anchor is still allowed to be replaced using the narrower tentative-primary retention window;
+   - `Sticky` means the current primary-card anchor has already stabilized and uses the wider sticky-primary retention window;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Copy`
+     - `PartialEq`
+     - `Eq`
+     - `Serialize`
+     - `Deserialize`
+
+31. `CardBranchRerankingOutput`
+   - `CardBranchRerankingOutput` is the shared runtime output of the future card-branch reranking boundary;
+   - it must contain exactly four fields:
+     - `primary_card_id: String`
+     - `primary_card_status: PrimaryCardStatus`
+     - `alternative_card_ids: Vec<String>`
+     - `challenger_card_ids: Vec<String>`
+   - `primary_card_id` is the selected primary card for that iteration after branch reranking;
+   - `primary_card_status` is the selected primary-card anchor status for that iteration after branch reranking;
+   - `alternative_card_ids` contains the selected alternative-card identifiers for that iteration in preserved branch order;
+   - `challenger_card_ids` contains the selected challenger-card identifiers for that iteration in preserved branch order;
+   - one card id must not appear in more than one branch inside the same `CardBranchRerankingOutput`.
+
+32. `CardSelectionContext`
+   - `CardSelectionContext` is the shared ordered projection of incident-card branch-selection history across iterations of one run;
+   - it must contain exactly one field:
+     - `history: Vec<CardSelectionSnapshot>`
+   - `history` must preserve iteration order from earliest to latest;
+   - this type is shared because it is consumed by later card-branch reranking and retrieval-policy logic while remaining separate from `DiagnosticContext`;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Serialize`
+     - `Deserialize`
+
+33. `CardSelectionContextError`
+   - `CardSelectionContextError` is the typed construction error for `CardSelectionContext::from_run_state`;
+   - it must be defined in `src/shared_types/card_selection_context.rs` together with `CardSelectionContext`;
+   - it must cover at least:
+     - missing successful initial `CandidateCardRetrieval` result;
+     - missing primary card in initial `CandidateCardRetrievalOutput`;
+     - missing successful `CardBranchReranking` result for later iterations;
+     - duplicate card id across branches inside one snapshot.
+
+34. `CardSelectionSnapshot`
+   - `CardSelectionSnapshot` is one ordered per-iteration branch-assignment snapshot stored inside `CardSelectionContext.history`;
+   - it must contain exactly five fields:
+     - `iteration_id: RunIterationId`
+     - `primary_card_id: String`
+     - `primary_card_status: PrimaryCardStatus`
+     - `alternative_card_ids: Vec<String>`
+     - `challenger_card_ids: Vec<String>`
+   - `primary_card_id` must be non-empty;
+   - `primary_card_status` preserves the primary-card anchor status selected for that iteration;
+   - `alternative_card_ids` and `challenger_card_ids` must preserve branch order from the source step result;
+   - one card id must not appear in more than one branch inside the same `CardSelectionSnapshot`.
+
+35. `IterationProfile`
+   - `IterationProfile` is the shared typed marker for the current request-pipeline iteration mode;
+   - it must contain exactly two variants:
+     - `Initial`
+     - `Continuation`
+   - `Initial` is used for the first diagnostic iteration;
+   - `Continuation` is used for follow-up iterations driven by new observations;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Copy`
+     - `PartialEq`
+     - `Eq`
+     - `Serialize`
+     - `Deserialize`
+
+36. `IncidentEvidenceCardBranchesInput`
+   - `IncidentEvidenceCardBranchesInput` is the shared branch-aware card input used by `incident_evidence_retrieval`;
+   - it must contain exactly two fields:
+     - `primary_card_id: String`
+     - `alternative_card_ids: Vec<String>`
+   - `primary_card_id` is the selected card id for the primary evidence-retrieval branch;
+   - `alternative_card_ids` are the selected card ids for the alternative evidence-retrieval branch in preserved branch order;
+   - this type is shared because it can be populated either from `CandidateCardRetrievalOutput` or from `CardBranchRerankingOutput`;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Serialize`
+     - `Deserialize`
+
+37. `CardHydrationOutput`
    - `CardHydrationOutput` is the shared runtime output of the `card_hydration` boundary;
    - it must contain exactly two fields:
      - `primary: Option<IncidentCard>`
@@ -1280,7 +1698,20 @@ Shared type rules:
    - `primary` must be `None` when there is no primary candidate to hydrate;
    - `alternatives` contains the hydrated full-card forms of the alternative candidates in preserved retrieval order.
 
-30. `IncidentEvidenceChunk`
+38. `HydratedCardBranchesInput`
+   - `HydratedCardBranchesInput` is the shared branch-selected hydrated-card input surface for continuation-oriented downstream modules;
+   - it must contain exactly two fields:
+     - `primary: IncidentCard`
+     - `alternatives: Vec<IncidentCard>`
+   - `primary` is the already selected hydrated primary incident card and is always present;
+   - `alternatives` are the already selected hydrated alternative incident cards in preserved branch order;
+   - this type is shared because it can be populated from legacy `CardHydrationOutput` when that output is already branch-aligned, or from a later branch-aware hydration path after `CardBranchReranking`;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+
+39. `IncidentEvidenceChunk`
    - `IncidentEvidenceChunk` is the shared runtime representation of one retrieved practice chunk selected by the `incident_evidence_retrieval` boundary;
    - it must contain exactly five fields:
      - `chunk_id: String`
@@ -1296,7 +1727,7 @@ Shared type rules:
      - `Clone`
      - `PartialEq`
 
-29. `IncidentEvidenceRetrievalOutput`
+40. `IncidentEvidenceRetrievalOutput`
    - `IncidentEvidenceRetrievalOutput` is the shared runtime output of the `incident_evidence_retrieval` boundary;
    - it must contain exactly two fields:
      - `primary_chunks: Vec<IncidentEvidenceChunk>`
@@ -1335,7 +1766,7 @@ Shared type rules:
 
 32. `IncidentChunkTag`
    - `IncidentChunkTag` is the shared typed representation of the finite canonical incident chunk tag vocabulary;
-   - it must be defined in `src/shared_types.rs`, not in `src/config/mod.rs`;
+   - it must be defined in `src/shared_types/mod.rs`, not in `src/config/mod.rs`;
    - it must use `strum_macros::EnumString`, `strum_macros::Display`, and `strum_macros::AsRefStr`;
    - each variant must serialize and parse only its full canonical tag string such as `chunk_role:symptom`;
    - short aliases such as `symptom` must not parse successfully;
@@ -1387,6 +1818,31 @@ Shared type rules:
 
 36. `PromptContextAssemblyOutput`
    - `PromptContextAssemblyOutput` is the shared runtime output of the `prompt_context_assembly` boundary;
+   - it must contain:
+     - `prompt: String`
+     - `response_schema: serde_json::Value`
+     - `evidence_topology: EvidenceTopology`
+     - `incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>`
+     - `theory_chunks: Vec<PromptTheoryEvidenceChunk>`
+   - `response_schema` is the validated prompt-owned response schema forwarded unchanged to `llm_structured_generation`;
+
+37. `EvidenceTopology`
+   - `EvidenceTopology` is the shared compact summary of which evidence branches and role buckets were actually present in the rendered prompt context;
+   - it must contain:
+     - `primary_evidence_roles: Vec<String>`
+     - `alternative_context_present: bool`
+     - `alternative_context_case_ids: Vec<String>`
+     - `theory_evidence_present: bool`
+   - `primary_evidence_roles` contains prompt-facing snake-case role names that were populated from primary incident evidence in preserved role order;
+   - `alternative_context_present` is `true` when at least one alternative-context chunk was selected;
+   - `alternative_context_case_ids` contains the first-seen unique `case_id` values of selected alternative-context chunks in preserved order;
+   - `theory_evidence_present` is `true` when at least one theory chunk was selected;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Eq`
+     - `Default`
    - it must contain exactly three fields:
      - `prompt: String`
      - `incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>`
@@ -1398,6 +1854,208 @@ Shared type rules:
      - `Debug`
      - `Clone`
      - `PartialEq`
+
+37. `HypothesisId`
+   - `HypothesisId` is the shared stable opaque identity of one hypothesis across all iterations of a run;
+   - it must be a newtype wrapper over `Uuid`;
+   - it must not change when the hypothesis status is updated;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Copy`
+     - `PartialEq`
+     - `Eq`
+     - `Hash`
+     - `Serialize`
+     - `Deserialize`
+
+38. `HypothesisEvidenceSource`
+   - `HypothesisEvidenceSource` is the shared typed enum for the evidence origin of a hypothesis;
+   - it must be parsed from the model-returned `source` field values:
+     - `"primary_incident"` → `PrimaryIncident`
+     - `"alternative_context"` → `AlternativeContext`
+     - `"theory_mechanism"` → `TheoryMechanism`
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Copy`
+     - `PartialEq`
+     - `Eq`
+     - `Serialize`
+     - `Deserialize`
+
+39. `HypothesisStatus`
+   - `HypothesisStatus` is the shared typed enum for the current diagnostic status of one hypothesis;
+   - `Rejected(String)` carries the model-provided rejection reason text;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Eq`
+     - `Serialize`
+     - `Deserialize`
+
+40. `Confidence`
+   - `Confidence` is the shared typed enum for the model-assessed confidence level;
+   - it must be parsed from the model-returned confidence field values:
+     - `"low"` → `Low`
+     - `"medium"` → `Medium`
+     - `"high"` → `High`
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Copy`
+     - `PartialEq`
+     - `Eq`
+     - `Serialize`
+     - `Deserialize`
+
+41. `ResolvedObservation`
+   - `ResolvedObservation` is the shared typed container for the context-enriched observation text produced by `ObservationBoundaryResolver`;
+   - `text` is the single coherent diagnostic fact string produced after explicit reference resolution against diagnostic context;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Serialize`
+     - `Deserialize`
+
+42. `ObservationBoundaryResolution`
+   - `ObservationBoundaryResolution` is the shared discriminated result of the `ObservationBoundaryResolver` boundary;
+   - `Supported(ResolvedObservation)` means the normalized user input can safely be treated as a new diagnostic observation;
+   - `Unsupported` means the normalized user input must not contribute a diagnostic observation to downstream diagnostic-state projection;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Serialize`
+     - `Deserialize`
+
+43. `ObservationBoundaryResolverOutput`
+   - `ObservationBoundaryResolverOutput` is the shared output of the `ObservationBoundaryResolver` module;
+   - it must contain exactly four fields:
+     - `normalized_user_input: String` — the exact `NormalizedUserRequest.query` string received by the resolver;
+     - `confidence: Confidence` — the model-assessed confidence in the boundary decision;
+     - `reason: String` — a short machine-readable/operator-readable explanation of the boundary decision;
+     - `resolution: ObservationBoundaryResolution` — the supported/unsupported outcome plus the resolved observation when supported;
+   - this type is shared because it is stored in `StepResultEnvelope` and consumed by `DiagnosticContext::from_run_state`;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Serialize`
+     - `Deserialize`
+
+44. `ObservationPolarity`
+   - `ObservationPolarity` is the shared typed enum for the polarity of one extracted atomic observation;
+   - it must be parsed from the model-returned polarity field values:
+     - `"present"` → `Present`
+     - `"absent"` → `Absent`
+     - `"corrected"` → `Corrected`
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Eq`
+     - `Serialize`
+     - `Deserialize`
+
+45. `ExtractedObservation`
+   - `ExtractedObservation` is the shared typed representation of one atomic diagnostic observation extracted from a context-resolved continuation input;
+   - it must contain:
+     - `statement: String` — the standalone factual statement for that atomic observation;
+     - `confidence: Confidence` — the model-assessed confidence in that extracted atomic observation;
+     - `condition: Option<String>` — an optional limiting condition such as workload mode, lease state, fault mode, configuration, or isolation level;
+     - `polarity: ObservationPolarity` — the polarity of the extracted fact;
+     - `time_relation: Option<String>` — an optional explicit ordering phrase such as before/after/only after;
+     - `source_span: String` — the exact supporting substring from the resolved standalone observation text;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Serialize`
+     - `Deserialize`
+
+46. `ObservationExtractionOutput`
+   - `ObservationExtractionOutput` is the shared output of the `observation_extraction` module;
+   - it must contain:
+     - `normalized_user_input: String` — the exact `ObservationBoundaryResolverOutput.normalized_user_input` string received by the extractor;
+     - `resolved_observation: ResolvedObservation` — the exact supported resolved observation carried by `ObservationBoundaryResolverOutput.resolution`;
+     - `confidence: Confidence` — the model-assessed confidence in the adequacy assessment and extraction result as a whole;
+     - `observations: Vec<ExtractedObservation>` — the extracted atomic diagnostic observations in original order;
+     - `needs_more_context: bool` — whether the resolved observation is sufficiently specific for downstream diagnostic update;
+     - `missing_context_questions: Vec<String>` — the minimal set of follow-up questions when more context is required;
+     - `token_usage: ModelTokenUsage` — the model-call token-usage metadata for this observation-extraction request;
+   - this type is shared because it is stored in `StepResultEnvelope` and consumed by downstream diagnostic-update orchestration;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Serialize`
+     - `Deserialize`
+
+47. `AdequacyStatus`
+   - `AdequacyStatus` is the shared typed adequacy classification returned by
+     `information_adequacy_analyzer`;
+   - `Blocking` means the structured input is not diagnostically sufficient for
+     safe downstream progression;
+   - `WeakButRunnable` means the structured input contains a usable signal but
+     remains diagnostically thin;
+   - `Sufficient` means the structured input is adequate for normal downstream
+     progression;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Copy`
+     - `PartialEq`
+     - `Eq`
+     - `Serialize`
+     - `Deserialize`
+
+48. `MissingInformationTopic`
+   - `MissingInformationTopic` is the shared machine-readable explanation of
+     which information theme is missing from a weak or blocking input;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `Copy`
+     - `PartialEq`
+     - `Eq`
+     - `Serialize`
+     - `Deserialize`
+
+49. `AdequacyAssessment`
+   - `AdequacyAssessment` is the shared output of
+     `information_adequacy_analyzer`;
+   - it must contain:
+     - `status: AdequacyStatus`
+     - `missing_information_topics: Vec<MissingInformationTopic>`
+     - `follow_up_questions: Vec<String>`
+     - `summary_reason: String`
+   - `follow_up_questions` is the deterministic user-facing projection of
+     `missing_information_topics`;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Eq`
+     - `Serialize`
+     - `Deserialize`
+
+50. `Hypothesis`
+   - `Hypothesis` is the shared typed representation of one hypothesis as returned by the model in a single iteration response;
+   - it carries the hypothesis identity, full text, current status, evidence origin, and confidence level for that iteration;
+   - `id` is the stable `HypothesisId` used to link this hypothesis to its long-lived tracker in `DiagnosticContext`;
+   - `text` is the full hypothesis statement as returned by the model; for state-update iterations `text` must equal the text already stored in the tracker;
+   - `status` is the current `HypothesisStatus` for this iteration;
+   - `source` is the `HypothesisEvidenceSource` for this iteration;
+   - `confidence` is the model-assessed `Confidence` for this iteration;
+   - the generated Rust type must derive:
+     - `Debug`
+     - `Clone`
+     - `PartialEq`
+     - `Serialize`
+     - `Deserialize`
 
 Shared type export rule:
 - all shared types defined in this section, including `StructuredUserQuery`,
@@ -1413,12 +2071,18 @@ Shared type export rule:
   `GoldenChunkRetrievalTargets`, `GoldenChunkRelevance`,
   `OpenInferenceContext`, and `Context`, must be defined in
   `src/shared_types.rs`;
-- all shared types defined in this section, including `CandidateCard` and `CandidateCardRetrievalOutput`, must be defined in `src/shared_types.rs`;
-- all shared types defined in this section, including `IncidentCard`, `IncidentPhase`, `DiscriminatingCheck`, and `ExpectedObservation`, must be defined in `src/shared_types.rs`;
-- all shared types defined in this section, including `CardHydrationOutput`, must be defined in `src/shared_types.rs`;
-- all shared types defined in this section, including `IncidentEvidenceChunk` and `IncidentEvidenceRetrievalOutput`, must be defined in `src/shared_types.rs`;
-- all shared types defined in this section, including `TheoryEvidenceChunk` and `TheoryEvidenceRetrievalOutput`, must be defined in `src/shared_types.rs`;
-- all shared types defined in this section, including `IncidentChunkTag`, `PromptEvidenceRole`, `PromptIncidentEvidenceChunk`, `PromptTheoryEvidenceChunk`, and `PromptContextAssemblyOutput`, must be defined in `src/shared_types.rs`;
+- all shared types defined in this section, including `CandidateCard`, `CandidateCardRetrievalOutput`, `PrimaryCardStatus`, `CardBranchRerankingOutput`, `IterationProfile`, and `IncidentEvidenceCardBranchesInput`, must be defined in `src/shared_types/mod.rs`;
+- `CardSelectionContext`, `CardSelectionContextError`, and `CardSelectionSnapshot` are **defined in `src/shared_types/card_selection_context.rs`** and **re-exported from `src/shared_types/mod.rs`** via `pub use card_selection_context::{...}`; they must not be accessed through any path other than `crate::shared_types::...`;
+- all shared types defined in this section, including `IncidentCard`, `IncidentPhase`, `DiscriminatingCheck`, and `ExpectedObservation`, must be defined in `src/shared_types/mod.rs`;
+- all shared types defined in this section, including `CardHydrationOutput` and `HydratedCardBranchesInput`, must be defined in `src/shared_types/mod.rs`;
+- all shared types defined in this section, including `IncidentEvidenceChunk` and `IncidentEvidenceRetrievalOutput`, must be defined in `src/shared_types/mod.rs`;
+- all shared types defined in this section, including `TheoryEvidenceChunk` and `TheoryEvidenceRetrievalOutput`, must be defined in `src/shared_types/mod.rs`;
+- all shared types defined in this section, including `IncidentChunkTag`, `PromptEvidenceRole`, `PromptIncidentEvidenceChunk`, `PromptTheoryEvidenceChunk`, and `PromptContextAssemblyOutput`, must be defined in `src/shared_types/mod.rs`;
+- all shared types defined in this section, including `HypothesisId`, `HypothesisEvidenceSource`, `HypothesisStatus`, `Confidence`, and `Hypothesis`, must be defined in `src/shared_types/mod.rs`;
+- all shared types defined in this section, including `ResolvedObservation`, `ObservationBoundaryResolution`, and `ObservationBoundaryResolverOutput`, must be defined in `src/shared_types/mod.rs`;
+- all shared types defined in this section, including `ObservationPolarity`, `ExtractedObservation`, and `ObservationExtractionOutput`, must be defined in `src/shared_types/mod.rs`;
+- all shared types defined in this section, including `AdequacyStatus`, `MissingInformationTopic`, and `AdequacyAssessment`, must be defined in `src/shared_types/mod.rs`;
+- `DiagnosticContext`, `DiagnosticContextError`, `ProblemUnderstanding`, `ProblemUnderstandingSource`, `TrackedHypothesis`, `HypothesisState`, `Observation`, `ObservationStatus`, and `SuggestedCheck` are **defined in `src/shared_types/diagnostic_context.rs`** and **re-exported from `src/shared_types/mod.rs`** via `pub use diagnostic_context::{...}`; they must not be accessed through any path other than `crate::shared_types::...`;
 - `lib.rs` must expose the shared-types module as `pub mod shared_types;`;
 - runtime leaf modules must import these shared types through `crate::shared_types::...` rather than through ad hoc re-exports.
 
@@ -1448,6 +2112,40 @@ Rules:
 - `RetrievalSettings` is the single typed retrieval settings section used by retrieval-facing runtime code;
 - each collection section must contain runtime-owned retrieval knobs plus one typed resolved collection description;
 - retrieval code must be able to access collection name selection, top-k, threshold, alternative-card limit, and retry settings from one `CollectionRetrievalSettings` value without separately reading raw ingest config.
+
+### Incident Evidence Retrieval Settings
+
+The generated Rust settings model must define incident-evidence-retrieval
+settings equivalent in ownership to:
+
+```rust
+pub struct IncidentEvidenceRetrievalSettings {
+    pub retrieval: CollectionRetrievalSettings,
+    pub profiles: IncidentEvidenceRetrievalProfiles,
+}
+
+pub struct IncidentEvidenceRetrievalProfiles {
+    pub initial: IncidentEvidenceTagProfile,
+    pub continuation: IncidentEvidenceTagProfile,
+}
+
+pub struct IncidentEvidenceTagProfile {
+    pub primary_tags: Vec<IncidentChunkTag>,
+    pub alternative_tags: Vec<IncidentChunkTag>,
+}
+```
+
+Rules:
+- `IncidentEvidenceRetrievalSettings` is the single typed settings slice used by `incident_evidence_retrieval`;
+- `IncidentEvidenceRetrievalSettings.retrieval` reuses the existing generic retrieval knobs for the practice-chunks collection;
+- `IncidentEvidenceRetrievalSettings.retrieval.collection` must be resolved from `ingest.toml [qdrant.collections.practice]`;
+- `IncidentEvidenceRetrievalSettings.profiles.initial` is the tag profile selected when `IterationProfile::Initial` is supplied to the module;
+- `IncidentEvidenceRetrievalSettings.profiles.continuation` is the tag profile selected when `IterationProfile::Continuation` is supplied to the module;
+- `IncidentEvidenceTagProfile.primary_tags` must use the shared `IncidentChunkTag` type;
+- `IncidentEvidenceTagProfile.alternative_tags` must use the shared `IncidentChunkTag` type;
+- raw config must use full canonical tag strings such as `chunk_role:symptom`;
+- unknown configured tags must cause config loading to fail before runtime request processing begins;
+- duplicate tags inside one configured tag list must cause config loading to fail before runtime request processing begins.
 
 ### Input Normalization Settings
 
@@ -1482,6 +2180,86 @@ Rules:
 - query-structuring runtime modules must receive this typed settings slice rather than reading raw TOML values;
 - the controlled vocabulary and prompt asset are runtime-owned file inputs selected by config, not by direct module constants.
 
+### Observation Boundary Resolver Runtime Settings
+
+The generated Rust settings model must define observation-boundary-resolver runtime settings equivalent in ownership to:
+
+```rust
+pub struct ObservationBoundaryResolverRuntimeSettings {
+    pub provider: String,
+    pub model: String,
+    pub prompt_asset_path: String,
+    pub max_output_tokens: u32,
+}
+```
+
+Rules:
+- `ObservationBoundaryResolverRuntimeSettings` is the runtime-owned config slice used by startup/wiring code to select the model client for `observation_boundary_resolver`;
+- `provider` must be non-empty after trimming;
+- `model` must be non-empty after trimming;
+- `prompt_asset_path` is the runtime-owned absolute JSON prompt-asset path selected by config;
+- `max_output_tokens` must be greater than zero;
+- when `provider = "ollama"`, startup/wiring code must:
+  - construct an `OllamaModelClientConfig` using:
+    - `base_url` from `Settings.model.transport = ModelTransportSettings::Ollama(...).url`
+    - `timeout_sec` from `Settings.model.transport = ModelTransportSettings::Ollama(...).timeout_sec`
+    - `model_name` from `Settings.observation_boundary_resolver.model`
+  - construct `RetryPolicyConfig` from `Settings.model.transport = ModelTransportSettings::Ollama(...).retry`
+  - construct a module-specific `OllamaModelClient` and store it behind `Arc<dyn ModelClient>`;
+- when `provider = "together"`, startup/wiring code must:
+  - construct a `TogetherModelClientConfig` using:
+    - `base_url` from `Settings.model.transport = ModelTransportSettings::Together(...).url`
+    - `api_key` from `Settings.model.transport = ModelTransportSettings::Together(...).api_key`
+    - `timeout_sec` from `Settings.model.transport = ModelTransportSettings::Together(...).timeout_sec`
+    - `model_name` from `Settings.observation_boundary_resolver.model`
+  - construct `RetryPolicyConfig` from `Settings.model.transport = ModelTransportSettings::Together(...).retry`
+  - construct a module-specific `TogetherModelClient` and store it behind `Arc<dyn ModelClient>`;
+- if `provider = "ollama"` but `Settings.model.transport` is not `ModelTransportSettings::Ollama(...)`, startup must fail before runtime request processing begins;
+- if `provider = "together"` but `Settings.model.transport` is not `ModelTransportSettings::Together(...)`, startup must fail before runtime request processing begins;
+- unsupported `provider` values must cause startup failure before runtime request processing begins;
+- the request-pipeline module itself must not receive `provider` or `model` through its narrow constructor settings type;
+- a higher-level wiring layer may derive a module-local `ObservationBoundaryResolverSettings` value from this runtime settings slice after selecting the correct `Arc<dyn ModelClient>`.
+
+### Observation Extraction Runtime Settings
+
+The generated Rust settings model must define observation-extraction runtime settings equivalent in ownership to:
+
+```rust
+pub struct ObservationExtractionRuntimeSettings {
+    pub provider: String,
+    pub model: String,
+    pub prompt_asset_path: String,
+    pub max_output_tokens: u32,
+}
+```
+
+Rules:
+- `ObservationExtractionRuntimeSettings` is the runtime-owned config slice used by startup/wiring code to select the model client for `observation_extraction`;
+- `provider` must be non-empty after trimming;
+- `model` must be non-empty after trimming;
+- `prompt_asset_path` is the runtime-owned absolute JSON prompt-asset path selected by config;
+- `max_output_tokens` must be greater than zero;
+- when `provider = "ollama"`, startup/wiring code must:
+  - construct an `OllamaModelClientConfig` using:
+    - `base_url` from `Settings.model.transport = ModelTransportSettings::Ollama(...).url`
+    - `timeout_sec` from `Settings.model.transport = ModelTransportSettings::Ollama(...).timeout_sec`
+    - `model_name` from `Settings.observation_extraction.model`
+  - construct `RetryPolicyConfig` from `Settings.model.transport = ModelTransportSettings::Ollama(...).retry`
+  - construct a module-specific `OllamaModelClient` and store it behind `Arc<dyn ModelClient>`;
+- when `provider = "together"`, startup/wiring code must:
+  - construct a `TogetherModelClientConfig` using:
+    - `base_url` from `Settings.model.transport = ModelTransportSettings::Together(...).url`
+    - `api_key` from `Settings.model.transport = ModelTransportSettings::Together(...).api_key`
+    - `timeout_sec` from `Settings.model.transport = ModelTransportSettings::Together(...).timeout_sec`
+    - `model_name` from `Settings.observation_extraction.model`
+  - construct `RetryPolicyConfig` from `Settings.model.transport = ModelTransportSettings::Together(...).retry`
+  - construct a module-specific `TogetherModelClient` and store it behind `Arc<dyn ModelClient>`;
+- if `provider = "ollama"` but `Settings.model.transport` is not `ModelTransportSettings::Ollama(...)`, startup must fail before runtime request processing begins;
+- if `provider = "together"` but `Settings.model.transport` is not `ModelTransportSettings::Together(...)`, startup must fail before runtime request processing begins;
+- unsupported `provider` values must cause startup failure before runtime request processing begins;
+- the request-pipeline module itself must not receive `provider` or `model` through its narrow constructor settings type;
+- a higher-level wiring layer may derive a module-local `ObservationExtractionSettings` value from this runtime settings slice after selecting the correct `Arc<dyn ModelClient>`.
+
 ### Prompt Context Settings
 
 The generated Rust settings model must define prompt-context settings equivalent
@@ -1493,9 +2271,22 @@ pub struct PromptContextSettings {
     pub chunk_packing: ChunkPackingSettings,
 }
 
+pub struct DiagnosticUpdatePromptContextSettings {
+    pub prompt_asset_path: String,
+    pub chunk_packing: DiagnosticUpdateChunkPackingSettings,
+}
+
 pub struct ChunkPackingSettings {
     pub evidence_for_match: ChunkRolePackingSettings,
     pub first_check_hint: ChunkRolePackingSettings,
+    pub supporting_explanation: ChunkRolePackingSettings,
+    pub alternative_context: ChunkRolePackingSettings,
+    pub mechanism_explanation: ChunkRolePackingSettings,
+}
+
+pub struct DiagnosticUpdateChunkPackingSettings {
+    pub evidence_for_match: ChunkRolePackingSettings,
+    pub next_check_hint: ChunkRolePackingSettings,
     pub supporting_explanation: ChunkRolePackingSettings,
     pub alternative_context: ChunkRolePackingSettings,
     pub mechanism_explanation: ChunkRolePackingSettings,
@@ -1518,10 +2309,14 @@ pub enum ChunkPackingSource {
 
 Rules:
 - `PromptContextSettings` is the single typed settings slice used by `prompt_context_assembly`;
+- `DiagnosticUpdatePromptContextSettings` is the single typed settings slice used by `diagnostic_update_prompt_context_assembly`;
 - prompt-context runtime modules must receive this typed settings slice rather than reading raw TOML values;
 - `prompt_asset_path` is the runtime-owned JSON prompt asset path selected by config;
+- `DiagnosticUpdatePromptContextSettings.prompt_asset_path` must be an absolute JSON prompt asset path selected by config;
 - prompt-context chunk limits and tag priorities are owned by runtime config;
 - prompt-context chunk selection mechanics are owned by `prompt_context_assembly`;
+- diagnostic-update prompt-context chunk limits and tag priorities are owned by runtime config;
+- diagnostic-update prompt-context chunk selection mechanics are owned by `diagnostic_update_prompt_context_assembly`;
 - `ChunkRolePackingSettings.tag_priority` must use the shared `IncidentChunkTag` type from `src/shared_types.rs`;
 - raw config must use full canonical tag strings such as `chunk_role:symptom`;
 - short tag aliases such as `symptom` are invalid;
@@ -1545,6 +2340,9 @@ Rules:
 - `alternative_context.per_case_limit` may be absent or any non-negative value when `alternative_context.limit = 0`;
 - `supporting_explanation.source` must be `PrimaryIncident` in the current version;
 - `mechanism_explanation.tag_priority` must be empty in the current version because theory chunks do not expose tags.
+- `DiagnosticUpdateChunkPackingSettings.next_check_hint` is the continuation-only role-config slot used for the next check;
+- `ChunkRolePackingSettings`, `ChunkPackingSource`, and tag parsing rules are reused unchanged for `DiagnosticUpdatePromptContextSettings`;
+- `next_check_hint.limit` must be greater than or equal to `1`.
 
 ### Collection Variants
 
@@ -1670,8 +2468,23 @@ Required top-level field mappings:
 - `Settings.query_structuring.controlled_vocabulary_path` <- `runtime.toml [query_structuring].controlled_vocabulary_path`
 - `Settings.query_structuring.prompt_asset_path` <- `runtime.toml [query_structuring].prompt_asset_path`
 - `Settings.query_structuring.max_output_tokens` <- `runtime.toml [query_structuring].max_output_tokens`
+- `Settings.observation_boundary_resolver.provider` <- `runtime.toml [observation_boundary_resolver].provider`
+- `Settings.observation_boundary_resolver.model` <- `runtime.toml [observation_boundary_resolver].model`
+- `Settings.observation_boundary_resolver.prompt_asset_path` <- `runtime.toml [observation_boundary_resolver].prompt_asset_path`
+- `Settings.observation_boundary_resolver.max_output_tokens` <- `runtime.toml [observation_boundary_resolver].max_output_tokens`
+- `Settings.observation_extraction.provider` <- `runtime.toml [observation_extraction].provider`
+- `Settings.observation_extraction.model` <- `runtime.toml [observation_extraction].model`
+- `Settings.observation_extraction.prompt_asset_path` <- `runtime.toml [observation_extraction].prompt_asset_path`
+- `Settings.observation_extraction.max_output_tokens` <- `runtime.toml [observation_extraction].max_output_tokens`
+- `Settings.incident_evidence_retrieval.retrieval` <- `runtime.toml [incident_evidence_retrieval.retrieval]`
+- `Settings.incident_evidence_retrieval.profiles.initial.primary_tags` <- `runtime.toml [incident_evidence_retrieval.profiles.initial].primary_tags`
+- `Settings.incident_evidence_retrieval.profiles.initial.alternative_tags` <- `runtime.toml [incident_evidence_retrieval.profiles.initial].alternative_tags`
+- `Settings.incident_evidence_retrieval.profiles.continuation.primary_tags` <- `runtime.toml [incident_evidence_retrieval.profiles.continuation].primary_tags`
+- `Settings.incident_evidence_retrieval.profiles.continuation.alternative_tags` <- `runtime.toml [incident_evidence_retrieval.profiles.continuation].alternative_tags`
 - `Settings.prompt_context.prompt_asset_path` <- `runtime.toml [prompt_context].prompt_asset_path`
 - `Settings.prompt_context.chunk_packing` <- `runtime.toml [prompt_context.chunk_packing]`
+- `Settings.diagnostic_update_prompt_context.prompt_asset_path` <- `runtime.toml [diagnostic_update_prompt_context].prompt_asset_path`
+- `Settings.diagnostic_update_prompt_context.chunk_packing` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing]`
 - `Settings.embedding_model.url` <- environment variable `OLLAMA_URL`
 - `Settings.embedding_model.name` <- `ingest.toml [embedding.model].name`
 - `Settings.embedding_model.dimension` <- `ingest.toml [embedding.model].dimension`
@@ -1691,6 +2504,18 @@ Required retrieval field mappings for each of `cards`, `practice`, and `theory`:
 - `embedding_retry` <- `runtime.toml [retrieval.<collection>.embedding_retry]`
 - `qdrant_retry` <- `runtime.toml [retrieval.<collection>.qdrant_retry]`
 - `collection` <- resolved from `ingest.toml [qdrant.collections.<collection>]`
+
+Required incident-evidence-retrieval field mappings:
+- `IncidentEvidenceRetrievalSettings.retrieval.top_k` <- `runtime.toml [incident_evidence_retrieval.retrieval].top_k`
+- `IncidentEvidenceRetrievalSettings.retrieval.score_threshold` <- `runtime.toml [incident_evidence_retrieval.retrieval].score_threshold`
+- `IncidentEvidenceRetrievalSettings.retrieval.max_alternatives` <- `runtime.toml [incident_evidence_retrieval.retrieval].max_alternatives`
+- `IncidentEvidenceRetrievalSettings.retrieval.embedding_retry` <- `runtime.toml [incident_evidence_retrieval.retrieval.embedding_retry]`
+- `IncidentEvidenceRetrievalSettings.retrieval.qdrant_retry` <- `runtime.toml [incident_evidence_retrieval.retrieval.qdrant_retry]`
+- `IncidentEvidenceRetrievalSettings.retrieval.collection` <- resolved from `ingest.toml [qdrant.collections.practice]`
+- `IncidentEvidenceRetrievalSettings.profiles.initial.primary_tags` <- `runtime.toml [incident_evidence_retrieval.profiles.initial].primary_tags`
+- `IncidentEvidenceRetrievalSettings.profiles.initial.alternative_tags` <- `runtime.toml [incident_evidence_retrieval.profiles.initial].alternative_tags`
+- `IncidentEvidenceRetrievalSettings.profiles.continuation.primary_tags` <- `runtime.toml [incident_evidence_retrieval.profiles.continuation].primary_tags`
+- `IncidentEvidenceRetrievalSettings.profiles.continuation.alternative_tags` <- `runtime.toml [incident_evidence_retrieval.profiles.continuation].alternative_tags`
 
 Required prompt-context field mappings:
 - `PromptContextSettings.chunk_packing.evidence_for_match.source` <- `runtime.toml [prompt_context.chunk_packing.evidence_for_match].source`
@@ -1714,6 +2539,29 @@ Required prompt-context field mappings:
 - `PromptContextSettings.chunk_packing.mechanism_explanation.limit` <- `runtime.toml [prompt_context.chunk_packing.mechanism_explanation].limit`
 - `PromptContextSettings.chunk_packing.mechanism_explanation.fallback_to_any_chunk` <- `runtime.toml [prompt_context.chunk_packing.mechanism_explanation].fallback_to_any_chunk`
 - `PromptContextSettings.chunk_packing.mechanism_explanation.tag_priority` <- `runtime.toml [prompt_context.chunk_packing.mechanism_explanation].tag_priority`
+
+Required diagnostic-update prompt-context field mappings:
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.evidence_for_match.source` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.evidence_for_match].source`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.evidence_for_match.limit` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.evidence_for_match].limit`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.evidence_for_match.fallback_to_any_chunk` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.evidence_for_match].fallback_to_any_chunk`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.evidence_for_match.tag_priority` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.evidence_for_match].tag_priority`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.next_check_hint.source` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.next_check_hint].source`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.next_check_hint.limit` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.next_check_hint].limit`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.next_check_hint.fallback_to_any_chunk` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.next_check_hint].fallback_to_any_chunk`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.next_check_hint.tag_priority` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.next_check_hint].tag_priority`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.supporting_explanation.source` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.supporting_explanation].source`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.supporting_explanation.limit` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.supporting_explanation].limit`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.supporting_explanation.fallback_to_any_chunk` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.supporting_explanation].fallback_to_any_chunk`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.supporting_explanation.tag_priority` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.supporting_explanation].tag_priority`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.alternative_context.source` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.alternative_context].source`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.alternative_context.limit` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.alternative_context].limit`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.alternative_context.per_case_limit` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.alternative_context].per_case_limit`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.alternative_context.fallback_to_any_chunk` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.alternative_context].fallback_to_any_chunk`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.alternative_context.tag_priority` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.alternative_context].tag_priority`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.mechanism_explanation.source` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.mechanism_explanation].source`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.mechanism_explanation.limit` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.mechanism_explanation].limit`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.mechanism_explanation.fallback_to_any_chunk` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.mechanism_explanation].fallback_to_any_chunk`
+- `DiagnosticUpdatePromptContextSettings.chunk_packing.mechanism_explanation.tag_priority` <- `runtime.toml [diagnostic_update_prompt_context.chunk_packing.mechanism_explanation].tag_priority`
 
 Required dense collection field mappings:
 - `name` <- `ingest.toml [qdrant.collections.<collection>.dense].name`
@@ -1869,6 +2717,38 @@ CLI rules:
   `golden_eval_input`;
 - in interactive mode, the runtime entry layer must construct
   `UserRequest { query, golden_question: None }`;
+- in interactive mode, the runtime entry layer must keep one in-memory
+  `current_run_id: Option<RunId>` for the active diagnostic conversation;
+- when `current_run_id` is `None`, the next interactive user message must be
+  executed through `orchestrator.run(user_request)`;
+- when `current_run_id = Some(run_id)` and the operator chooses to continue the
+  same diagnostic conversation, the next interactive user message must be
+  executed through `orchestrator.resume_with_input(run_id, user_request)`;
+- after an interactive invocation returns `RunOutcome::Finished { run_id, ... }`,
+  the runtime entry layer must retain `current_run_id = Some(run_id)` and must
+  offer the operator exactly two continuation choices:
+  - finish the run;
+  - add an observation;
+- after an interactive invocation returns
+  `RunOutcome::WaitingForUser { run_id, follow_up_questions }`, the runtime
+  entry layer must retain `current_run_id = Some(run_id)`, surface the exact
+  `follow_up_questions` to the operator, and route the next user message
+  through `resume_with_input(run_id, user_request)`;
+- after `RunOutcome::WaitingForUser { .. }`, the runtime entry layer must not
+  route the next user message through `resume(run_id)`;
+- after `RunOutcome::WaitingForUser { .. }`, the runtime entry layer must not
+  present the next user message as a continuation of the same iteration;
+- the next user message after `RunOutcome::WaitingForUser { .. }` must be
+  treated as the start of a new iteration in the same run;
+- in interactive mode, choosing `add observation` must keep the stored
+  `current_run_id` unchanged and route the next user message through
+  `resume_with_input(...)`;
+- in interactive mode, choosing `finish the run` must clear the in-memory
+  `current_run_id` and treat the next user message as the start of a new run
+  through `orchestrator.run(...)`;
+- clearing the CLI-owned `current_run_id` is sufficient for the current
+  version's interactive stop behavior; the current version does not require an
+  explicit archive action at CLI stop time;
 - in golden-backed batch-eval mode, the runtime entry layer must invoke the
   orchestrator once per returned `UserRequest`, in source-file order;
 - each golden-backed batch item must create a separate run rather than being

@@ -52,10 +52,10 @@ The generated Rust module must define:
 
 ```rust
 pub enum ModelClientError {
-    InvalidRequest(&'static str),
+    InvalidRequest(String),
     Transport(String),
     UnexpectedStatus(u16),
-    InvalidResponse(&'static str),
+    InvalidResponse(String),
 }
 ```
 
@@ -76,6 +76,7 @@ Rules:
 - every message content must be non-empty after trimming;
 - `temperature` must be finite and non-negative;
 - when `max_output_tokens = Some(value)`, `value` must be greater than zero;
+- when `response_mode = ModelResponseMode::JsonSchema(value)`, `value` must be a JSON object;
 - invalid request shape must fail before any outbound HTTP call;
 - implementations must use message contents exactly as provided;
 - implementations must not semantically rewrite, trim, or reorder messages before sending the provider request.

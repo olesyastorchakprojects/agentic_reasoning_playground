@@ -44,6 +44,7 @@ diagnostics.runs
 diagnostics.run_iterations
   iteration_id uuid primary key
   run_id uuid not null references diagnostics.runs(run_id)
+  status text not null
   sequence_no bigint not null
 
 diagnostics.run_step_records
@@ -94,6 +95,7 @@ The relevant domain types are:
 
 - `RunState`
 - `RunIteration`
+- `RunIterationStatus`
 - `StepRecord`
 - `PendingStepRecord`
 - `FinishedStepRecord`
@@ -117,6 +119,7 @@ Iteration-level mapping:
 - each `RunState.iterations[i]` maps to one row in `diagnostics.run_iterations`
 - `RunIteration.iteration_id` -> `diagnostics.run_iterations.iteration_id`
 - parent `RunState.run_id` -> `diagnostics.run_iterations.run_id`
+- `RunIteration.status` -> `diagnostics.run_iterations.status`
 - iteration ordinal `i` -> `diagnostics.run_iterations.sequence_no`
 
 Step-record mapping:
@@ -245,6 +248,7 @@ Canonical read behavior:
 Read-time validation requirements:
 
 - `status` text must deserialize into `RunStatus`;
+- iteration-row `status` text must deserialize into `RunIterationStatus`;
 - `step` text must deserialize into `StepKind`;
 - `result_json` must deserialize into `StepResultEnvelope` when present;
 - `error_json` must deserialize into `StepError` when present;

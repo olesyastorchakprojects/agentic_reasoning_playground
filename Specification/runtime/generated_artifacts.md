@@ -36,7 +36,9 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/golden_eval_input.rs`
 - `src/startup.rs`
 - `src/errors/mod.rs`
-- `src/shared_types.rs`
+- `src/shared_types/mod.rs`
+- `src/shared_types/diagnostic_context.rs`
+- `src/shared_types/card_selection_context.rs`
 - `src/config/mod.rs`
 - `src/config/settings.rs`
 - `src/config/load.rs`
@@ -49,20 +51,26 @@ Generation must create or update the runtime crate with these crate-level artifa
 - `src/request_pipeline/mod.rs`
 - `src/request_pipeline/input_normalization.rs`
 - `src/request_pipeline/query_structuring.rs`
+- `src/request_pipeline/information_adequacy_analyzer.rs`
 - `src/request_pipeline/query_structuring_metrics.rs`
 - `src/request_pipeline/retrieval_metrics.rs`
 - `src/request_pipeline/candidate_card_retrieval.rs`
+- `src/request_pipeline/card_branch_reranking.rs`
 - `src/request_pipeline/card_hydration.rs`
+- `src/request_pipeline/diagnostic_update_prompt_context_assembly.rs`
 - `src/request_pipeline/incident_evidence_retrieval.rs`
 - `src/request_pipeline/theory_evidence_retrieval.rs`
 - `src/request_pipeline/prompt_context_assembly.rs`
 - `src/request_pipeline/llm_structured_generation.rs`
 - `src/request_pipeline/response_validation_and_normalization.rs`
+- `src/request_pipeline/observation_boundary_resolver.rs`
+- `src/request_pipeline/observation_extraction.rs`
 - `src/orchestrator/mod.rs`
 - `src/orchestrator/orchestrator.rs`
 - `src/orchestrator/run_repository.rs`
 - `src/orchestrator/step_executor.rs`
 - `src/orchestrator/transition_policy/mod.rs`
+- `src/orchestrator/transition_policy/diagnostic_loop.rs`
 - `src/orchestrator/transition_policy/linear_pipeline.rs`
 - `src/orchestrator/run_state/mod.rs`
 - `src/orchestrator/run_state/model.rs`
@@ -82,7 +90,9 @@ Artifact rules:
   `Specification/runtime/runtime.md`;
 - `src/main.rs` must implement the crate-level CLI contract from `Specification/runtime/runtime.md` and delegate config loading to library-owned code;
 - `src/errors/mod.rs` must define the parent error hierarchy required by `Specification/runtime/runtime.md`;
-- `src/shared_types.rs` must define the shared cross-module runtime types required by `Specification/runtime/runtime.md`;
+- `src/shared_types/mod.rs` must define the shared cross-module runtime types required by `Specification/runtime/runtime.md` and must re-export public items from `src/shared_types/diagnostic_context.rs` and `src/shared_types/card_selection_context.rs`;
+- `src/shared_types/diagnostic_context.rs` must follow `Specification/runtime/request_pipeline/diagnostic_context.md`;
+- `src/shared_types/card_selection_context.rs` must follow `Specification/runtime/request_pipeline/card_selection_context.md`;
 - `src/config/mod.rs` must expose the parent config interface and parent config error type;
 - `src/config/settings.rs` must define the resolved typed settings model required by `Specification/runtime/runtime.md`;
 - `src/config/load.rs` must define config loading and merge logic for runtime TOML, ingest TOML, and environment values;
@@ -100,9 +110,15 @@ Artifact rules:
 - `src/request_pipeline/retrieval_metrics.rs` must define the dedicated
   request-local retrieval metrics helper required by
   `Specification/runtime/request_pipeline/retrieval_metrics.md`;
+- `src/request_pipeline/card_branch_reranking.rs` must follow
+  `Specification/runtime/request_pipeline/card_branch_reranking.md`;
 - `src/api_clients/postgres/mod.rs` must expose `run_state_store` in addition to other active postgres child modules;
 - `src/api_clients/postgres/run_state_store.rs` must follow
   `Specification/runtime/api_clients/postgres/run_state_store.md`;
+- `src/request_pipeline/observation_extraction.rs` must follow
+  `Specification/runtime/request_pipeline/observation_extraction.md`;
+- `src/request_pipeline/diagnostic_update_prompt_context_assembly.rs` must follow
+  `Specification/runtime/request_pipeline/diagnostic_update_prompt_context_assembly.md`;
 - `src/orchestrator/mod.rs` must expose `orchestrator`, `run_state`, `run_repository`, `step_executor`, and `transition_policy`;
 - `src/orchestrator/orchestrator.rs` must follow
   `Specification/runtime/orchestrator/orchestrator.md`;
@@ -113,6 +129,8 @@ Artifact rules:
 - `src/orchestrator/transition_policy/mod.rs` and
   `src/orchestrator/transition_policy/linear_pipeline.rs` must follow
   `Specification/runtime/orchestrator/transition_policy.md`;
+- `src/orchestrator/transition_policy/diagnostic_loop.rs` must follow
+  `Specification/runtime/orchestrator/diagnostic_loop_transition_policy.md`;
 - `src/orchestrator/run_state/mod.rs` must expose `model`, `view`, and `apply`;
 - `src/orchestrator/run_state/model.rs` must follow
   `Specification/runtime/orchestrator/run_state/model.md`;
@@ -139,6 +157,9 @@ Child artifacts for the request-pipeline leaf module `input_normalization` are o
 Child artifacts for the request-pipeline leaf module `query_structuring` are owned by:
 - `Specification/runtime/request_pipeline/query_structuring.md`
 
+Child artifacts for the request-pipeline leaf module `information_adequacy_analyzer` are owned by:
+- `Specification/runtime/request_pipeline/information_adequacy_analyzer.md`
+
 Child artifacts for the request-pipeline helper module `query_structuring_metrics` are owned by:
 - `Specification/runtime/request_pipeline/query_structuring_metrics.md`
 
@@ -147,6 +168,9 @@ Child artifacts for the request-pipeline helper module `retrieval_metrics` are o
 
 Child artifacts for the request-pipeline leaf module `candidate_card_retrieval` are owned by:
 - `Specification/runtime/request_pipeline/candidate_card_retrieval.md`
+
+Child artifacts for the request-pipeline leaf module `card_branch_reranking` are owned by:
+- `Specification/runtime/request_pipeline/card_branch_reranking.md`
 
 Child artifacts for the request-pipeline leaf module `card_hydration` are owned by:
 - `Specification/runtime/request_pipeline/card_hydration.md`
@@ -166,11 +190,23 @@ Child artifacts for the request-pipeline leaf module `llm_structured_generation`
 Child artifacts for the request-pipeline leaf module `response_validation_and_normalization` are owned by:
 - `Specification/runtime/request_pipeline/response_validation_and_normalization.md`
 
+Child artifacts for the request-pipeline leaf module `observation_boundary_resolver` are owned by:
+- `Specification/runtime/request_pipeline/observation_boundary_resolver.md`
+
+Child artifacts for the request-pipeline leaf module `observation_extraction` are owned by:
+- `Specification/runtime/request_pipeline/observation_extraction.md`
+
+Child artifacts for the request-pipeline leaf module `diagnostic_update_prompt_context_assembly` are owned by:
+- `Specification/runtime/request_pipeline/diagnostic_update_prompt_context_assembly.md`
+
 Child artifacts for the postgres run-state store are owned by:
 - `Specification/runtime/api_clients/postgres/run_state_store.md`
 
 Child artifacts for the orchestrator transition policy are owned by:
 - `Specification/runtime/orchestrator/transition_policy.md`
+
+Child artifacts for the diagnostic-loop orchestrator transition policy are owned by:
+- `Specification/runtime/orchestrator/diagnostic_loop_transition_policy.md`
 
 Child artifacts for the orchestrator lifecycle module are owned by:
 - `Specification/runtime/orchestrator/orchestrator.md`
@@ -220,17 +256,22 @@ Current delegated child specifications:
 - `Specification/runtime/request_pipeline/input_normalization.md`
 - `Specification/runtime/request_pipeline/query_structuring.md`
 - `Specification/runtime/request_pipeline/candidate_card_retrieval.md`
+- `Specification/runtime/request_pipeline/card_branch_reranking.md`
 - `Specification/runtime/request_pipeline/card_hydration.md`
 - `Specification/runtime/request_pipeline/incident_evidence_retrieval.md`
 - `Specification/runtime/request_pipeline/theory_evidence_retrieval.md`
 - `Specification/runtime/request_pipeline/prompt_context_assembly.md`
+- `Specification/runtime/request_pipeline/diagnostic_update_prompt_context_assembly.md`
 - `Specification/runtime/request_pipeline/llm_structured_generation.md`
 - `Specification/runtime/request_pipeline/response_validation_and_normalization.md`
+- `Specification/runtime/request_pipeline/observation_boundary_resolver.md`
+- `Specification/runtime/request_pipeline/observation_extraction.md`
 - `Specification/runtime/api_clients/postgres/run_state_store.md`
 - `Specification/runtime/orchestrator/modules.md`
 - `Specification/runtime/orchestrator/orchestrator.md`
 - `Specification/runtime/orchestrator/run_repository.md`
 - `Specification/runtime/orchestrator/transition_policy.md`
+- `Specification/runtime/orchestrator/diagnostic_loop_transition_policy.md`
 - `Specification/runtime/orchestrator/step_executor.md`
 - `Specification/runtime/orchestrator/run_state/model.md`
 - `Specification/runtime/orchestrator/run_state/view.md`

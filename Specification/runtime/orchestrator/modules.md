@@ -12,7 +12,7 @@ and error handling are owned by follow-up module specifications.
 | Module | Responsibility |
 | --- | --- |
 | `orchestrator` | Own the public run-driving boundary and run lifecycle: create a new run, resume an existing run, resume with new user input, repeatedly ask policy for the next transition, dispatch step execution, apply state mutations through the run-state writer boundary, persist progress, and finish by surfacing either the final validated response or the recorded step error as a terminal `RunOutcome`. |
-| `transition_policy` | Decide the next orchestration transition from the current `RunState`, including which step to execute next and when the run should finish with the final validated result or finish with the recorded step error. |
+| `transition_policy` | Decide the next orchestration transition from the current `RunState`, including which step to execute next and when the current iteration should finish with the final validated result or finish with the recorded step error. |
 | `step_executor` | Bridge orchestration to request-processing leaf modules by executing a requested `StepKind` against the current `RunState` and returning a typed `StepResultEnvelope`. |
 | `run_state` | Define the persisted canonical state subdomain for a single orchestration run, including `model`, `view`, and `apply` submodules. |
 | `run_repository` | Provide the orchestration-facing persistence boundary for loading and persisting `RunState` hierarchy while delegating PostgreSQL storage details to a lower-level run-state store. |
@@ -37,6 +37,9 @@ and error handling are owned by follow-up module specifications.
   - `apply` defines the only allowed mutation/update boundary.
 - `transition_policy` and `step_executor` are orchestration-layer modules;
   neither one owns persistence or mutation of `RunState`.
+- `transition_policy` may expose more than one concrete policy implementation
+  under the same public module boundary, such as a linear single-iteration
+  policy and a diagnostic-loop policy chosen by wiring.
 - PostgreSQL persistence details for canonical run-state hierarchy should live
   in `api_clients/postgres/run_state_store`, while `run_repository` remains the
   orchestration-facing persistence boundary.

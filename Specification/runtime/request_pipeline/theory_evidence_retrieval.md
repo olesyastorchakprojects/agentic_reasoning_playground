@@ -4,7 +4,7 @@ This document defines the runtime leaf-module contract for
 `theory_evidence_retrieval`.
 
 This module exists to:
-- accept the shared `NormalizedUserRequest`;
+- accept the shared `RetrievalQueryInput`;
 - receive the theory retrieval policy through typed retrieval settings;
 - depend on the Qdrant-backed `TheoryChunksCollection` client through dependency injection;
 - issue one theory-chunk search against the theory corpus for the normalized query;
@@ -45,7 +45,7 @@ The generated Rust module file for the current version is:
 ## 2) Required Shared Types
 
 This module must use the shared runtime types:
-- `NormalizedUserRequest`
+- `RetrievalQueryInput`
 - `TheoryEvidenceChunk`
 - `TheoryEvidenceRetrievalOutput`
 - `TheoryEvidenceRetrievalMetrics`
@@ -86,7 +86,7 @@ Shared-type rules:
   execution context.
 
 Import rule for the generated Rust module:
-- shared input and output types used by this module, including `NormalizedUserRequest`, `TheoryEvidenceChunk`, and `TheoryEvidenceRetrievalOutput`, must be imported from `crate::shared_types`;
+- shared input and output types used by this module, including `RetrievalQueryInput`, `TheoryEvidenceChunk`, and `TheoryEvidenceRetrievalOutput`, must be imported from `crate::shared_types`;
 - `TheoryEvidenceRetrievalMetrics` must be imported from `crate::shared_types`
   when request-local retrieval metrics are attached to the module output;
 - retrieval metrics helper behavior is defined by
@@ -98,7 +98,7 @@ Import rule for the generated Rust module:
 - `NormalizedUserQuery` must be imported through `crate::api_clients::qdrant::...`.
 
 Shared-type placement rule:
-- before code generation for this module, `TheoryEvidenceChunk` and `TheoryEvidenceRetrievalOutput` must exist in `src/shared_types.rs`.
+- before code generation for this module, `RetrievalQueryInput`, `TheoryEvidenceChunk`, and `TheoryEvidenceRetrievalOutput` must exist in `src/shared_types/mod.rs`.
 
 ## 3) Settings Dependency
 
@@ -166,12 +166,12 @@ impl TheoryEvidenceRetrieval {
 
     pub async fn retrieve(
         &self,
-        request: &NormalizedUserRequest,
+        request: &RetrievalQueryInput,
     ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError>;
 
     pub async fn retrieve_with_context(
         &self,
-        request: &NormalizedUserRequest,
+        request: &RetrievalQueryInput,
         context: &Context,
     ) -> Result<TheoryEvidenceRetrievalOutput, TheoryEvidenceRetrievalError>;
 }
@@ -197,7 +197,7 @@ Rules:
   `retrieve_with_context(...)` must also emit the companion OpenInference
   metrics span `oi.chain.theory_evidence_retrieval_metrics` as defined by
   `Specification/runtime/observability/open_inference_spans.md`;
-- `retrieve(...)` must not mutate the input `NormalizedUserRequest`;
+- `retrieve(...)` must not mutate the input `RetrievalQueryInput`;
 - `retrieve(...)` must not expose collection-layer result types in its public return value;
 - when `context.golden_question = Some(...)`, `retrieve_with_context(...)` must
   compute retrieval metrics against
@@ -225,15 +225,15 @@ When building the collection-level request, this module must construct a
 
 ```rust
 TheoryChunkSearchRequest {
-    user_query: NormalizedUserQuery(request.query.clone()),
+    user_query: NormalizedUserQuery(request.query_text.clone()),
     limit: settings.top_k,
     score_threshold: settings.score_threshold,
 }
 ```
 
 Request-construction rules:
-- `TheoryChunkSearchRequest.user_query` must be built from the unchanged `NormalizedUserRequest.query` string;
-- the module must not paraphrase, tokenize, rewrite, trim, or otherwise mutate `NormalizedUserRequest.query` before constructing `NormalizedUserQuery`;
+- `TheoryChunkSearchRequest.user_query` must be built from the unchanged `RetrievalQueryInput.query_text` string;
+- the module must not paraphrase, tokenize, rewrite, trim, or otherwise mutate `RetrievalQueryInput.query_text` before constructing `NormalizedUserQuery`;
 - `TheoryChunkSearchRequest.limit` must equal `settings.top_k`;
 - `TheoryChunkSearchRequest.score_threshold` must equal `settings.score_threshold`;
 - `TheoryChunkSearchRequest` must be the only collection-layer input created by this module in the current version.

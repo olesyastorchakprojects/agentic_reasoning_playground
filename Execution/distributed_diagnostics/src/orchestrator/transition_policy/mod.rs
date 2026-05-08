@@ -5,8 +5,10 @@ use crate::orchestrator::run_state::model::{StepError, StepKind};
 use crate::orchestrator::run_state::view::RunStateView;
 use crate::shared_types::ResponseValidationAndNormalizationOutput;
 
+pub use diagnostic_loop::DiagnosticLoopTransitionPolicy;
 pub use linear_pipeline::LinearPipelineTransitionPolicy;
 
+mod diagnostic_loop;
 mod linear_pipeline;
 
 pub trait TransitionPolicy {
@@ -19,6 +21,9 @@ pub trait TransitionPolicy {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PolicyTransition {
     ExecuteStep { step: StepKind },
+    WaitForUser {
+        follow_up_questions: Vec<String>,
+    },
     FinishWithResult {
         result: ResponseValidationAndNormalizationOutput,
     },

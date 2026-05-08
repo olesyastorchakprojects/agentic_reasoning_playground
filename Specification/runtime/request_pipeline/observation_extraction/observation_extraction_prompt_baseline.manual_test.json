@@ -1,0 +1,84 @@
+{
+  "version": "v2",
+  "system_prompt": "Extract atomic diagnostic observations and decide whether more context is required.\nDo not infer root cause or update hypotheses.\nReturn one observation per distinct fact.\nCompleteness is required: do not stop after the first fact.\nIf the message contains 'but', 'while', 'without', 'still', 'only', 'before', or 'after', inspect both sides and extract both facts when both sides contain facts.\nDo not omit the anomalous clause.\nIf one clause is baseline/normal and another is anomalous, return both.\nPreserve explicit conditions. If the user states a condition like 'after network partitions' or 'after lease expiry', do not drop it. Keep it in statement or condition.\nstatement must be a standalone factual statement in English.\npolarity: present, absent, corrected.\ncondition is optional for workload mode, lease state, fault mode, configuration, or isolation level.\ntime_relation is optional and only for explicit ordering.\nsource_span must be an exact substring of the user message.\nUse confidence values low, medium, high.\nTop-level confidence is your confidence in the adequacy assessment and extraction result as a whole.\nObservation-level confidence is your confidence in that individual extracted atomic observation.\nSet needs_more_context=true only if the message is too vague or referential to produce a useful standalone observation.\nWhen needs_more_context=true, ask at most 2 minimal disambiguating questions.\nWhen needs_more_context=false, missing_context_questions must be empty.\nReturn the shortest valid JSON that satisfies the schema.\nOmit optional fields unless they add essential information.\nKeep string values compact.",
+  "user_template": "User message:\n{{user_message}}",
+  "response_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "confidence",
+      "observations",
+      "needs_more_context",
+      "missing_context_questions"
+    ],
+    "properties": {
+      "confidence": {
+        "type": "string",
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "observations": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "statement",
+            "confidence",
+            "polarity",
+            "source_span"
+          ],
+          "properties": {
+            "statement": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
+            },
+            "condition": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "polarity": {
+              "type": "string",
+              "enum": [
+                "present",
+                "absent",
+                "corrected"
+              ]
+            },
+            "time_relation": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_span": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "needs_more_context": {
+        "type": "boolean"
+      },
+      "missing_context_questions": {
+        "type": "array",
+        "maxItems": 2,
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,10 +1,11 @@
 use serde::Deserialize;
 use tracing::{field, info_span};
+use uuid::Uuid;
 
 use crate::shared_types::{
-    ActiveHypothesis, AlternativeContextAssessment, Context, DiagnosticResponse,
-    DiagnosticResultInterpretation, HypothesisConfidence, HypothesisSource,
-    LlmStructuredGenerationOutput, ResponseValidationAndNormalizationOutput,
+    Confidence, Context, DiagnosticResponse, DiagnosticResultInterpretation, Hypothesis,
+    HypothesisEvidenceSource, HypothesisId, HypothesisStatus, LlmStructuredGenerationOutput,
+    ResponseValidationAndNormalizationOutput,
 };
 
 // ---------------------------------------------------------------------------
@@ -25,17 +26,13 @@ pub enum ResponseValidationAndNormalizationError {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawActiveHypothesis {
-    hypothesis: String,
+struct RawHypothesis {
+    id: String,
+    text: String,
+    status: String,
+    rejection_reason: Option<String>,
     source: String,
     confidence: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawAlternativeContextAssessment {
-    used_as_hypothesis: bool,
-    reason: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,10 +40,10 @@ struct RawAlternativeContextAssessment {
 struct RawDiagnosticResponse {
     problem_understanding: String,
     similar_practical_context: String,
-    active_hypotheses: Vec<RawActiveHypothesis>,
+    hypotheses: Vec<RawHypothesis>,
     first_check: String,
     result_interpretation: RawResultInterpretation,
-    alternative_context_assessment: RawAlternativeContextAssessment,
+    competing_interpretation: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,8 +103,8 @@ impl ResponseValidationAndNormalization {
             "validation.unknown_top_level_fields_count" = field::Empty,
             "validation.unknown_top_level_fields" = field::Empty,
             "validation.result_interpretation.present" = field::Empty,
-            "validation.active_hypotheses.count" = field::Empty,
-            "validation.active_hypotheses.valid_count_range" = field::Empty,
+            "validation.hypotheses.count" = field::Empty,
+            "validation.hypotheses.valid_count_range" = field::Empty,
             "validation.inconclusive_if.present" = field::Empty,
             "validation.prohibited_final_diagnosis_language_found" = field::Empty,
             "normalization.trimmed_fields_count" = field::Empty,
@@ -116,7 +113,6 @@ impl ResponseValidationAndNormalization {
 
         let _guard = span.enter();
 
-        // Extract metadata early to record validation attempt details
         match extract_validation_metadata(&input.response_json) {
             Ok(meta) => {
                 tracing::event!(
@@ -141,7 +137,10 @@ impl ResponseValidationAndNormalization {
                         .unwrap_or_else(|_| "[]".to_string())
                         .as_str(),
                 );
-                span.record("validation.result_interpretation.present", meta.result_interpretation_present);
+                span.record(
+                    "validation.result_interpretation.present",
+                    meta.result_interpretation_present,
+                );
             }
             Err(e) => {
                 span.record("status", "error");
@@ -185,12 +184,14 @@ impl ResponseValidationAndNormalization {
                 ResponseValidationAndNormalizationError::InvalidResponseShape(err_msg.to_string())
             })?;
 
-        // Record hypothesis presence before business rule validation
-        let active_hyp_count = filtered_active_hypotheses_count(&raw);
-        let active_hyp_valid = active_hyp_count >= 2 && active_hyp_count <= 3;
-        span.record("validation.active_hypotheses.count", active_hyp_count);
-        span.record("validation.active_hypotheses.valid_count_range", active_hyp_valid);
-        span.record("validation.inconclusive_if.present", raw.result_interpretation.inconclusive_if.is_some());
+        let hyp_count = filtered_hypotheses_count(&raw);
+        let hyp_valid = hyp_count >= 2 && hyp_count <= 3;
+        span.record("validation.hypotheses.count", hyp_count);
+        span.record("validation.hypotheses.valid_count_range", hyp_valid);
+        span.record(
+            "validation.inconclusive_if.present",
+            raw.result_interpretation.inconclusive_if.is_some(),
+        );
 
         apply_business_rules(&raw).map_err(|e| {
             let err_msg = match &e {
@@ -215,7 +216,22 @@ impl ResponseValidationAndNormalization {
         span.record("validation.prohibited_final_diagnosis_language_found", prohibited);
 
         let trim_count = count_trimmed_fields(&raw);
-        let response = normalize(raw);
+        let response = normalize(raw).map_err(|e| {
+            let err_msg = match &e {
+                ResponseValidationAndNormalizationError::BusinessRuleViolation(msg) => msg.clone(),
+                _ => format!("{:?}", e),
+            };
+            span.record("status", "error");
+            span.record("error.type", "ResponseValidation.BusinessRuleViolation");
+            span.record("error.message", err_msg.as_str());
+            span.record("module.outcome", "failure");
+            crate::observability::record_error(
+                &oi_span,
+                "ResponseValidation.BusinessRuleViolation",
+                err_msg.as_str(),
+            );
+            e
+        })?;
 
         span.record("normalization.trimmed_fields_count", trim_count);
         span.record("normalization.success", true);
@@ -245,10 +261,10 @@ impl ResponseValidationAndNormalization {
 const REQUIRED_TOP_LEVEL_KEYS: &[&str] = &[
     "problem_understanding",
     "similar_practical_context",
-    "active_hypotheses",
+    "hypotheses",
     "first_check",
     "result_interpretation",
-    "alternative_context_assessment",
+    "competing_interpretation",
 ];
 
 const REQUIRED_NESTED_KEYS: &[&str] = &[
@@ -257,6 +273,7 @@ const REQUIRED_NESTED_KEYS: &[&str] = &[
     "inconclusive_if",
 ];
 
+const VALID_HYPOTHESIS_STATUSES: &[&str] = &["active", "weakened", "rejected"];
 const VALID_HYPOTHESIS_SOURCES: &[&str] =
     &["primary_incident", "alternative_context", "theory_mechanism"];
 const VALID_HYPOTHESIS_CONFIDENCES: &[&str] = &["low", "medium", "high"];
@@ -264,30 +281,26 @@ const VALID_HYPOTHESIS_CONFIDENCES: &[&str] = &["low", "medium", "high"];
 fn check_required_keys_present(
     json: &serde_json::Value,
 ) -> Result<(), ResponseValidationAndNormalizationError> {
-    let obj = json.as_object().ok_or(
-        ResponseValidationAndNormalizationError::InvalidResponseShape(
+    let obj = json
+        .as_object()
+        .ok_or(ResponseValidationAndNormalizationError::InvalidResponseShape(
             "response JSON does not match expected shape".to_string(),
-        ),
-    )?;
+        ))?;
 
     for key in REQUIRED_TOP_LEVEL_KEYS {
         if !obj.contains_key(*key) {
-            return Err(
-                ResponseValidationAndNormalizationError::InvalidResponseShape(
-                    "response JSON does not match expected shape".to_string(),
-                ),
-            );
+            return Err(ResponseValidationAndNormalizationError::InvalidResponseShape(
+                "response JSON does not match expected shape".to_string(),
+            ));
         }
     }
 
     if let Some(ri) = obj.get("result_interpretation").and_then(|v| v.as_object()) {
         for key in REQUIRED_NESTED_KEYS {
             if !ri.contains_key(*key) {
-                return Err(
-                    ResponseValidationAndNormalizationError::InvalidResponseShape(
-                        "response JSON does not match expected shape".to_string(),
-                    ),
-                );
+                return Err(ResponseValidationAndNormalizationError::InvalidResponseShape(
+                    "response JSON does not match expected shape".to_string(),
+                ));
             }
         }
     }
@@ -315,14 +328,28 @@ fn apply_business_rules(
 ) -> Result<(), ResponseValidationAndNormalizationError> {
     use ResponseValidationAndNormalizationError::BusinessRuleViolation;
 
-    let hyp_len = filtered_active_hypotheses_count(raw);
+    let hyp_len = filtered_hypotheses_count(raw);
     if hyp_len < 2 || hyp_len > 3 {
         return Err(BusinessRuleViolation(
-            "active_hypotheses must contain 2 or 3 items".to_string(),
+            "hypotheses must contain between 2 and 3 items".to_string(),
         ));
     }
 
-    for hyp in &raw.active_hypotheses {
+    for hyp in &raw.hypotheses {
+        if hyp.text.trim().is_empty() {
+            return Err(BusinessRuleViolation(
+                "hypothesis text must be non-empty after trimming".to_string(),
+            ));
+        }
+        Uuid::parse_str(&hyp.id).map_err(|_| {
+            BusinessRuleViolation(format!("hypothesis id is not a valid UUID: '{}'", hyp.id))
+        })?;
+        if !VALID_HYPOTHESIS_STATUSES.contains(&hyp.status.as_str()) {
+            return Err(BusinessRuleViolation(format!(
+                "invalid hypothesis status: '{}', must be one of: active, weakened, rejected",
+                hyp.status
+            )));
+        }
         if !VALID_HYPOTHESIS_SOURCES.contains(&hyp.source.as_str()) {
             return Err(BusinessRuleViolation(format!(
                 "invalid hypothesis source: '{}', must be one of: primary_incident, alternative_context, theory_mechanism",
@@ -334,6 +361,25 @@ fn apply_business_rules(
                 "invalid hypothesis confidence: '{}', must be one of: low, medium, high",
                 hyp.confidence
             )));
+        }
+        if hyp.status == "rejected" {
+            match &hyp.rejection_reason {
+                None => {
+                    return Err(BusinessRuleViolation(
+                        "rejection_reason must be non-empty when status is rejected".to_string(),
+                    ))
+                }
+                Some(r) if r.trim().is_empty() => {
+                    return Err(BusinessRuleViolation(
+                        "rejection_reason must be non-empty when status is rejected".to_string(),
+                    ))
+                }
+                _ => {}
+            }
+        } else if hyp.rejection_reason.is_some() {
+            return Err(BusinessRuleViolation(
+                "rejection_reason must be null when status is not rejected".to_string(),
+            ));
         }
     }
 
@@ -362,10 +408,17 @@ fn apply_business_rules(
             "supports_competing_if must be non-empty after trimming".to_string(),
         ));
     }
-    if raw.alternative_context_assessment.reason.trim().is_empty() {
-        return Err(BusinessRuleViolation(
-            "alternative_context_assessment.reason must be non-empty after trimming".to_string(),
-        ));
+    if let Some(s) = &raw.competing_interpretation {
+        if s.trim().is_empty() {
+            return Err(BusinessRuleViolation(
+                "competing_interpretation must be non-empty after trimming when present".to_string(),
+            ));
+        }
+        if contains_prohibited_phrase(s) {
+            return Err(BusinessRuleViolation(
+                "response contains prohibited final-diagnosis language".to_string(),
+            ));
+        }
     }
 
     let string_fields: &[&str] = &[
@@ -382,15 +435,13 @@ fn apply_business_rules(
             ));
         }
     }
-
-    for hyp in &raw.active_hypotheses {
-        if contains_prohibited_phrase(&hyp.hypothesis) {
+    for hyp in &raw.hypotheses {
+        if contains_prohibited_phrase(&hyp.text) {
             return Err(BusinessRuleViolation(
                 "response contains prohibited final-diagnosis language".to_string(),
             ));
         }
     }
-
     if let Some(s) = &raw.result_interpretation.inconclusive_if {
         if s.trim().is_empty() {
             return Err(BusinessRuleViolation(
@@ -498,12 +549,17 @@ fn check_prohibited_phrases_in_raw(raw: &RawDiagnosticResponse) -> bool {
             return true;
         }
     }
-    for hyp in &raw.active_hypotheses {
-        if contains_prohibited_phrase(&hyp.hypothesis) {
+    for hyp in &raw.hypotheses {
+        if contains_prohibited_phrase(&hyp.text) {
             return true;
         }
     }
     if let Some(s) = &raw.result_interpretation.inconclusive_if {
+        if contains_prohibited_phrase(s) {
+            return true;
+        }
+    }
+    if let Some(s) = &raw.competing_interpretation {
         if contains_prohibited_phrase(s) {
             return true;
         }
@@ -513,7 +569,6 @@ fn check_prohibited_phrases_in_raw(raw: &RawDiagnosticResponse) -> bool {
 
 fn count_trimmed_fields(raw: &RawDiagnosticResponse) -> usize {
     let mut count = 0;
-
     if raw.problem_understanding.as_str() != raw.problem_understanding.trim() {
         count += 1;
     }
@@ -533,22 +588,21 @@ fn count_trimmed_fields(raw: &RawDiagnosticResponse) -> usize {
     {
         count += 1;
     }
-    for h in &raw.active_hypotheses {
-        if h.hypothesis.as_str() != h.hypothesis.trim() {
+    for h in &raw.hypotheses {
+        if h.text.as_str() != h.text.trim() {
             count += 1;
         }
-    }
-    if raw.alternative_context_assessment.reason.as_str()
-        != raw.alternative_context_assessment.reason.trim()
-    {
-        count += 1;
     }
     if let Some(s) = &raw.result_interpretation.inconclusive_if {
         if s.as_str() != s.trim() {
             count += 1;
         }
     }
-
+    if let Some(s) = &raw.competing_interpretation {
+        if s.as_str() != s.trim() {
+            count += 1;
+        }
+    }
     count
 }
 
@@ -556,47 +610,68 @@ fn count_trimmed_fields(raw: &RawDiagnosticResponse) -> usize {
 // Normalization
 // ---------------------------------------------------------------------------
 
-fn parse_hypothesis_source(s: &str) -> HypothesisSource {
+fn parse_hypothesis_source(s: &str) -> HypothesisEvidenceSource {
     match s {
-        "alternative_context" => HypothesisSource::AlternativeContext,
-        "theory_mechanism" => HypothesisSource::TheoryMechanism,
-        _ => HypothesisSource::PrimaryIncident,
+        "alternative_context" => HypothesisEvidenceSource::AlternativeContext,
+        "theory_mechanism" => HypothesisEvidenceSource::TheoryMechanism,
+        _ => HypothesisEvidenceSource::PrimaryIncident,
     }
 }
 
-fn parse_hypothesis_confidence(s: &str) -> HypothesisConfidence {
+fn parse_hypothesis_confidence(s: &str) -> Confidence {
     match s {
-        "low" => HypothesisConfidence::Low,
-        "high" => HypothesisConfidence::High,
-        _ => HypothesisConfidence::Medium,
+        "low" => Confidence::Low,
+        "high" => Confidence::High,
+        _ => Confidence::Medium,
+    }
+}
+
+fn parse_hypothesis_status(
+    status: &str,
+    rejection_reason: Option<String>,
+) -> HypothesisStatus {
+    match status {
+        "weakened" => HypothesisStatus::Weakened,
+        "rejected" => HypothesisStatus::Rejected(
+            rejection_reason.unwrap_or_default().trim().to_string(),
+        ),
+        _ => HypothesisStatus::Active,
     }
 }
 
 fn normalize_nullable(s: Option<String>) -> Option<String> {
     s.and_then(|v| {
         let trimmed = v.trim().to_string();
-        if trimmed.is_empty() {
-            None
-        } else {
-            Some(trimmed)
-        }
+        if trimmed.is_empty() { None } else { Some(trimmed) }
     })
 }
 
-fn normalize(raw: RawDiagnosticResponse) -> DiagnosticResponse {
-    DiagnosticResponse {
+fn normalize(
+    raw: RawDiagnosticResponse,
+) -> Result<DiagnosticResponse, ResponseValidationAndNormalizationError> {
+    use ResponseValidationAndNormalizationError::BusinessRuleViolation;
+
+    let mut hypotheses = Vec::with_capacity(raw.hypotheses.len());
+    for h in raw.hypotheses {
+        if h.text.trim().is_empty() {
+            continue;
+        }
+        let uuid = Uuid::parse_str(&h.id).map_err(|_| {
+            BusinessRuleViolation(format!("hypothesis id is not a valid UUID: '{}'", h.id))
+        })?;
+        hypotheses.push(Hypothesis {
+            id: HypothesisId(uuid),
+            text: h.text.trim().to_string(),
+            status: parse_hypothesis_status(&h.status, h.rejection_reason),
+            source: parse_hypothesis_source(&h.source),
+            confidence: parse_hypothesis_confidence(&h.confidence),
+        });
+    }
+
+    Ok(DiagnosticResponse {
         problem_understanding: raw.problem_understanding.trim().to_string(),
         similar_practical_context: raw.similar_practical_context.trim().to_string(),
-        active_hypotheses: raw
-            .active_hypotheses
-            .into_iter()
-            .filter(|h| !h.hypothesis.trim().is_empty())
-            .map(|h| ActiveHypothesis {
-                hypothesis: h.hypothesis.trim().to_string(),
-                source: parse_hypothesis_source(&h.source),
-                confidence: parse_hypothesis_confidence(&h.confidence),
-            })
-            .collect(),
+        hypotheses,
         first_check: raw.first_check.trim().to_string(),
         result_interpretation: DiagnosticResultInterpretation {
             supports_primary_if: raw
@@ -611,18 +686,12 @@ fn normalize(raw: RawDiagnosticResponse) -> DiagnosticResponse {
                 .to_string(),
             inconclusive_if: normalize_nullable(raw.result_interpretation.inconclusive_if),
         },
-        alternative_context_assessment: AlternativeContextAssessment {
-            used_as_hypothesis: raw.alternative_context_assessment.used_as_hypothesis,
-            reason: raw.alternative_context_assessment.reason.trim().to_string(),
-        },
-    }
+        competing_interpretation: normalize_nullable(raw.competing_interpretation),
+    })
 }
 
-fn filtered_active_hypotheses_count(raw: &RawDiagnosticResponse) -> usize {
-    raw.active_hypotheses
-        .iter()
-        .filter(|h| !h.hypothesis.trim().is_empty())
-        .count()
+fn filtered_hypotheses_count(raw: &RawDiagnosticResponse) -> usize {
+    raw.hypotheses.iter().filter(|h| !h.text.trim().is_empty()).count()
 }
 
 // ---------------------------------------------------------------------------
@@ -650,13 +719,31 @@ mod tests {
         }
     }
 
+    fn new_uuid() -> String {
+        Uuid::new_v4().to_string()
+    }
+
     fn valid_json() -> serde_json::Value {
         json!({
             "problem_understanding": "The service is experiencing high latency under load",
             "similar_practical_context": "This resembles a GC pause pattern seen in heap-constrained JVMs",
-            "active_hypotheses": [
-                {"hypothesis": "Heap exhaustion causing full GC pauses", "source": "primary_incident", "confidence": "medium"},
-                {"hypothesis": "Lock contention on shared connection pool", "source": "alternative_context", "confidence": "low"}
+            "hypotheses": [
+                {
+                    "id": new_uuid(),
+                    "text": "Heap exhaustion causing full GC pauses",
+                    "status": "active",
+                    "rejection_reason": null,
+                    "source": "primary_incident",
+                    "confidence": "medium"
+                },
+                {
+                    "id": new_uuid(),
+                    "text": "Lock contention on shared connection pool",
+                    "status": "weakened",
+                    "rejection_reason": null,
+                    "source": "alternative_context",
+                    "confidence": "low"
+                }
             ],
             "first_check": "Examine GC pause duration histogram in the last 30 minutes",
             "result_interpretation": {
@@ -664,10 +751,7 @@ mod tests {
                 "supports_competing_if": "Lock wait time exceeds 100ms with normal GC",
                 "inconclusive_if": "Both metrics are within their normal baselines"
             },
-            "alternative_context_assessment": {
-                "used_as_hypothesis": true,
-                "reason": "The alternative case shows a different failure mechanism under the same symptom"
-            }
+            "competing_interpretation": null
         })
     }
 
@@ -677,566 +761,245 @@ mod tests {
 
     #[test]
     fn new_returns_unit_struct() {
-        let _ = ResponseValidationAndNormalization::new();
+        let _ = make();
     }
 
     // -----------------------------------------------------------------------
-    // Shape validation — missing required fields
+    // Shape validation — missing required top-level fields
     // -----------------------------------------------------------------------
 
     #[test]
-    fn shape_rejects_missing_problem_understanding() {
-        let mut j = valid_json();
-        j.as_object_mut().unwrap().remove("problem_understanding");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape, got: {err}"
-        );
+    fn missing_problem_understanding_fails_shape() {
+        let mut json = valid_json();
+        json.as_object_mut().unwrap().remove("problem_understanding");
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::InvalidResponseShape(_))
+        ));
     }
 
     #[test]
-    fn shape_rejects_missing_active_hypotheses() {
-        let mut j = valid_json();
-        j.as_object_mut().unwrap().remove("active_hypotheses");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape, got: {err}"
-        );
+    fn missing_hypotheses_fails_shape() {
+        let mut json = valid_json();
+        json.as_object_mut().unwrap().remove("hypotheses");
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::InvalidResponseShape(_))
+        ));
     }
 
     #[test]
-    fn shape_rejects_missing_result_interpretation() {
-        let mut j = valid_json();
-        j.as_object_mut().unwrap().remove("result_interpretation");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape, got: {err}"
-        );
-    }
-
-    #[test]
-    fn shape_rejects_missing_alternative_context_assessment() {
-        let mut j = valid_json();
-        j.as_object_mut().unwrap().remove("alternative_context_assessment");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape for missing alternative_context_assessment, got: {err}"
-        );
-    }
-
-    #[test]
-    fn shape_rejects_missing_supports_primary_if() {
-        let mut j = valid_json();
-        j["result_interpretation"]
-            .as_object_mut()
+    fn unknown_top_level_field_fails_shape() {
+        let mut json = valid_json();
+        json.as_object_mut()
             .unwrap()
-            .remove("supports_primary_if");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape, got: {err}"
-        );
+            .insert("extra_field".to_string(), json!("unexpected"));
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::InvalidResponseShape(_))
+        ));
     }
 
     #[test]
-    fn shape_rejects_missing_inconclusive_if_key() {
-        let mut j = valid_json();
-        j["result_interpretation"]
-            .as_object_mut()
-            .unwrap()
-            .remove("inconclusive_if");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape for missing inconclusive_if key, got: {err}"
-        );
+    fn non_object_top_level_fails_shape() {
+        let result = make().validate_and_normalize(&make_input(json!("not an object")));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::InvalidResponseShape(_))
+        ));
     }
 
     // -----------------------------------------------------------------------
-    // Shape validation — unknown fields
+    // Hypothesis validation
     // -----------------------------------------------------------------------
 
     #[test]
-    fn shape_rejects_unknown_top_level_field() {
-        let mut j = valid_json();
-        j["extra_unknown_field"] = json!("should not be here");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape for unknown top-level field, got: {err}"
-        );
+    fn invalid_hypothesis_id_fails_business_rule() {
+        let mut json = valid_json();
+        json["hypotheses"][0]["id"] = json!("not-a-uuid");
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
+        ));
     }
 
     #[test]
-    fn shape_rejects_unknown_nested_field_in_result_interpretation() {
-        let mut j = valid_json();
-        j["result_interpretation"]["unexpected_key"] = json!("oops");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape for unknown nested field, got: {err}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Shape validation — wrong types
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn shape_rejects_number_for_problem_understanding() {
-        let mut j = valid_json();
-        j["problem_understanding"] = json!(42);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape for wrong type, got: {err}"
-        );
+    fn invalid_hypothesis_status_fails_business_rule() {
+        let mut json = valid_json();
+        json["hypotheses"][0]["status"] = json!("confirmed");
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
+        ));
     }
 
     #[test]
-    fn shape_rejects_string_for_active_hypotheses() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!("should be an array");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape for string where array expected, got: {err}"
-        );
+    fn rejected_status_without_reason_fails_business_rule() {
+        let mut json = valid_json();
+        json["hypotheses"][0]["status"] = json!("rejected");
+        json["hypotheses"][0]["rejection_reason"] = json!(null);
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
+        ));
     }
 
     #[test]
-    fn shape_rejects_string_item_in_active_hypotheses() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!(["plain string 1", "plain string 2"]);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::InvalidResponseShape(_)),
-            "expected InvalidResponseShape for string items in active_hypotheses, got: {err}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Shape validation — nullable fields accepted
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn shape_accepts_null_inconclusive_if() {
-        let mut j = valid_json();
-        j["result_interpretation"]["inconclusive_if"] = json!(null);
-        assert!(make().validate_and_normalize(&make_input(j)).is_ok());
-    }
-
-    // -----------------------------------------------------------------------
-    // Business rules — active_hypotheses count
-    // -----------------------------------------------------------------------
-
-    fn hyp(hypothesis: &str, source: &str, confidence: &str) -> serde_json::Value {
-        json!({"hypothesis": hypothesis, "source": source, "confidence": confidence})
+    fn non_rejected_status_with_reason_fails_business_rule() {
+        let mut json = valid_json();
+        json["hypotheses"][0]["status"] = json!("active");
+        json["hypotheses"][0]["rejection_reason"] = json!("some reason");
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
+        ));
     }
 
     #[test]
-    fn business_accepts_two_hypotheses() {
-        let j = valid_json();
-        assert!(make().validate_and_normalize(&make_input(j)).is_ok());
+    fn zero_hypotheses_fails_business_rule() {
+        let mut json = valid_json();
+        json["hypotheses"] = json!([]);
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
+        ));
     }
 
     #[test]
-    fn business_accepts_three_hypotheses() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp("Heap exhaustion", "primary_incident", "medium"),
-            hyp("Lock contention", "alternative_context", "low"),
-            hyp("Network saturation", "theory_mechanism", "low")
+    fn four_hypotheses_fails_business_rule() {
+        let uuid = new_uuid();
+        let mut json = valid_json();
+        json["hypotheses"] = json!([
+            {"id": uuid, "text": "H1", "status": "active", "rejection_reason": null, "source": "primary_incident", "confidence": "low"},
+            {"id": Uuid::new_v4().to_string(), "text": "H2", "status": "active", "rejection_reason": null, "source": "primary_incident", "confidence": "low"},
+            {"id": Uuid::new_v4().to_string(), "text": "H3", "status": "active", "rejection_reason": null, "source": "primary_incident", "confidence": "low"},
+            {"id": Uuid::new_v4().to_string(), "text": "H4", "status": "active", "rejection_reason": null, "source": "primary_incident", "confidence": "low"},
         ]);
-        assert!(make().validate_and_normalize(&make_input(j)).is_ok());
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
+        ));
     }
 
     #[test]
-    fn business_rejects_one_hypothesis() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([hyp("Only one", "primary_incident", "medium")]);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for one hypothesis, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_four_hypotheses() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp("H1", "primary_incident", "medium"),
-            hyp("H2", "primary_incident", "medium"),
-            hyp("H3", "alternative_context", "low"),
-            hyp("H4", "theory_mechanism", "low")
+    fn two_hypotheses_succeeds() {
+        let mut json = valid_json();
+        json["hypotheses"] = json!([
+            {"id": new_uuid(), "text": "First hypothesis", "status": "active", "rejection_reason": null, "source": "primary_incident", "confidence": "high"},
+            {"id": new_uuid(), "text": "Second hypothesis", "status": "active", "rejection_reason": null, "source": "alternative_context", "confidence": "low"},
         ]);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for four hypotheses, got: {err}"
-        );
+        assert!(make().validate_and_normalize(&make_input(json)).is_ok());
     }
 
     #[test]
-    fn business_rejects_zero_hypotheses() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([]);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for empty hypotheses, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_invalid_hypothesis_source() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp("H1", "unknown_source", "medium"),
-            hyp("H2", "primary_incident", "medium")
+    fn one_hypothesis_fails_business_rule() {
+        let mut json = valid_json();
+        json["hypotheses"] = json!([
+            {"id": new_uuid(), "text": "Single hypothesis", "status": "active", "rejection_reason": null, "source": "primary_incident", "confidence": "high"},
         ]);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for invalid source, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_invalid_hypothesis_confidence() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp("H1", "primary_incident", "very_high"),
-            hyp("H2", "primary_incident", "medium")
-        ]);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for invalid confidence, got: {err}"
-        );
+        assert!(matches!(
+            make().validate_and_normalize(&make_input(json)),
+            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
+        ));
     }
 
     // -----------------------------------------------------------------------
-    // Business rules — empty / whitespace-only required strings
+    // Prohibited language
     // -----------------------------------------------------------------------
 
     #[test]
-    fn business_rejects_empty_problem_understanding() {
-        let mut j = valid_json();
-        j["problem_understanding"] = json!("");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_whitespace_only_problem_understanding() {
-        let mut j = valid_json();
-        j["problem_understanding"] = json!("   \t  ");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for whitespace-only, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_empty_similar_practical_context() {
-        let mut j = valid_json();
-        j["similar_practical_context"] = json!("");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_empty_first_check() {
-        let mut j = valid_json();
-        j["first_check"] = json!("");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_empty_supports_primary_if() {
-        let mut j = valid_json();
-        j["result_interpretation"]["supports_primary_if"] = json!("");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_empty_supports_competing_if() {
-        let mut j = valid_json();
-        j["result_interpretation"]["supports_competing_if"] = json!("");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_empty_alternative_context_assessment_reason() {
-        let mut j = valid_json();
-        j["alternative_context_assessment"]["reason"] = json!("");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for empty reason, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_whitespace_only_active_hypothesis() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp("Valid hypothesis", "primary_incident", "medium"),
-            hyp("   ", "primary_incident", "low")
-        ]);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for whitespace hypothesis, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_filters_empty_hypothesis_before_count_check() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp("Lock service may allow multiple holders", "primary_incident", "medium"),
-            hyp("Lease may expire while client still believes it holds", "alternative_context", "medium"),
-            hyp("Application might be misusing the lock", "theory_mechanism", "low"),
-            hyp("", "primary_incident", "low")
-        ]);
-        assert!(make().validate_and_normalize(&make_input(j)).is_ok());
+    fn prohibited_phrase_in_problem_understanding_fails() {
+        let mut json = valid_json();
+        json["problem_understanding"] =
+            json!("This confirms the root cause of the issue");
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(matches!(
+            result,
+            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
+        ));
     }
 
     // -----------------------------------------------------------------------
-    // Business rules — prohibited phrases
+    // Successful normalization
     // -----------------------------------------------------------------------
 
     #[test]
-    fn business_rejects_confirms_root_cause_in_problem_understanding() {
-        let mut j = valid_json();
-        j["problem_understanding"] = json!("This confirms the root cause of the failure");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for prohibited phrase, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_proves_diagnosis_in_first_check() {
-        let mut j = valid_json();
-        j["first_check"] = json!("Running this test proves the diagnosis");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for prohibited phrase, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_definitive_root_cause_in_supports_primary_if() {
-        let mut j = valid_json();
-        j["result_interpretation"]["supports_primary_if"] =
-            json!("This identifies the definitive root cause");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for prohibited phrase, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_prohibited_phrase_case_insensitive() {
-        let mut j = valid_json();
-        j["problem_understanding"] = json!("This CONFIRMS THE ROOT CAUSE clearly");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for case-insensitive phrase, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_prohibited_phrase_in_supports_competing_if() {
-        let mut j = valid_json();
-        j["result_interpretation"]["supports_competing_if"] =
-            json!("Confirms the root cause of secondary issue");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_prohibited_phrase_in_hypothesis_text() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp("This proves the diagnosis conclusively", "primary_incident", "high"),
-            hyp("Second hypothesis", "alternative_context", "low")
-        ]);
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation for prohibited phrase in hypothesis, got: {err}"
-        );
-    }
-
-    #[test]
-    fn business_rejects_prohibited_phrase_in_inconclusive_if() {
-        let mut j = valid_json();
-        j["result_interpretation"]["inconclusive_if"] =
-            json!("This is the definitive root cause scenario");
-        let err = make().validate_and_normalize(&make_input(j)).unwrap_err();
-        assert!(
-            matches!(err, ResponseValidationAndNormalizationError::BusinessRuleViolation(_)),
-            "expected BusinessRuleViolation, got: {err}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Normalization — trimming
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn normalization_trims_problem_understanding() {
-        let mut j = valid_json();
-        j["problem_understanding"] = json!("  trimmed text  ");
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
-        assert_eq!(out.response.problem_understanding, "trimmed text");
-    }
-
-    #[test]
-    fn normalization_trims_first_check() {
-        let mut j = valid_json();
-        j["first_check"] = json!("\tcheck GC logs\n");
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
-        assert_eq!(out.response.first_check, "check GC logs");
-    }
-
-    #[test]
-    fn normalization_trims_hypothesis_text() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp(" Hypothesis A ", "primary_incident", "medium"),
-            hyp("  Hypothesis B  ", "alternative_context", "low")
-        ]);
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
-        assert_eq!(out.response.active_hypotheses[0].hypothesis, "Hypothesis A");
-        assert_eq!(out.response.active_hypotheses[1].hypothesis, "Hypothesis B");
-    }
-
-    #[test]
-    fn normalization_filters_whitespace_only_hypothesis_before_output() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp(" Hypothesis A ", "primary_incident", "medium"),
-            hyp("   ", "primary_incident", "low"),
-            hyp("  Hypothesis B  ", "alternative_context", "low")
-        ]);
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
-        assert_eq!(out.response.active_hypotheses.len(), 2);
-        assert_eq!(out.response.active_hypotheses[0].hypothesis, "Hypothesis A");
-        assert_eq!(out.response.active_hypotheses[1].hypothesis, "Hypothesis B");
-    }
-
-    #[test]
-    fn normalization_preserves_hypothesis_order_and_source() {
-        let mut j = valid_json();
-        j["active_hypotheses"] = json!([
-            hyp("First", "primary_incident", "high"),
-            hyp("Second", "alternative_context", "medium"),
-            hyp("Third", "theory_mechanism", "low")
-        ]);
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
-        assert_eq!(out.response.active_hypotheses[0].hypothesis, "First");
-        assert_eq!(out.response.active_hypotheses[0].source, HypothesisSource::PrimaryIncident);
-        assert_eq!(out.response.active_hypotheses[0].confidence, HypothesisConfidence::High);
-        assert_eq!(out.response.active_hypotheses[1].source, HypothesisSource::AlternativeContext);
-        assert_eq!(out.response.active_hypotheses[2].source, HypothesisSource::TheoryMechanism);
-    }
-
-    // -----------------------------------------------------------------------
-    // Normalization — alternative_context_assessment
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn normalization_alternative_context_assessment_used_as_hypothesis_true() {
-        let j = valid_json();
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
-        assert!(out.response.alternative_context_assessment.used_as_hypothesis);
-    }
-
-    #[test]
-    fn normalization_alternative_context_assessment_used_as_hypothesis_false() {
-        let mut j = valid_json();
-        j["alternative_context_assessment"] = json!({
-            "used_as_hypothesis": false,
-            "reason": "Alternative context overlaps on symptom shape but not mechanism"
-        });
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
-        assert!(!out.response.alternative_context_assessment.used_as_hypothesis);
+    fn valid_input_produces_normalized_output() {
+        let json = valid_json();
+        let result = make().validate_and_normalize(&make_input(json));
+        assert!(result.is_ok());
+        let out = result.unwrap();
+        assert_eq!(out.response.hypotheses.len(), 2);
         assert_eq!(
-            out.response.alternative_context_assessment.reason,
-            "Alternative context overlaps on symptom shape but not mechanism"
+            out.response.problem_understanding,
+            "The service is experiencing high latency under load"
         );
     }
 
     #[test]
-    fn normalization_trims_alternative_context_assessment_reason() {
-        let mut j = valid_json();
-        j["alternative_context_assessment"] = json!({
-            "used_as_hypothesis": false,
-            "reason": "   similar symptoms, different mechanism   "
-        });
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
+    fn whitespace_in_string_fields_is_trimmed() {
+        let mut json = valid_json();
+        json["problem_understanding"] = json!("  trimmed  ");
+        let out = make().validate_and_normalize(&make_input(json)).unwrap();
+        assert_eq!(out.response.problem_understanding, "trimmed");
+    }
+
+    #[test]
+    fn rejected_hypothesis_carries_reason() {
+        let mut json = valid_json();
+        json["hypotheses"][0]["status"] = json!("rejected");
+        json["hypotheses"][0]["rejection_reason"] = json!("Evidence contradicts this path");
+        let out = make().validate_and_normalize(&make_input(json)).unwrap();
+        let h = &out.response.hypotheses[0];
+        assert!(matches!(&h.status, HypothesisStatus::Rejected(r) if r == "Evidence contradicts this path"));
+    }
+
+    #[test]
+    fn competing_interpretation_present_is_preserved() {
+        let mut json = valid_json();
+        json["competing_interpretation"] = json!("Could also be a network partition");
+        let out = make().validate_and_normalize(&make_input(json)).unwrap();
         assert_eq!(
-            out.response.alternative_context_assessment.reason,
-            "similar symptoms, different mechanism"
+            out.response.competing_interpretation,
+            Some("Could also be a network partition".to_string())
         );
     }
 
-    // -----------------------------------------------------------------------
-    // Normalization — nullable fields
-    // -----------------------------------------------------------------------
-
     #[test]
-    fn normalization_null_inconclusive_if_maps_to_none() {
-        let mut j = valid_json();
-        j["result_interpretation"]["inconclusive_if"] = json!(null);
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
-        assert_eq!(out.response.result_interpretation.inconclusive_if, None);
+    fn null_competing_interpretation_maps_to_none() {
+        let out = make().validate_and_normalize(&make_input(valid_json())).unwrap();
+        assert!(out.response.competing_interpretation.is_none());
     }
 
     #[test]
-    fn normalization_non_empty_inconclusive_if_preserved_and_trimmed() {
-        let mut j = valid_json();
-        j["result_interpretation"]["inconclusive_if"] = json!("  both metrics normal  ");
-        let out = make().validate_and_normalize(&make_input(j)).unwrap();
+    fn hypothesis_ids_are_parsed_as_uuid() {
+        let fixed_id = "550e8400-e29b-41d4-a716-446655440000";
+        let mut json = valid_json();
+        json["hypotheses"][0]["id"] = json!(fixed_id);
+        let out = make().validate_and_normalize(&make_input(json)).unwrap();
         assert_eq!(
-            out.response.result_interpretation.inconclusive_if,
-            Some("both metrics normal".to_string())
+            out.response.hypotheses[0].id.0,
+            Uuid::parse_str(fixed_id).unwrap()
         );
+    }
+
+    #[test]
+    fn validate_and_normalize_delegates_to_with_context() {
+        let json = valid_json();
+        let m = make();
+        let r1 = m.validate_and_normalize(&make_input(json.clone())).unwrap();
+        let r2 = m
+            .validate_and_normalize_with_context(&make_input(json), &Context::noop())
+            .unwrap();
+        assert_eq!(r1, r2);
     }
 }

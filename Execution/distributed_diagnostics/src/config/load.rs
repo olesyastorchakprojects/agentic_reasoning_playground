@@ -9,12 +9,15 @@ use crate::utils::retry::{RetryBackoffKind, RetryPolicyConfig};
 use super::{
     BagOfWordsSettings, Bm25LikeSettings, ChunkPackingSettings, ChunkPackingSource,
     ChunkRolePackingSettings, CollectionRetrievalSettings, CollectionSettings, ConfigError,
-    DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
-    InputNormalizationSettings, LlmStructuredGenerationSettings, ModelSettings,
-    ModelTransportSettings, ObservabilitySettings, OllamaModelSettings, PostgresSettings,
-    PromptContextSettings, QueryStructuringSettings, RetrievalSettings, RuntimeSettings, Settings,
-    SparsePreprocessingSettings, SparseSettings, SparseStrategySettings, TogetherModelSettings,
-    TokenizerSettings,
+    DenseCollectionSettings, DiagnosticUpdateChunkPackingSettings,
+    DiagnosticUpdatePromptContextSettings, EmbeddingModelSettings, HybridCollectionSettings,
+    IncidentEvidenceRetrievalProfiles, IncidentEvidenceRetrievalSettings,
+    IncidentEvidenceTagProfile, InputNormalizationSettings, LlmStructuredGenerationSettings,
+    ModelSettings, ModelTransportSettings, ObservabilitySettings,
+    ObservationBoundaryResolverRuntimeSettings, ObservationExtractionRuntimeSettings,
+    OllamaModelSettings, PostgresSettings, PromptContextSettings, QueryStructuringSettings,
+    RetrievalSettings, RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
+    SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
 };
 
 
@@ -28,7 +31,11 @@ struct RawConfig {
     input_normalization: RawInputNormalization,
     query_structuring: RawQueryStructuring,
     llm_structured_generation: RawLlmStructuredGeneration,
+    observation_boundary_resolver: RawObservationBoundaryResolver,
+    observation_extraction: RawObservationExtraction,
+    incident_evidence_retrieval: RawIncidentEvidenceRetrieval,
     prompt_context: RawPromptContext,
+    diagnostic_update_prompt_context: RawDiagnosticUpdatePromptContext,
     retrieval: RawRetrieval,
     model: RawModel,
     embedding: RawEmbedding,
@@ -41,6 +48,55 @@ struct RawConfig {
 #[derive(Debug, Deserialize)]
 struct RawChunkAuditLog {
     path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawObservationBoundaryResolver {
+    provider: String,
+    model: String,
+    prompt_asset_path: String,
+    max_output_tokens: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawObservationExtraction {
+    provider: String,
+    model: String,
+    prompt_asset_path: String,
+    max_output_tokens: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawIncidentEvidenceRetrieval {
+    retrieval: RawCollectionRetrieval,
+    profiles: RawIncidentEvidenceRetrievalProfiles,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawIncidentEvidenceRetrievalProfiles {
+    initial: RawIncidentEvidenceTagProfile,
+    continuation: RawIncidentEvidenceTagProfile,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawIncidentEvidenceTagProfile {
+    primary_tags: Vec<String>,
+    alternative_tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDiagnosticUpdatePromptContext {
+    prompt_asset_path: String,
+    chunk_packing: RawDiagnosticUpdateChunkPacking,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawDiagnosticUpdateChunkPacking {
+    evidence_for_match: RawChunkRolePacking,
+    next_check_hint: RawChunkRolePacking,
+    supporting_explanation: RawChunkRolePacking,
+    alternative_context: RawChunkRolePacking,
+    mechanism_explanation: RawChunkRolePacking,
 }
 
 #[derive(Debug, Deserialize)]
@@ -277,6 +333,10 @@ fn load_inner(
     )?;
 
     let prompt_context = resolve_prompt_context(&raw.prompt_context)?;
+    let diagnostic_update_prompt_context =
+        resolve_diagnostic_update_prompt_context(&raw.diagnostic_update_prompt_context)?;
+    let incident_evidence_retrieval =
+        resolve_incident_evidence_retrieval(&raw.incident_evidence_retrieval, &raw.qdrant)?;
 
     let ollama_url = require_env_fn(env_fn, "OLLAMA_URL")?;
     let qdrant_url = require_env_fn(env_fn, "QDRANT_URL")?;
@@ -290,6 +350,12 @@ fn load_inner(
         runtime: RuntimeSettings {
             config_version: raw.runtime.config_version,
         },
+        retrieval: RetrievalSettings {
+            qdrant_url,
+            cards,
+            practice,
+            theory,
+        },
         input_normalization: InputNormalizationSettings {
             max_input_tokens: raw.input_normalization.max_input_tokens,
             tokenizer_source: raw.input_normalization.tokenizer_source,
@@ -302,13 +368,21 @@ fn load_inner(
         llm_structured_generation: LlmStructuredGenerationSettings {
             max_output_tokens: raw.llm_structured_generation.max_output_tokens,
         },
-        prompt_context,
-        retrieval: RetrievalSettings {
-            qdrant_url,
-            cards,
-            practice,
-            theory,
+        observation_boundary_resolver: ObservationBoundaryResolverRuntimeSettings {
+            provider: raw.observation_boundary_resolver.provider,
+            model: raw.observation_boundary_resolver.model,
+            prompt_asset_path: raw.observation_boundary_resolver.prompt_asset_path,
+            max_output_tokens: raw.observation_boundary_resolver.max_output_tokens,
         },
+        observation_extraction: ObservationExtractionRuntimeSettings {
+            provider: raw.observation_extraction.provider,
+            model: raw.observation_extraction.model,
+            prompt_asset_path: raw.observation_extraction.prompt_asset_path,
+            max_output_tokens: raw.observation_extraction.max_output_tokens,
+        },
+        incident_evidence_retrieval,
+        prompt_context,
+        diagnostic_update_prompt_context,
         model: ModelSettings {
             transport: model_transport,
         },
@@ -492,6 +566,96 @@ fn resolve_prompt_context(raw: &RawPromptContext) -> Result<PromptContextSetting
     })
 }
 
+fn parse_incident_chunk_tags(
+    raw_tags: &[String],
+    field_context: &str,
+) -> Result<Vec<IncidentChunkTag>, ConfigError> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::with_capacity(raw_tags.len());
+    for raw_tag in raw_tags {
+        let tag =
+            IncidentChunkTag::from_str(raw_tag).map_err(|_| ConfigError::InvalidValue {
+                field: field_context.to_string(),
+                reason: format!("unknown tag '{raw_tag}'"),
+            })?;
+        if !seen.insert(tag) {
+            return Err(ConfigError::InvalidValue {
+                field: field_context.to_string(),
+                reason: format!("duplicate tag '{raw_tag}'"),
+            });
+        }
+        result.push(tag);
+    }
+    Ok(result)
+}
+
+fn resolve_incident_evidence_retrieval(
+    raw: &RawIncidentEvidenceRetrieval,
+    qdrant: &RawQdrant,
+) -> Result<IncidentEvidenceRetrievalSettings, ConfigError> {
+    let retrieval = resolve_collection_retrieval(
+        &raw.retrieval,
+        &qdrant.collections.practice,
+        "incident_evidence_retrieval",
+    )?;
+
+    let initial = IncidentEvidenceTagProfile {
+        primary_tags: parse_incident_chunk_tags(
+            &raw.profiles.initial.primary_tags,
+            "incident_evidence_retrieval.profiles.initial.primary_tags",
+        )?,
+        alternative_tags: parse_incident_chunk_tags(
+            &raw.profiles.initial.alternative_tags,
+            "incident_evidence_retrieval.profiles.initial.alternative_tags",
+        )?,
+    };
+    let continuation = IncidentEvidenceTagProfile {
+        primary_tags: parse_incident_chunk_tags(
+            &raw.profiles.continuation.primary_tags,
+            "incident_evidence_retrieval.profiles.continuation.primary_tags",
+        )?,
+        alternative_tags: parse_incident_chunk_tags(
+            &raw.profiles.continuation.alternative_tags,
+            "incident_evidence_retrieval.profiles.continuation.alternative_tags",
+        )?,
+    };
+
+    Ok(IncidentEvidenceRetrievalSettings {
+        retrieval,
+        profiles: IncidentEvidenceRetrievalProfiles { initial, continuation },
+    })
+}
+
+fn resolve_diagnostic_update_prompt_context(
+    raw: &RawDiagnosticUpdatePromptContext,
+) -> Result<DiagnosticUpdatePromptContextSettings, ConfigError> {
+    Ok(DiagnosticUpdatePromptContextSettings {
+        prompt_asset_path: raw.prompt_asset_path.clone(),
+        chunk_packing: DiagnosticUpdateChunkPackingSettings {
+            evidence_for_match: resolve_chunk_role(
+                &raw.chunk_packing.evidence_for_match,
+                "diagnostic_update_prompt_context.chunk_packing.evidence_for_match",
+            )?,
+            next_check_hint: resolve_chunk_role(
+                &raw.chunk_packing.next_check_hint,
+                "diagnostic_update_prompt_context.chunk_packing.next_check_hint",
+            )?,
+            supporting_explanation: resolve_chunk_role(
+                &raw.chunk_packing.supporting_explanation,
+                "diagnostic_update_prompt_context.chunk_packing.supporting_explanation",
+            )?,
+            alternative_context: resolve_chunk_role(
+                &raw.chunk_packing.alternative_context,
+                "diagnostic_update_prompt_context.chunk_packing.alternative_context",
+            )?,
+            mechanism_explanation: resolve_chunk_role(
+                &raw.chunk_packing.mechanism_explanation,
+                "diagnostic_update_prompt_context.chunk_packing.mechanism_explanation",
+            )?,
+        },
+    })
+}
+
 fn resolve_chunk_role(
     raw: &RawChunkRolePacking,
     role_name: &str,
@@ -643,6 +807,39 @@ max_output_tokens = 2200
 [llm_structured_generation]
 max_output_tokens = 1200
 
+[observation_boundary_resolver]
+provider = "together"
+model = "openai/gpt-oss-20b"
+prompt_asset_path = "/tmp/obr_prompt.json"
+max_output_tokens = 600
+
+[observation_extraction]
+provider = "together"
+model = "openai/gpt-oss-20b"
+prompt_asset_path = "/tmp/oe_prompt.json"
+max_output_tokens = 600
+
+[incident_evidence_retrieval.retrieval]
+top_k = 12
+score_threshold = 0.2
+max_alternatives = 2
+
+[incident_evidence_retrieval.retrieval.embedding_retry]
+max_attempts = 3
+backoff = "exponential"
+
+[incident_evidence_retrieval.retrieval.qdrant_retry]
+max_attempts = 3
+backoff = "exponential"
+
+[incident_evidence_retrieval.profiles.initial]
+primary_tags = ["chunk_role:symptom", "chunk_role:impact"]
+alternative_tags = ["chunk_role:failure_mode"]
+
+[incident_evidence_retrieval.profiles.continuation]
+primary_tags = ["chunk_role:symptom_change", "chunk_role:investigation"]
+alternative_tags = ["chunk_role:uncertainty"]
+
 [prompt_context]
 prompt_asset_path = "Specification/runtime/request_pipeline/prompt_context_assembly/diagnostic_response_prompt_baseline.manual_test.json"
 
@@ -672,6 +869,40 @@ fallback_to_any_chunk = false
 tag_priority = ["chunk_role:failure_mode"]
 
 [prompt_context.chunk_packing.mechanism_explanation]
+source = "theory"
+limit = 1
+fallback_to_any_chunk = false
+tag_priority = []
+
+[diagnostic_update_prompt_context]
+prompt_asset_path = "/tmp/diagnostic_update_prompt.json"
+
+[diagnostic_update_prompt_context.chunk_packing.evidence_for_match]
+source = "primary_incident"
+limit = 1
+fallback_to_any_chunk = true
+tag_priority = ["chunk_role:symptom"]
+
+[diagnostic_update_prompt_context.chunk_packing.next_check_hint]
+source = "primary_incident"
+limit = 1
+fallback_to_any_chunk = true
+tag_priority = ["chunk_role:diagnostic_step"]
+
+[diagnostic_update_prompt_context.chunk_packing.supporting_explanation]
+source = "primary_incident"
+limit = 1
+fallback_to_any_chunk = false
+tag_priority = []
+
+[diagnostic_update_prompt_context.chunk_packing.alternative_context]
+source = "alternative_incident"
+limit = 2
+per_case_limit = 1
+fallback_to_any_chunk = false
+tag_priority = []
+
+[diagnostic_update_prompt_context.chunk_packing.mechanism_explanation]
 source = "theory"
 limit = 1
 fallback_to_any_chunk = false

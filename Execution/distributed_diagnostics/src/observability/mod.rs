@@ -384,6 +384,50 @@ pub(crate) fn oi_guardrail_response_validation_span(parent: &tracing::Span) -> t
     )
 }
 
+pub(crate) fn oi_llm_observation_boundary_resolver_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.llm.observation_boundary_resolver",
+        openinference.span.kind = "LLM",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        llm.raw_response = field::Empty,
+        llm.model_name = field::Empty,
+        llm.provider = field::Empty,
+        llm.invocation_parameters = field::Empty,
+        llm.token_count.prompt = field::Empty,
+        llm.token_count.completion = field::Empty,
+        llm.token_count.total = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_llm_observation_extraction_span(parent: &tracing::Span) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.llm.observation_extraction",
+        openinference.span.kind = "LLM",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        llm.raw_response = field::Empty,
+        llm.model_name = field::Empty,
+        llm.provider = field::Empty,
+        llm.invocation_parameters = field::Empty,
+        llm.token_count.prompt = field::Empty,
+        llm.token_count.completion = field::Empty,
+        llm.token_count.total = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
 pub(crate) fn oi_retriever_candidate_cards_span(parent: &tracing::Span) -> tracing::Span {
     tracing::info_span!(
         parent: parent,
@@ -522,6 +566,23 @@ pub(crate) fn oi_chain_prompt_context_assembly_span(parent: &tracing::Span) -> t
     tracing::info_span!(
         parent: parent,
         "oi.chain.prompt_context_assembly",
+        openinference.span.kind = "CHAIN",
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
+        status = field::Empty,
+        error.type = field::Empty,
+        error.message = field::Empty,
+    )
+}
+
+pub(crate) fn oi_chain_diagnostic_update_prompt_context_assembly_span(
+    parent: &tracing::Span,
+) -> tracing::Span {
+    tracing::info_span!(
+        parent: parent,
+        "oi.chain.diagnostic_update_prompt_context_assembly",
         openinference.span.kind = "CHAIN",
         input.value = field::Empty,
         input.mime_type = field::Empty,

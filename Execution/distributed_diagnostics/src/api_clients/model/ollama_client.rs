@@ -509,6 +509,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn json_schema_mode_sends_format_json() {
+        let resp_body =
+            serde_json::json!({"message": {"content": "{}"}, "done_reason": "stop"}).to_string();
+        let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
+        let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let mut req = simple_request();
+        req.response_mode =
+            ModelResponseMode::JsonSchema(serde_json::json!({"type": "object"}));
+        client.generate(&req).await.unwrap();
+        let bodies = server.take_bodies().await;
+        let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
+        assert_eq!(body["format"], "json");
+    }
+
+    #[tokio::test]
+    async fn json_schema_non_object_fails_before_http() {
+        let server = MockHttpServer::new(vec![]).await;
+        let client = OllamaModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let mut req = simple_request();
+        req.response_mode = ModelResponseMode::JsonSchema(serde_json::json!("not an object"));
+        assert!(matches!(
+            client.generate(&req).await.unwrap_err(),
+            ModelClientError::InvalidRequest(_)
+        ));
+        assert!(server.take_bodies().await.is_empty());
+    }
+
+    #[tokio::test]
     async fn preserves_message_order() {
         let resp_body =
             serde_json::json!({"message": {"content": "ok"}, "done_reason": "stop"}).to_string();

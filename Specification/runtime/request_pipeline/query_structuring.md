@@ -415,7 +415,7 @@ This module must call the shared `ModelClient` trait defined by:
 - `Specification/runtime/api_clients/model/model_client.md`
 
 The current call must use:
-- `response_mode = JsonObject`
+- `response_mode = JsonSchema(prompt_asset.response_schema.clone())`
 - `temperature = 0.0`
 - `max_output_tokens = settings.max_output_tokens`
 

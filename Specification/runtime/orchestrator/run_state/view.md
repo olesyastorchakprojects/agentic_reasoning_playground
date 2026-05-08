@@ -28,6 +28,7 @@ use crate::orchestrator::run_state::model::{
     RunId,
     RunIteration,
     RunIterationId,
+    RunIterationStatus,
     RunState,
     RunStatus,
     StepError,
@@ -104,6 +105,14 @@ impl<'a> RunStateView<'a> {
         &self,
     ) -> impl DoubleEndedIterator<Item = IterationView<'a>>;
 
+    pub fn normal_iterations(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = IterationView<'a>>;
+
+    pub fn short_iterations(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = IterationView<'a>>;
+
     pub fn last_iteration(&self) -> Option<IterationView<'a>>;
 }
 ```
@@ -112,6 +121,12 @@ impl<'a> RunStateView<'a> {
 iterator is double-ended, callers may use `.rev()` to iterate from newest
 iteration to oldest iteration.
 
+`normal_iterations()` must preserve the relative order of the subset of
+`iterations()` that satisfy `IterationView::is_normal_iteration()`.
+
+`short_iterations()` must preserve the relative order of the subset of
+`iterations()` that satisfy `IterationView::is_short_iteration()`.
+
 ## 7) Iteration View API
 
 The generated module must define:
@@ -119,6 +134,8 @@ The generated module must define:
 ```rust
 impl<'a> IterationView<'a> {
     pub fn iteration_id(&self) -> RunIterationId;
+
+    pub fn status(&self) -> RunIterationStatus;
 
     pub fn step_count(&self) -> usize;
 
@@ -133,6 +150,10 @@ impl<'a> IterationView<'a> {
     pub fn pending_step(&self) -> Option<PendingStepView<'a>>;
 
     pub fn finished_step(&self, kind: StepKind) -> Option<FinishedStepView<'a>>;
+
+    pub fn is_normal_iteration(&self) -> bool;
+
+    pub fn is_short_iteration(&self) -> bool;
 }
 ```
 
@@ -148,6 +169,19 @@ iterate from newest step record to oldest step record within the iteration.
 
 `finished_step(kind)` returns the last finished step with the requested
 `StepKind` in this iteration.
+
+Classification rules:
+
+- `status()` must return the underlying stored `RunIteration.status`;
+- `is_normal_iteration()` must return `true` when
+  `status() == RunIterationStatus::Active` or
+  `status() == RunIterationStatus::FinishedWithSuccess`;
+- `is_short_iteration()` must return `true` when
+  `status() == RunIterationStatus::FinishedWithWaitInput`;
+- `status() == RunIterationStatus::FinishedWithError` must make both
+  classification predicates return `false`;
+- `is_normal_iteration()` and `is_short_iteration()` must never both return
+  `true` for the same iteration.
 
 ## 8) Step View API
 
@@ -180,6 +214,8 @@ impl<'a> StepView<'a> {
 `iteration(iteration_id)` must return the underlying stored `RunIteration`
 borrow when the requested id exists and `None` otherwise.
 
+`status()` must equal `RunIteration.status`.
+
 `step_count()` must equal `RunIteration.step_records.len()`.
 
 ## 9) View Invariants
@@ -192,6 +228,10 @@ The explicit `to_owned()` helpers are the only view methods allowed to clone
 underlying owned records for orchestration persistence handoff and test setup.
 
 View methods that expose ids, kinds, and timestamps may return copied values.
+
+`normal_iterations()` and `short_iterations()` are classification helpers for
+history-derived projections. They must not clone step payloads or rewrite
+iteration contents.
 
 `StepView` must mirror the underlying `StepRecord` variant:
 

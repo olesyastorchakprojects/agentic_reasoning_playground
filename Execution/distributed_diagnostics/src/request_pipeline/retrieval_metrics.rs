@@ -19,6 +19,7 @@ pub(crate) enum RetrievalMetricsError {
     InvalidGoldenTargets { reason: String },
     InvalidK { reason: String },
     InconsistentGradedRelevance { reason: String },
+    #[allow(dead_code)]
     UnexpectedComputationState { reason: String },
 }
 

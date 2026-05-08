@@ -3,11 +3,12 @@
 This document defines the runtime leaf-module contract for `candidate_card_retrieval`.
 
 This module exists to:
-- accept the shared `NormalizedUserRequest`;
+- accept the shared `RetrievalQueryInput`;
 - depend on the collection-level `CardsCollection` trait through dependency injection;
-- convert the normalized query text into a collection-level `CardSearchRequest`;
+- convert the retrieval query text into a collection-level `CardSearchRequest`;
 - call the selected cards collection implementation;
 - map ordered retrieval hits into the shared `CandidateCard` type;
+- preserve the full ordered candidate-card list as `ranked_candidates`;
 - partition the ordered candidate list into `primary` and `alternatives`;
 - return the shared `CandidateCardRetrievalOutput`.
 
@@ -45,7 +46,7 @@ The generated Rust module file for the current version is:
 ## 2) Required Shared Types
 
 This module must use the shared runtime types:
-- `NormalizedUserRequest`
+- `RetrievalQueryInput`
 - `CandidateCard`
 - `CandidateCardRetrievalOutput`
 - `CandidateCardRetrievalMetrics`
@@ -63,6 +64,7 @@ pub struct CandidateCard {
 }
 
 pub struct CandidateCardRetrievalOutput {
+    pub ranked_candidates: Vec<CandidateCard>,
     pub primary: Option<CandidateCard>,
     pub alternatives: Vec<CandidateCard>,
     pub metrics: Option<CandidateCardRetrievalMetrics>,
@@ -76,9 +78,17 @@ Shared-type rules:
 - `CandidateCard.case_id` is the canonical incident-card identifier selected from retrieval output;
 - `CandidateCard.score` is the retrieval score returned by the collection layer for that card;
 - `CandidateCardRetrievalOutput` is the shared cross-module output of `candidate_card_retrieval`;
+- `CandidateCardRetrievalOutput.ranked_candidates` is the full ordered candidate-card list returned by retrieval before branch-aware reranking;
+- `CandidateCardRetrievalOutput.ranked_candidates` must preserve retrieval order exactly;
+- `CandidateCardRetrievalOutput.ranked_candidates` must not contain duplicate card ids;
 - `CandidateCardRetrievalOutput.primary` contains the highest-ranked candidate card when retrieval returns at least one hit;
 - `CandidateCardRetrievalOutput.primary` must be `None` when retrieval returns zero hits;
+- when `CandidateCardRetrievalOutput.primary = Some(card)`, this module must populate the first element of `ranked_candidates` with the same `case_id` as `card`;
+- this correspondence is carried as a producer-consumer contract on the shared output value, not as a constructor-validated invariant on `CandidateCardRetrievalOutput`;
+- downstream modules that depend on the correspondence must validate it explicitly at their own boundary;
 - `CandidateCardRetrievalOutput.alternatives` contains the remaining selected candidates in retrieval order after excluding the `primary` hit;
+- every card in `CandidateCardRetrievalOutput.alternatives` must also appear in `ranked_candidates`;
+- `primary` and `alternatives` are retained as compatibility fields for downstream modules that do not yet consume branch-aware reranking output;
 - `CandidateCardRetrievalOutput.metrics` contains request-local retrieval
   metrics in the shared `CandidateCardRetrievalMetrics` shape when such metrics
   were computed for the current execution;
@@ -125,7 +135,7 @@ Rules:
 - `max_alternatives` defines the maximum number of returned `alternatives`;
 - the module-owned collection search limit must be `top_k`;
 - `max_alternatives` may be zero, in which case the module still requests enough hits for the `primary` candidate and must always return `alternatives = vec![]`;
-- the current MVP output must contain at most three selected cards total across `primary` and `alternatives`;
+- `max_alternatives` limits only the compatibility `alternatives` field and must not truncate `ranked_candidates`;
 - in the current version this module must be constructed from the cards retrieval settings slice, not from practice or theory retrieval settings.
 
 ## 4) Collection Dependency
@@ -167,12 +177,12 @@ impl CandidateCardRetrieval {
 
     pub async fn retrieve(
         &self,
-        request: &NormalizedUserRequest,
+        request: &RetrievalQueryInput,
     ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError>;
 
     pub async fn retrieve_with_context(
         &self,
-        request: &NormalizedUserRequest,
+        request: &RetrievalQueryInput,
         context: &Context,
     ) -> Result<CandidateCardRetrievalOutput, CandidateCardRetrievalError>;
 }
@@ -226,15 +236,15 @@ When building the collection-level request, this module must construct a
 
 ```rust
 CardSearchRequest {
-    user_query: NormalizedUserQuery(request.query.clone()),
+    user_query: NormalizedUserQuery(request.query_text.clone()),
     limit: top_k,
     score_threshold,
 }
 ```
 
 Request-construction rules:
-- `CardSearchRequest.user_query` must be built from the unchanged `NormalizedUserRequest.query` string;
-- the module must not paraphrase, tokenize, rewrite, or otherwise mutate `NormalizedUserRequest.query` before constructing `NormalizedUserQuery`;
+- `CardSearchRequest.user_query` must be built from the unchanged `RetrievalQueryInput.query_text` string;
+- the module must not paraphrase, tokenize, rewrite, or otherwise mutate `RetrievalQueryInput.query_text` before constructing `NormalizedUserQuery`;
 - `CardSearchRequest.limit` must equal `self.top_k`;
 - `CardSearchRequest.score_threshold` must equal `self.score_threshold`;
 - `CardSearchRequest` must be the only collection-layer input created by this module in the current version;
@@ -255,17 +265,19 @@ Partitioning rules:
 
 ```rust
 CandidateCardRetrievalOutput {
+    ranked_candidates: vec![],
     primary: None,
     alternatives: vec![],
     metrics: None,
 }
 ```
 
-- if `hits` is non-empty, the first hit in order must become `primary`;
-- `alternatives` must be built only from `hits[1..]`;
-- all subsequent hits in order must become `alternatives`;
+- if `hits` is non-empty, every ordered hit must first be mapped into `ranked_candidates`;
+- if `hits` is non-empty, the first ranked candidate in order must become `primary`;
+- `alternatives` must be built only from `ranked_candidates[1..]`;
+- all subsequent ranked candidates in order are eligible for the compatibility `alternatives` field;
 - `alternatives` must contain at most `max_alternatives` items;
-- the total number of selected cards across `primary` and `alternatives` must not exceed three;
+- `ranked_candidates` must contain the full mapped ordered retrieval result, without truncation by `max_alternatives`;
 - the module must not reorder hits by score or by any secondary rule;
 - the module must not deduplicate hits because the collection layer is already the source of ordered retrieval candidates;
 - `primary`, when present, must never be duplicated inside `alternatives`.
@@ -295,8 +307,8 @@ CandidateCardRetrievalMetrics {
 
 The current module behavior is intentionally simple:
 - top-1 hit becomes `primary`;
-- the remaining selected hits become `alternatives`;
-- the module may request more than three hits from retrieval via `top_k`, but it must return at most three selected cards total;
+- the remaining selected hits become the compatibility `alternatives` field;
+- the module may request more hits from retrieval via `top_k`, and it must preserve the full ordered mapped result in `ranked_candidates`;
 - no additional score-band classification or thresholding beyond the collection request is performed inside this module.
 
 ## 8) Constructor Validation Rules

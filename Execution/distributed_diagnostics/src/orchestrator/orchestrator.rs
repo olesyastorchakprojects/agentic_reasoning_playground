@@ -4,8 +4,8 @@ use thiserror::Error;
 use crate::orchestrator::run_repository::{RunRepository, RunRepositoryError};
 use crate::orchestrator::run_state::apply::{RunStateWriter, StateApplyError};
 use crate::orchestrator::run_state::model::{
-    FinishedStepRecord, RunId, RunIteration, RunState, StepError, StepKind, StepRecord,
-    StepResultEnvelope,
+    FinishedStepRecord, RunId, RunIteration, RunIterationStatus, RunState, RunStatus, StepError,
+    StepKind, StepRecord, StepResultEnvelope,
 };
 use crate::orchestrator::run_state::view::RunStateView;
 use crate::orchestrator::step_executor::StepExecutor;
@@ -31,6 +31,10 @@ pub enum RunOutcome {
         run_id: RunId,
         result: ResponseValidationAndNormalizationOutput,
     },
+    WaitingForUser {
+        run_id: RunId,
+        follow_up_questions: Vec<String>,
+    },
     Failed {
         run_id: RunId,
         error: StepError,
@@ -53,6 +57,9 @@ pub enum OrchestratorError {
 
     #[error("pending step for {step:?} was expected but not found")]
     MissingPendingStep { step: StepKind },
+
+    #[error("run {run_id:?} is waiting for user input; use resume_with_input")]
+    WaitingForUserRequiresNewInput { run_id: RunId },
 }
 
 impl<P> Orchestrator<P>
@@ -129,6 +136,9 @@ where
             }
             Ok(s) => s,
         };
+        if state.status == RunStatus::WaitingForUser {
+            return Err(OrchestratorError::WaitingForUserRequiresNewInput { run_id });
+        }
         let outcome = self.drive_to_outcome(&mut state).await;
         record_run_outcome(&root_span, &outcome, Some(&state));
         outcome
@@ -228,6 +238,13 @@ trait RepositoryLike {
         record_id: crate::orchestrator::run_state::model::StepRecordId,
         finished_record: &FinishedStepRecord,
     ) -> Result<(), RunRepositoryError>;
+
+    async fn update_iteration_status(
+        &self,
+        run: &RunState,
+        iteration_id: crate::orchestrator::run_state::model::RunIterationId,
+        status: RunIterationStatus,
+    ) -> Result<(), RunRepositoryError>;
 }
 
 #[async_trait(?Send)]
@@ -280,6 +297,15 @@ impl RepositoryLike for RunRepository {
     ) -> Result<(), RunRepositoryError> {
         self.finish_step_record(run, record_id, finished_record).await
     }
+
+    async fn update_iteration_status(
+        &self,
+        run: &RunState,
+        iteration_id: crate::orchestrator::run_state::model::RunIterationId,
+        status: RunIterationStatus,
+    ) -> Result<(), RunRepositoryError> {
+        self.update_iteration_status(run, iteration_id, status).await
+    }
 }
 
 #[cfg(test)]
@@ -331,6 +357,9 @@ where
     R: RepositoryLike + Sync,
 {
     let mut state = load_existing_run_impl(run_repository, run_id).await?;
+    if state.status == RunStatus::WaitingForUser {
+        return Err(OrchestratorError::WaitingForUserRequiresNewInput { run_id });
+    }
     drive_to_outcome_impl(policy, executor, run_repository, &mut state).await
 }
 
@@ -445,6 +474,10 @@ where
                     .record("output.mime_type", "application/json");
             }
         }
+        Ok(RunOutcome::WaitingForUser { .. }) => {
+            iter_span.record("status", "ok");
+            context.open_inference.root_span.record("run.outcome", "waiting_for_user");
+        }
         Ok(RunOutcome::Failed { error, .. }) => {
             iter_span.record("status", "error");
             context.open_inference.root_span.record("run.outcome", "failure");
@@ -542,6 +575,10 @@ where
                 Ok(PolicyTransition::FinishWithError { .. }) => {
                     policy_span.record("status", "ok");
                     policy_span.record("transition.kind", "FinishWithError");
+                }
+                Ok(PolicyTransition::WaitForUser { .. }) => {
+                    policy_span.record("status", "ok");
+                    policy_span.record("transition.kind", "WaitForUser");
                 }
                 Err(e) => {
                     crate::observability::record_error(
@@ -648,21 +685,78 @@ where
                         crate::observability::record_error(&step_span, et, &em);
                     }
                     step_span.record("step.outcome", "failure");
+                    // record_failure() set iteration.status = FinishedWithError in memory.
+                    // Persist it now so the iteration is durable before policy re-reads state.
+                    run_repository
+                        .update_iteration_status(
+                            state,
+                            iteration_id,
+                            RunIterationStatus::FinishedWithError,
+                        )
+                        .await?;
                 } else {
                     step_span.record("step.outcome", "success");
                     step_span.record("status", "ok");
                 }
             }
             PolicyTransition::FinishWithResult { result } => {
+                let iteration_id = {
+                    let mut writer = RunStateWriter::new(state);
+                    let current = writer.current_iteration()?;
+                    let iteration_id = current.iteration_id();
+                    writer.finish_current_iteration_success()?;
+                    iteration_id
+                };
+                run_repository
+                    .update_iteration_status(
+                        state,
+                        iteration_id,
+                        RunIterationStatus::FinishedWithSuccess,
+                    )
+                    .await?;
                 return Ok(RunOutcome::Finished {
                     run_id: state.run_id,
                     result,
                 });
             }
             PolicyTransition::FinishWithError { error } => {
+                // The iteration is already FinishedWithError in memory (set by record_failure).
+                // Get iteration_id and persist the status + run header.
+                let iteration_id = RunStateView::new(state)
+                    .last_iteration()
+                    .expect("FinishWithError requires current iteration")
+                    .iteration_id();
+                run_repository
+                    .update_iteration_status(
+                        state,
+                        iteration_id,
+                        RunIterationStatus::FinishedWithError,
+                    )
+                    .await?;
                 return Ok(RunOutcome::Failed {
                     run_id: state.run_id,
                     error,
+                });
+            }
+            PolicyTransition::WaitForUser { follow_up_questions } => {
+                let iteration_id = {
+                    let mut writer = RunStateWriter::new(state);
+                    writer.wait_for_user()?;
+                    RunStateView::new(state)
+                        .last_iteration()
+                        .expect("wait_for_user requires current iteration")
+                        .iteration_id()
+                };
+                run_repository
+                    .update_iteration_status(
+                        state,
+                        iteration_id,
+                        RunIterationStatus::FinishedWithWaitInput,
+                    )
+                    .await?;
+                return Ok(RunOutcome::WaitingForUser {
+                    run_id: state.run_id,
+                    follow_up_questions,
                 });
             }
         }
@@ -679,6 +773,11 @@ fn record_run_outcome(
             span.record("status", "ok");
             span.record("run.outcome", "success");
             span.record("terminal.transition", "FinishWithResult");
+        }
+        Ok(RunOutcome::WaitingForUser { .. }) => {
+            span.record("status", "ok");
+            span.record("run.outcome", "waiting_for_user");
+            span.record("terminal.transition", "WaitForUser");
         }
         Ok(RunOutcome::Failed { error, .. }) => {
             span.record("status", "error");
@@ -738,6 +837,13 @@ fn step_error_type(e: &StepError) -> &'static str {
         StepError::ResponseValidationAndNormalization(_) => {
             "StepError.ResponseValidationAndNormalization"
         }
+        StepError::CardBranchReranking(_) => "StepError.CardBranchReranking",
+        StepError::DiagnosticUpdatePromptContextAssembly(_) => {
+            "StepError.DiagnosticUpdatePromptContextAssembly"
+        }
+        StepError::ObservationBoundaryResolver(_) => "StepError.ObservationBoundaryResolver",
+        StepError::ObservationExtraction(_) => "StepError.ObservationExtraction",
+        StepError::InformationAdequacy(_) => "StepError.InformationAdequacy",
         StepError::ExternalDependency { .. } => "StepError.ExternalDependency",
         StepError::Unexpected { .. } => "StepError.Unexpected",
     }
@@ -750,6 +856,9 @@ fn orchestrator_error_type(e: &OrchestratorError) -> &'static str {
         OrchestratorError::StateApply(_) => "OrchestratorError.StateApply",
         OrchestratorError::Repository(_) => "OrchestratorError.Repository",
         OrchestratorError::MissingPendingStep { .. } => "OrchestratorError.MissingPendingStep",
+        OrchestratorError::WaitingForUserRequiresNewInput { .. } => {
+            "OrchestratorError.WaitingForUserRequiresNewInput"
+        }
     }
 }
 
@@ -774,6 +883,7 @@ mod tests {
         AppendStepRecord { iteration_id: RunIterationId, sequence_no: u64, record_id: StepRecordId },
         ExecuteStep { step: StepKind },
         FinishStepRecord { record_id: StepRecordId, is_ok: bool },
+        UpdateIterationStatus { iteration_id: RunIterationId, status: RunIterationStatus },
     }
 
     #[derive(Debug, Default)]
@@ -849,6 +959,7 @@ mod tests {
         append_iteration_result: Mutex<VecDeque<Result<(), RunRepositoryError>>>,
         append_step_record_result: Mutex<VecDeque<Result<(), RunRepositoryError>>>,
         finish_step_record_result: Mutex<VecDeque<Result<(), RunRepositoryError>>>,
+        update_iteration_status_result: Mutex<VecDeque<Result<(), RunRepositoryError>>>,
     }
 
     impl FakeRepository {
@@ -861,6 +972,7 @@ mod tests {
                 append_iteration_result: Mutex::new(VecDeque::new()),
                 append_step_record_result: Mutex::new(VecDeque::new()),
                 finish_step_record_result: Mutex::new(VecDeque::new()),
+                update_iteration_status_result: Mutex::new(VecDeque::new()),
             }
         }
 
@@ -1032,6 +1144,27 @@ mod tests {
             }
             Ok(())
         }
+
+        async fn update_iteration_status(
+            &self,
+            _run: &RunState,
+            iteration_id: RunIterationId,
+            status: RunIterationStatus,
+        ) -> Result<(), RunRepositoryError> {
+            self.events
+                .lock()
+                .expect("events mutex poisoned")
+                .push(Event::UpdateIterationStatus { iteration_id, status });
+            if let Some(result) = self
+                .update_iteration_status_result
+                .lock()
+                .expect("update_iteration_status_result mutex poisoned")
+                .pop_front()
+            {
+                return result;
+            }
+            Ok(())
+        }
     }
 
     fn user_request(query: &str) -> UserRequest {
@@ -1042,20 +1175,26 @@ mod tests {
     }
 
     fn final_output(problem_understanding: &str) -> ResponseValidationAndNormalizationOutput {
+        use crate::shared_types::{Confidence, Hypothesis, HypothesisEvidenceSource, HypothesisId, HypothesisStatus};
+        use uuid::Uuid;
         ResponseValidationAndNormalizationOutput {
             response: DiagnosticResponse {
                 problem_understanding: problem_understanding.to_string(),
                 similar_practical_context: "ctx".to_string(),
-                active_hypotheses: vec![
-                    crate::shared_types::ActiveHypothesis {
-                        hypothesis: "h1".to_string(),
-                        source: crate::shared_types::HypothesisSource::PrimaryIncident,
-                        confidence: crate::shared_types::HypothesisConfidence::Medium,
+                hypotheses: vec![
+                    Hypothesis {
+                        id: HypothesisId(Uuid::new_v4()),
+                        text: "h1".to_string(),
+                        status: HypothesisStatus::Active,
+                        source: HypothesisEvidenceSource::PrimaryIncident,
+                        confidence: Confidence::Medium,
                     },
-                    crate::shared_types::ActiveHypothesis {
-                        hypothesis: "h2".to_string(),
-                        source: crate::shared_types::HypothesisSource::PrimaryIncident,
-                        confidence: crate::shared_types::HypothesisConfidence::Low,
+                    Hypothesis {
+                        id: HypothesisId(Uuid::new_v4()),
+                        text: "h2".to_string(),
+                        status: HypothesisStatus::Active,
+                        source: HypothesisEvidenceSource::PrimaryIncident,
+                        confidence: Confidence::Low,
                     },
                 ],
                 first_check: "check".to_string(),
@@ -1064,10 +1203,7 @@ mod tests {
                     supports_competing_if: "competes".to_string(),
                     inconclusive_if: Some("maybe".to_string()),
                 },
-                alternative_context_assessment: crate::shared_types::AlternativeContextAssessment {
-                    used_as_hypothesis: false,
-                    reason: "not enough signal from alternative context".to_string(),
-                },
+                competing_interpretation: None,
             },
         }
     }
@@ -1110,10 +1246,12 @@ mod tests {
             .expect("run must succeed");
 
         assert!(matches!(outcome, RunOutcome::Finished { .. }));
-        assert!(matches!(
-            &events.lock().expect("events mutex poisoned")[..],
-            [Event::CreateRun, Event::AppendIteration { sequence_no: 0, .. }]
-        ));
+        // CreateRun → AppendIteration → UpdateIterationStatus(FinishedWithSuccess)
+        let evts = events.lock().expect("events mutex poisoned");
+        assert!(matches!(evts[0], Event::CreateRun));
+        assert!(matches!(evts[1], Event::AppendIteration { sequence_no: 0, .. }));
+        assert!(matches!(evts[2], Event::UpdateIterationStatus { status: RunIterationStatus::FinishedWithSuccess, .. }));
+        assert_eq!(evts.len(), 3);
     }
 
     #[tokio::test]
@@ -1132,10 +1270,11 @@ mod tests {
             .expect("resume must succeed");
 
         assert!(matches!(outcome, RunOutcome::Finished { .. }));
-        assert!(matches!(
-            &events.lock().expect("events mutex poisoned")[..],
-            [Event::LoadRun(id)] if *id == run_id
-        ));
+        // LoadRun → UpdateIterationStatus(FinishedWithSuccess)
+        let evts = events.lock().expect("events mutex poisoned");
+        assert!(matches!(evts[0], Event::LoadRun(id) if id == run_id));
+        assert!(matches!(evts[1], Event::UpdateIterationStatus { status: RunIterationStatus::FinishedWithSuccess, .. }));
+        assert_eq!(evts.len(), 2);
     }
 
     #[tokio::test]
@@ -1161,11 +1300,12 @@ mod tests {
         .expect("resume_with_input must succeed");
 
         assert!(matches!(outcome, RunOutcome::Finished { .. }));
-        assert!(matches!(
-            &events.lock().expect("events mutex poisoned")[..],
-            [Event::LoadRun(id), Event::AppendIteration { sequence_no, .. }]
-            if *id == run_id && *sequence_no == old_iteration_count as u64
-        ));
+        // LoadRun → AppendIteration → UpdateIterationStatus(FinishedWithSuccess)
+        let evts = events.lock().expect("events mutex poisoned");
+        assert!(matches!(evts[0], Event::LoadRun(id) if id == run_id));
+        assert!(matches!(evts[1], Event::AppendIteration { sequence_no, .. } if sequence_no == old_iteration_count as u64));
+        assert!(matches!(evts[2], Event::UpdateIterationStatus { status: RunIterationStatus::FinishedWithSuccess, .. }));
+        assert_eq!(evts.len(), 3);
     }
 
     #[tokio::test]
@@ -1467,7 +1607,10 @@ mod tests {
             .expect("must succeed");
 
         assert!(matches!(outcome, RunOutcome::Finished { .. }));
-        assert!(events.lock().expect("events mutex poisoned").is_empty());
+        // Only UpdateIterationStatus is expected — no executor or step-record events
+        let evts = events.lock().expect("events mutex poisoned");
+        assert_eq!(evts.len(), 1);
+        assert!(matches!(evts[0], Event::UpdateIterationStatus { status: RunIterationStatus::FinishedWithSuccess, .. }));
     }
 
     #[tokio::test]
@@ -1487,7 +1630,10 @@ mod tests {
             .expect("must succeed");
 
         assert!(matches!(outcome, RunOutcome::Failed { .. }));
-        assert!(events.lock().expect("events mutex poisoned").is_empty());
+        // Only UpdateIterationStatus is expected — no executor events
+        let evts = events.lock().expect("events mutex poisoned");
+        assert_eq!(evts.len(), 1);
+        assert!(matches!(evts[0], Event::UpdateIterationStatus { status: RunIterationStatus::FinishedWithError, .. }));
     }
 
     #[tokio::test]
@@ -1626,6 +1772,109 @@ mod tests {
         let state = run_with_single_iteration("q");
         let span = tracing::Span::none();
         record_failed_step_kind(&span, &state);
+    }
+
+    // ─── WaitForUser ──────────────────────────────────────────────────────────
+
+    fn run_waiting_for_user(query: &str) -> RunState {
+        let mut state = run_with_single_iteration(query);
+        {
+            let mut writer = RunStateWriter::new(&mut state);
+            writer.wait_for_user().expect("wait_for_user must succeed");
+        }
+        state
+    }
+
+    #[tokio::test]
+    async fn wait_for_user_transition_returns_waiting_for_user_outcome() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut state = run_with_single_iteration("need more info");
+        let questions = vec!["What exact error did you see?".to_string(), "Which service?".to_string()];
+        let policy = FakePolicy::from_decisions(vec![Ok(PolicyTransition::WaitForUser {
+            follow_up_questions: questions.clone(),
+        })]);
+        let executor = FakeExecutor::new(vec![], Arc::clone(&events));
+        let repo = FakeRepository::new(None, Arc::clone(&events));
+
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+            .await
+            .expect("must succeed");
+
+        assert_eq!(
+            outcome,
+            RunOutcome::WaitingForUser {
+                run_id: state.run_id,
+                follow_up_questions: questions,
+            }
+        );
+        // Only UpdateIterationStatus(FinishedWithWaitInput) — no executor or step events
+        let evts = events.lock().expect("events mutex poisoned");
+        assert_eq!(evts.len(), 1);
+        assert!(matches!(
+            evts[0],
+            Event::UpdateIterationStatus { status: RunIterationStatus::FinishedWithWaitInput, .. }
+        ));
+        assert_eq!(state.status, RunStatus::WaitingForUser);
+    }
+
+    #[tokio::test]
+    async fn resume_returns_waiting_for_user_requires_new_input_when_run_is_waiting() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let state = run_waiting_for_user("stalled");
+        let run_id = state.run_id;
+        let policy = FakePolicy::from_decisions(vec![]);
+        let executor = FakeExecutor::new(vec![], Arc::clone(&events));
+        let repo = FakeRepository::new(Some(state), Arc::clone(&events));
+
+        let err = resume_impl(&policy, &executor, &repo, run_id)
+            .await
+            .expect_err("resume on WaitingForUser run must fail");
+
+        assert!(matches!(
+            err,
+            OrchestratorError::WaitingForUserRequiresNewInput { run_id: id } if id == run_id
+        ));
+        // Only LoadRun — no policy, executor, or iteration events
+        let evts = events.lock().expect("events mutex poisoned");
+        assert_eq!(evts.len(), 1);
+        assert!(matches!(evts[0], Event::LoadRun(id) if id == run_id));
+    }
+
+    #[tokio::test]
+    async fn resume_with_input_succeeds_when_run_is_waiting_for_user() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let state = run_waiting_for_user("stalled");
+        let run_id = state.run_id;
+        let old_iteration_count = state.iterations.len();
+        let policy = FakePolicy::from_decisions(vec![Ok(PolicyTransition::FinishWithResult {
+            result: final_output("resolved"),
+        })]);
+        let executor = FakeExecutor::new(vec![], Arc::clone(&events));
+        let repo = FakeRepository::new(Some(state), Arc::clone(&events));
+
+        let outcome = resume_with_input_impl(
+            &policy,
+            &executor,
+            &repo,
+            run_id,
+            user_request("here is the info"),
+        )
+        .await
+        .expect("resume_with_input must succeed for WaitingForUser run");
+
+        assert!(matches!(outcome, RunOutcome::Finished { .. }));
+        // LoadRun → AppendIteration(sequence_no=old+1) → UpdateIterationStatus(FinishedWithSuccess)
+        let evts = events.lock().expect("events mutex poisoned");
+        assert!(matches!(evts[0], Event::LoadRun(id) if id == run_id));
+        assert!(matches!(
+            evts[1],
+            Event::AppendIteration { sequence_no, .. } if sequence_no == old_iteration_count as u64
+        ));
+        assert!(matches!(
+            evts[2],
+            Event::UpdateIterationStatus { status: RunIterationStatus::FinishedWithSuccess, .. }
+        ));
+        assert_eq!(evts.len(), 3);
     }
 
     // ─── RunOutcome mapping ───────────────────────────────────────────────────

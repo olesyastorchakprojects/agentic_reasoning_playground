@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist-sys-assistant.local/schemas/observation_extraction_prompt_baseline.schema.json",
+  "title": "ObservationExtractionPromptBaseline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "system_prompt",
+    "user_template",
+    "response_schema"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "system_prompt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "user_template": {
+      "type": "string",
+      "minLength": 1
+    },
+    "response_schema": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

@@ -34,6 +34,7 @@ pub struct ModelMessage {
 pub enum ModelResponseMode {
     Text,
     JsonObject,
+    JsonSchema(serde_json::Value),
 }
 
 pub enum RetryBackoffKind {
@@ -92,6 +93,7 @@ Rules:
 - `NaN`, `+inf`, and `-inf` temperature values are invalid requests;
 - `RetryPolicyConfig.max_attempts` must be greater than zero;
 - when `max_output_tokens = Some(value)`, `value` must be greater than zero;
+- `ModelResponseMode::JsonSchema(value)` requires `value` to be a JSON object;
 - `ModelGenerationResponse.content` must be non-empty after trimming;
 - when all three token counts are present, `total_tokens` must equal `prompt_tokens + completion_tokens`;
 - when only some token counts are available from the provider, missing values must remain `None`;
