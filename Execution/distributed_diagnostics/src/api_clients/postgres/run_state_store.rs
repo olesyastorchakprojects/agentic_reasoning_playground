@@ -9,8 +9,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::orchestrator::run_state::model::{
-    FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId, RunState,
-    RunStatus, StepError, StepKind, StepRecord, StepRecordId, StepResultEnvelope,
+    FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId,
+    RunIterationStatus, RunState, RunStatus, StepError, StepKind, StepRecord, StepRecordId,
+    StepResultEnvelope,
 };
 
 // ─── Error Model ─────────────────────────────────────────────────────────────
@@ -330,7 +331,7 @@ impl PostgresRunStateStore {
         // 2. Load iterations ordered by sequence_no asc
         let iteration_rows = sqlx::query(
             r#"
-            SELECT iteration_id::text AS iteration_id, sequence_no, config_snapshot
+            SELECT iteration_id::text AS iteration_id, sequence_no, status, config_snapshot
             FROM diagnostics.run_iterations
             WHERE run_id = $1::uuid
             ORDER BY sequence_no ASC
@@ -371,6 +372,11 @@ impl PostgresRunStateStore {
                 step_records.push(decode_step_record_row(sr)?);
             }
 
+            let iteration_status_str: String = iter_row
+                .try_get("status")
+                .map_err(|_| RunStateStoreError::InvalidStoredRow("iteration status column"))?;
+            let iteration_status = parse_iteration_status(&iteration_status_str)?;
+
             let config_snapshot: Option<crate::shared_types::RunConfigSnapshot> = iter_row
                 .try_get::<Option<serde_json::Value>, _>("config_snapshot")
                 .ok()
@@ -380,6 +386,7 @@ impl PostgresRunStateStore {
             iterations.push(RunIteration {
                 iteration_id,
                 config_snapshot,
+                status: iteration_status,
                 step_records,
             });
         }
@@ -395,6 +402,14 @@ impl PostgresRunStateStore {
     }
 
     // ─── list_run_ids ─────────────────────────────────────────────────────────
+
+    pub async fn update_iteration_status(
+        &self,
+        iteration_id: RunIterationId,
+        status: RunIterationStatus,
+    ) -> Result<(), RunStateStoreError> {
+        update_iteration_status_query(&self.pool, iteration_id, status).await
+    }
 
     pub async fn list_run_ids(&self) -> Result<Vec<RunId>, RunStateStoreError> {
         let rows = sqlx::query(
@@ -539,6 +554,14 @@ impl<'tx> PostgresRunStateStoreTx<'tx> {
         )
         .await
     }
+
+    pub async fn update_iteration_status(
+        &mut self,
+        iteration_id: RunIterationId,
+        status: RunIterationStatus,
+    ) -> Result<(), RunStateStoreError> {
+        update_iteration_status_query(&mut **self.conn, iteration_id, status).await
+    }
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
@@ -559,13 +582,14 @@ where
 
     let result = sqlx::query(
         r#"
-        INSERT INTO diagnostics.run_iterations (iteration_id, run_id, sequence_no, config_snapshot)
-        VALUES ($1::uuid, $2::uuid, $3, $4)
+        INSERT INTO diagnostics.run_iterations (iteration_id, run_id, sequence_no, status, config_snapshot)
+        VALUES ($1::uuid, $2::uuid, $3, $4, $5)
         "#,
     )
     .bind(iteration.iteration_id.0.to_string())
     .bind(run_id.0.to_string())
     .bind(sequence_no as i64)
+    .bind(iteration.status.to_string())
     .bind(config_snapshot_json)
     .execute(executor)
     .await;
@@ -743,6 +767,40 @@ fn parse_run_status(s: &str) -> Result<RunStatus, RunStateStoreError> {
     })
 }
 
+fn parse_iteration_status(s: &str) -> Result<RunIterationStatus, RunStateStoreError> {
+    RunIterationStatus::from_str(s).map_err(|_| {
+        RunStateStoreError::Deserialization(format!("unknown iteration status: {s}"))
+    })
+}
+
+async fn update_iteration_status_query<'e, E>(
+    executor: E,
+    iteration_id: RunIterationId,
+    status: RunIterationStatus,
+) -> Result<(), RunStateStoreError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let rows_affected = sqlx::query(
+        r#"
+        UPDATE diagnostics.run_iterations
+        SET status = $1
+        WHERE iteration_id = $2::uuid
+        "#,
+    )
+    .bind(status.to_string())
+    .bind(iteration_id.0.to_string())
+    .execute(executor)
+    .await
+    .map_err(|e| RunStateStoreError::Update(e.to_string()))?
+    .rows_affected();
+
+    if rows_affected == 0 {
+        return Err(RunStateStoreError::MissingParentIteration(iteration_id));
+    }
+    Ok(())
+}
+
 fn parse_step_kind(s: &str) -> Result<StepKind, RunStateStoreError> {
     StepKind::from_str(s)
         .map_err(|_| RunStateStoreError::InvalidStoredRow("unknown step kind value"))
@@ -788,6 +846,34 @@ fn validate_result_variant_matches(
                 StepKind::ResponseValidationAndNormalization,
                 StepResultEnvelope::ResponseValidationAndNormalization(_)
             )
+            | (
+                StepKind::InformationAdequacyInitial,
+                StepResultEnvelope::InformationAdequacy(_)
+            )
+            | (
+                StepKind::InformationAdequacySupportedObservation,
+                StepResultEnvelope::InformationAdequacy(_)
+            )
+            | (
+                StepKind::InformationAdequacyUnsupportedObservation,
+                StepResultEnvelope::InformationAdequacy(_)
+            )
+            | (
+                StepKind::CardBranchReranking,
+                StepResultEnvelope::CardBranchReranking(_)
+            )
+            | (
+                StepKind::DiagnosticUpdatePromptContextAssembly,
+                StepResultEnvelope::DiagnosticUpdatePromptContextAssembly(_)
+            )
+            | (
+                StepKind::ObservationBoundaryResolver,
+                StepResultEnvelope::ObservationBoundaryResolver(_)
+            )
+            | (
+                StepKind::ObservationExtraction,
+                StepResultEnvelope::ObservationExtraction(_)
+            )
     );
     if !ok {
         Err(RunStateStoreError::InvalidRunState(
@@ -818,6 +904,18 @@ fn validate_error_variant_matches(
         StepError::ResponseValidationAndNormalization(_) => {
             step == StepKind::ResponseValidationAndNormalization
         }
+        StepError::CardBranchReranking(_) => step == StepKind::CardBranchReranking,
+        StepError::DiagnosticUpdatePromptContextAssembly(_) => {
+            step == StepKind::DiagnosticUpdatePromptContextAssembly
+        }
+        StepError::ObservationBoundaryResolver(_) => step == StepKind::ObservationBoundaryResolver,
+        StepError::ObservationExtraction(_) => step == StepKind::ObservationExtraction,
+        StepError::InformationAdequacy(_) => matches!(
+            step,
+            StepKind::InformationAdequacyInitial
+                | StepKind::InformationAdequacySupportedObservation
+                | StepKind::InformationAdequacyUnsupportedObservation
+        ),
     };
     if !ok {
         Err(RunStateStoreError::InvalidRunState(
@@ -966,7 +1064,7 @@ fn is_fk_violation(e: &dyn sqlx::error::DatabaseError) -> bool {
 mod tests {
     use super::*;
     use crate::orchestrator::run_state::model::{
-        RunId, RunState, RunStatus, StepError, StepKind, StepResultEnvelope,
+        RunId, RunIterationStatus, RunState, RunStatus, StepError, StepKind, StepResultEnvelope,
     };
     use crate::shared_types::{
         CandidateCardRetrievalOutput, LlmStructuredGenerationOutput, ModelTokenUsage,
@@ -1009,6 +1107,7 @@ mod tests {
 
     fn candidate_retrieval_envelope() -> StepResultEnvelope {
         StepResultEnvelope::CandidateCardRetrieval(CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![],
             metrics: None,
@@ -1084,6 +1183,26 @@ mod tests {
     #[test]
     fn parse_run_status_fails_for_unknown_value() {
         let err = parse_run_status("unknown_status").unwrap_err();
+        assert!(matches!(err, RunStateStoreError::Deserialization(_)));
+    }
+
+    // ─── parse_iteration_status ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_iteration_status_succeeds_for_all_variants() {
+        for (s, expected) in [
+            ("Active", RunIterationStatus::Active),
+            ("FinishedWithSuccess", RunIterationStatus::FinishedWithSuccess),
+            ("FinishedWithError", RunIterationStatus::FinishedWithError),
+            ("FinishedWithWaitInput", RunIterationStatus::FinishedWithWaitInput),
+        ] {
+            assert_eq!(parse_iteration_status(s).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn parse_iteration_status_fails_for_unknown_value() {
+        let err = parse_iteration_status("unknown").unwrap_err();
         assert!(matches!(err, RunStateStoreError::Deserialization(_)));
     }
 

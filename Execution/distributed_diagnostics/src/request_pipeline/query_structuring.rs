@@ -165,7 +165,9 @@ impl QueryStructuring {
         );
         let oi_input_json = serde_json::json!({
             "normalized_query": request.query,
-            "input_token_count": request.input_token_count
+            "input_token_count": request.input_token_count,
+            "system_prompt": self.prompt_asset.system_prompt,
+            "controlled_vocabulary": "..."
         })
         .to_string();
         oi_span.record("input.value", oi_input_json.as_str());

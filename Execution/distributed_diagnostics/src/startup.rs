@@ -25,9 +25,13 @@ use crate::config::{CollectionSettings, ModelTransportSettings, Settings};
 use crate::orchestrator::orchestrator::Orchestrator;
 use crate::orchestrator::run_repository::RunRepository;
 use crate::orchestrator::step_executor::{StepExecutor, StepExecutorModules};
-use crate::orchestrator::transition_policy::LinearPipelineTransitionPolicy;
+use crate::orchestrator::transition_policy::DiagnosticLoopTransitionPolicy;
 use crate::request_pipeline::candidate_card_retrieval::{
     CandidateCardRetrieval, CandidateCardRetrievalError,
+};
+use crate::request_pipeline::card_branch_reranking::CardBranchReranking;
+use crate::request_pipeline::diagnostic_update_prompt_context_assembly::{
+    DiagnosticUpdatePromptContextAssembly, DiagnosticUpdatePromptContextAssemblyError,
 };
 use crate::request_pipeline::incident_evidence_retrieval::{
     IncidentEvidenceRetrieval, IncidentEvidenceRetrievalError,
@@ -35,6 +39,13 @@ use crate::request_pipeline::incident_evidence_retrieval::{
 use crate::request_pipeline::input_normalization::{InputNormalization, InputNormalizationError};
 use crate::request_pipeline::llm_structured_generation::{
     LlmStructuredGeneration, LlmStructuredGenerationError,
+};
+use crate::request_pipeline::observation_boundary_resolver::{
+    ObservationBoundaryResolver, ObservationBoundaryResolverError,
+    ObservationBoundaryResolverSettings,
+};
+use crate::request_pipeline::observation_extraction::{
+    ObservationExtraction, ObservationExtractionError, ObservationExtractionSettings,
 };
 use crate::request_pipeline::prompt_context_assembly::{
     PromptContextAssembly, PromptContextAssemblyError,
@@ -85,11 +96,20 @@ pub enum StartupError {
 
     #[error("theory evidence retrieval: {0}")]
     TheoryEvidenceRetrieval(#[from] TheoryEvidenceRetrievalError),
+
+    #[error("observation boundary resolver: {0}")]
+    ObservationBoundaryResolver(#[from] ObservationBoundaryResolverError),
+
+    #[error("observation extraction: {0}")]
+    ObservationExtraction(#[from] ObservationExtractionError),
+
+    #[error("diagnostic update prompt context assembly: {0}")]
+    DiagnosticUpdatePromptContextAssembly(#[from] DiagnosticUpdatePromptContextAssemblyError),
 }
 
 pub async fn build_orchestrator(
     settings: &Settings,
-) -> Result<Orchestrator<LinearPipelineTransitionPolicy>, StartupError> {
+) -> Result<Orchestrator<DiagnosticLoopTransitionPolicy>, StartupError> {
     let model_client: Arc<dyn crate::api_clients::model::ModelClient> =
         match &settings.model.transport {
             ModelTransportSettings::Ollama(ollama) => {
@@ -199,6 +219,28 @@ pub async fn build_orchestrator(
 
     let prompt_context_assembly = PromptContextAssembly::new(settings.prompt_context.clone())?;
 
+    let observation_boundary_resolver = ObservationBoundaryResolver::new(
+        ObservationBoundaryResolverSettings {
+            prompt_asset_path: settings.observation_boundary_resolver.prompt_asset_path.clone(),
+            max_output_tokens: settings.observation_boundary_resolver.max_output_tokens,
+        },
+        Arc::clone(&model_client),
+    )?;
+
+    let observation_extraction = ObservationExtraction::new(
+        ObservationExtractionSettings {
+            prompt_asset_path: settings.observation_extraction.prompt_asset_path.clone(),
+            max_output_tokens: settings.observation_extraction.max_output_tokens,
+        },
+        Arc::clone(&model_client),
+    )?;
+
+    let card_branch_reranking = CardBranchReranking::new();
+
+    let diagnostic_update_prompt_context_assembly = DiagnosticUpdatePromptContextAssembly::new(
+        settings.diagnostic_update_prompt_context.clone(),
+    )?;
+
     let llm_structured_generation = LlmStructuredGeneration::new(
         settings.llm_structured_generation.clone(),
         Arc::clone(&model_client),
@@ -209,11 +251,16 @@ pub async fn build_orchestrator(
     let mut executor = StepExecutor::new(StepExecutorModules {
         input_normalization,
         query_structuring,
+        information_adequacy_analyzer: crate::request_pipeline::information_adequacy_analyzer::InformationAdequacyAnalyzer::new(),
+        observation_boundary_resolver,
+        observation_extraction,
         candidate_card_retrieval,
+        card_branch_reranking,
         card_hydration,
         incident_evidence_retrieval,
         theory_evidence_retrieval,
         prompt_context_assembly,
+        diagnostic_update_prompt_context_assembly,
         llm_structured_generation,
         response_validation_and_normalization,
     });
@@ -231,7 +278,7 @@ pub async fn build_orchestrator(
     }
 
     let run_repository = RunRepository::new(run_state_store);
-    let policy = LinearPipelineTransitionPolicy::new();
+    let policy = DiagnosticLoopTransitionPolicy::new();
     let config_snapshot = settings.build_run_config_snapshot();
 
     Ok(Orchestrator::new(policy, executor, run_repository)

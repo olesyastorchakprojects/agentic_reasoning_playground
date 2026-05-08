@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::orchestrator::run_state::model::{
-    FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId, RunState,
+    FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId, RunIterationStatus, RunState,
     RunStatus, StepError, StepKind, StepRecord, StepRecordId, StepResultEnvelope,
 };
 
@@ -62,17 +62,52 @@ impl<'a> RunStateView<'a> {
             .map(|iter| IterationView { iteration: iter })
     }
 
+    pub fn normal_iterations(&self) -> impl DoubleEndedIterator<Item = IterationView<'a>> {
+        self.state
+            .iterations
+            .iter()
+            .map(|iter| IterationView { iteration: iter })
+            .filter(|iv| iv.is_normal_iteration())
+    }
+
+    pub fn short_iterations(&self) -> impl DoubleEndedIterator<Item = IterationView<'a>> {
+        self.state
+            .iterations
+            .iter()
+            .map(|iter| IterationView { iteration: iter })
+            .filter(|iv| iv.is_short_iteration())
+    }
+
     pub fn last_iteration(&self) -> Option<IterationView<'a>> {
         self.state
             .iterations
             .last()
             .map(|iter| IterationView { iteration: iter })
     }
+
+    pub fn as_run_state(&self) -> &'a RunState {
+        self.state
+    }
 }
 
 impl<'a> IterationView<'a> {
     pub fn iteration_id(&self) -> RunIterationId {
         self.iteration.iteration_id
+    }
+
+    pub fn status(&self) -> RunIterationStatus {
+        self.iteration.status
+    }
+
+    pub fn is_normal_iteration(&self) -> bool {
+        matches!(
+            self.iteration.status,
+            RunIterationStatus::Active | RunIterationStatus::FinishedWithSuccess
+        )
+    }
+
+    pub fn is_short_iteration(&self) -> bool {
+        self.iteration.status == RunIterationStatus::FinishedWithWaitInput
     }
 
     pub fn step_count(&self) -> usize {
@@ -173,7 +208,7 @@ mod tests {
     use uuid::Uuid;
 
     use crate::orchestrator::run_state::model::{
-        FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId, RunState,
+        FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId, RunIterationStatus, RunState,
         RunStatus, StepError, StepKind, StepRecord, StepRecordId, StepResultEnvelope,
     };
     use crate::orchestrator::run_state::view::{
@@ -265,6 +300,7 @@ mod tests {
         RunIteration {
             iteration_id: new_iteration_id(),
             config_snapshot: None,
+            status: RunIterationStatus::Active,
             step_records,
         }
     }
@@ -323,11 +359,13 @@ mod tests {
             RunIteration {
                 iteration_id: id1,
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: vec![],
             },
             RunIteration {
                 iteration_id: id2,
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: vec![],
             },
         ]);
@@ -357,11 +395,13 @@ mod tests {
             RunIteration {
                 iteration_id: new_iteration_id(),
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: vec![],
             },
             RunIteration {
                 iteration_id: wanted,
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: vec![],
             },
         ]);
@@ -387,11 +427,13 @@ mod tests {
             RunIteration {
                 iteration_id: id1,
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: vec![],
             },
             RunIteration {
                 iteration_id: id2,
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: vec![],
             },
         ]);
@@ -414,6 +456,7 @@ mod tests {
         let state = state_with_iterations(vec![RunIteration {
             iteration_id: iid,
             config_snapshot: None,
+            status: RunIterationStatus::Active,
             step_records: vec![],
         }]);
         let view = RunStateView::new(&state);
@@ -642,5 +685,120 @@ mod tests {
         let view = RunStateView::new(&state);
         let owned = view.last_iteration().unwrap().steps().next().unwrap().to_owned();
         assert_eq!(owned, record);
+    }
+
+    // ─── IterationView::status ────────────────────────────────────────────────
+
+    #[test]
+    fn iteration_view_status_returns_underlying_status() {
+        let mut state = state_with_iterations(vec![iteration(vec![])]);
+        state.iterations[0].status = RunIterationStatus::FinishedWithSuccess;
+        let view = RunStateView::new(&state);
+        assert_eq!(view.last_iteration().unwrap().status(), RunIterationStatus::FinishedWithSuccess);
+    }
+
+    // ─── IterationView::is_normal_iteration / is_short_iteration ─────────────
+
+    #[test]
+    fn active_iteration_is_normal() {
+        let state = state_with_iterations(vec![RunIteration {
+            iteration_id: new_iteration_id(),
+            config_snapshot: None,
+            status: RunIterationStatus::Active,
+            step_records: vec![],
+        }]);
+        let view = RunStateView::new(&state);
+        let iv = view.last_iteration().unwrap();
+        assert!(iv.is_normal_iteration());
+        assert!(!iv.is_short_iteration());
+    }
+
+    #[test]
+    fn finished_with_success_iteration_is_normal() {
+        let state = state_with_iterations(vec![RunIteration {
+            iteration_id: new_iteration_id(),
+            config_snapshot: None,
+            status: RunIterationStatus::FinishedWithSuccess,
+            step_records: vec![],
+        }]);
+        let view = RunStateView::new(&state);
+        let iv = view.last_iteration().unwrap();
+        assert!(iv.is_normal_iteration());
+        assert!(!iv.is_short_iteration());
+    }
+
+    #[test]
+    fn finished_with_wait_input_is_short() {
+        let state = state_with_iterations(vec![RunIteration {
+            iteration_id: new_iteration_id(),
+            config_snapshot: None,
+            status: RunIterationStatus::FinishedWithWaitInput,
+            step_records: vec![],
+        }]);
+        let view = RunStateView::new(&state);
+        let iv = view.last_iteration().unwrap();
+        assert!(iv.is_short_iteration());
+        assert!(!iv.is_normal_iteration());
+    }
+
+    #[test]
+    fn finished_with_error_is_neither_normal_nor_short() {
+        let state = state_with_iterations(vec![RunIteration {
+            iteration_id: new_iteration_id(),
+            config_snapshot: None,
+            status: RunIterationStatus::FinishedWithError,
+            step_records: vec![],
+        }]);
+        let view = RunStateView::new(&state);
+        let iv = view.last_iteration().unwrap();
+        assert!(!iv.is_normal_iteration());
+        assert!(!iv.is_short_iteration());
+    }
+
+    // ─── RunStateView::normal_iterations / short_iterations ───────────────────
+
+    #[test]
+    fn normal_iterations_returns_active_and_finished_success() {
+        let id1 = new_iteration_id();
+        let id2 = new_iteration_id();
+        let id3 = new_iteration_id();
+        let id4 = new_iteration_id();
+        let state = state_with_iterations(vec![
+            RunIteration { iteration_id: id1, config_snapshot: None, status: RunIterationStatus::Active, step_records: vec![] },
+            RunIteration { iteration_id: id2, config_snapshot: None, status: RunIterationStatus::FinishedWithSuccess, step_records: vec![] },
+            RunIteration { iteration_id: id3, config_snapshot: None, status: RunIterationStatus::FinishedWithWaitInput, step_records: vec![] },
+            RunIteration { iteration_id: id4, config_snapshot: None, status: RunIterationStatus::FinishedWithError, step_records: vec![] },
+        ]);
+        let view = RunStateView::new(&state);
+        let ids: Vec<RunIterationId> = view.normal_iterations().map(|iv| iv.iteration_id()).collect();
+        assert_eq!(ids, vec![id1, id2]);
+    }
+
+    #[test]
+    fn short_iterations_returns_only_finished_with_wait_input() {
+        let id1 = new_iteration_id();
+        let id2 = new_iteration_id();
+        let id3 = new_iteration_id();
+        let state = state_with_iterations(vec![
+            RunIteration { iteration_id: id1, config_snapshot: None, status: RunIterationStatus::FinishedWithWaitInput, step_records: vec![] },
+            RunIteration { iteration_id: id2, config_snapshot: None, status: RunIterationStatus::Active, step_records: vec![] },
+            RunIteration { iteration_id: id3, config_snapshot: None, status: RunIterationStatus::FinishedWithWaitInput, step_records: vec![] },
+        ]);
+        let view = RunStateView::new(&state);
+        let ids: Vec<RunIterationId> = view.short_iterations().map(|iv| iv.iteration_id()).collect();
+        assert_eq!(ids, vec![id1, id3]);
+    }
+
+    #[test]
+    fn normal_iterations_supports_rev() {
+        let id1 = new_iteration_id();
+        let id2 = new_iteration_id();
+        let state = state_with_iterations(vec![
+            RunIteration { iteration_id: id1, config_snapshot: None, status: RunIterationStatus::FinishedWithSuccess, step_records: vec![] },
+            RunIteration { iteration_id: id2, config_snapshot: None, status: RunIterationStatus::Active, step_records: vec![] },
+        ]);
+        let view = RunStateView::new(&state);
+        let ids: Vec<RunIterationId> = view.normal_iterations().rev().map(|iv| iv.iteration_id()).collect();
+        assert_eq!(ids, vec![id2, id1]);
     }
 }

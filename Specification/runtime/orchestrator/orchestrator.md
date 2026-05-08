@@ -4,7 +4,7 @@ This document defines the orchestration lifecycle boundary for
 `orchestrator::orchestrator`.
 
 `orchestrator` owns the public run-driving entrypoints and the canonical
-orchestration loop for the MVP runtime.
+orchestration loop for the runtime.
 
 It must:
 
@@ -16,8 +16,9 @@ It must:
 - open pending steps through `RunStateWriter` and `CurrentIterationWriter`;
 - execute steps through `StepExecutor`;
 - persist run progress through `RunRepository`;
-- stop only when policy surfaces the final validated result or the recorded
-  step error.
+- stop only when policy surfaces the final validated result of the current
+  iteration, the recorded step error of the current iteration, or a
+  wait-for-user pause for the current iteration.
 
 It must not:
 
@@ -53,6 +54,7 @@ use crate::orchestrator::run_state::apply::{RunStateWriter, StateApplyError};
 use crate::orchestrator::run_state::model::{
     FinishedStepRecord,
     RunId,
+    RunIterationStatus,
     RunState,
     StepError,
     StepKind,
@@ -94,6 +96,10 @@ pub enum RunOutcome {
         run_id: RunId,
         result: ResponseValidationAndNormalizationOutput,
     },
+    WaitingForUser {
+        run_id: RunId,
+        follow_up_questions: Vec<String>,
+    },
     Failed {
         run_id: RunId,
         error: StepError,
@@ -116,6 +122,9 @@ pub enum OrchestratorError {
 
     #[error("pending step for {step:?} was expected but not found")]
     MissingPendingStep { step: StepKind },
+
+    #[error("run {run_id:?} is waiting for user input; use resume_with_input")]
+    WaitingForUserRequiresNewInput { run_id: RunId },
 }
 ```
 
@@ -123,11 +132,16 @@ Design rules:
 
 - `RunOutcome` is the public terminal result of one orchestration invocation;
 - `RunOutcome::Finished` means that the current orchestration invocation
-  produced a user-facing validated response and stopped at that boundary; it
-  does not mean that the persisted run is closed, exhausted, or archived;
-- the current MVP does not define a public wait outcome because the active MVP
-  linear policy finishes with either a validated response or a recorded
-  `StepError`;
+  produced a user-facing validated response for the current iteration and
+  stopped at that boundary; it does not mean that the persisted run is closed,
+  exhausted, or archived;
+- `RunOutcome::WaitingForUser` means that the current orchestration invocation
+  paused after policy determined that the current iteration requires
+  follow-up input from the user before more executable steps should run;
+- `RunOutcome::WaitingForUser` is not a failure and does not archive or close
+  the persisted run;
+- `RunOutcome::WaitingForUser` closes the current iteration for further step
+  execution and classifies it as a short iteration for history-view purposes;
 - `OrchestratorError` is reserved for infrastructure and orchestration-contract
   failures, not request-pipeline step failures already captured as
   `RunOutcome::Failed`.
@@ -187,9 +201,22 @@ Required semantics:
   iteration, then enters the canonical orchestration loop;
 - `resume(run_id)` loads an existing run, does not create a new iteration, and
   re-enters the canonical orchestration loop using the current last iteration;
+- if the loaded run header is `RunStatus::WaitingForUser`, `resume(run_id)`
+  must return `Err(OrchestratorError::WaitingForUserRequiresNewInput { run_id })`
+  instead of re-entering the short iteration;
 - `resume_with_input(run_id, user_input)` loads an existing run, appends a new
   iteration from `user_input`, persists that appended iteration, then enters
   the canonical orchestration loop.
+
+Short-iteration semantics:
+
+- when `drive_to_outcome(...)` returns `RunOutcome::WaitingForUser`, the
+  current iteration must be treated as complete for step-execution purposes;
+- after `RunOutcome::WaitingForUser`, the orchestrator must not support
+  resuming executable steps inside that same iteration;
+- a later user reply intended to answer follow-up questions must enter through
+  `resume_with_input(run_id, user_input)`, which creates a brand-new
+  iteration.
 
 The generated implementation must not infer that a successful
 `RunOutcome::Finished` closes the persisted run. The run remains resumable
@@ -235,6 +262,8 @@ as mandatory:
   current iteration;
 - `resume_with_input(run_id, user_input)` must always create a new iteration
   rather than modifying the previous iteration;
+- a short iteration ended by `RunOutcome::WaitingForUser` must never be
+  reopened for additional step execution;
 - the orchestration loop must read and drive only the last iteration of the run
   via `RunStateView`, because `TransitionPolicy` and `StepExecutor` are both
   specified to operate on the current iteration;
@@ -249,7 +278,7 @@ as mandatory:
 The generated orchestrator implementation must assemble one execution-time
 `Context` for each invocation that operates on a current iteration.
 
-The current MVP context contract is:
+The current version context contract is:
 
 ```rust
 pub struct OpenInferenceContext {
@@ -290,6 +319,9 @@ Outcome rules:
   `OpenInferenceContext.root_span`;
 - when the final result is serializable, the orchestrator must also record the
   serialized result as `output.value` with `output.mime_type = "application/json"`;
+- on a wait-for-user pause, the orchestrator must record
+  `run.outcome = "waiting_for_user"` on `OpenInferenceContext.root_span`
+  without setting an error status;
 - on terminal failure, the orchestrator must record `run.outcome = "failure"`
   and an OpenInference error status on `OpenInferenceContext.root_span`.
 
@@ -354,6 +386,7 @@ where
                         .executor
                         .execute_with_context(step, RunStateView::new(state), &context)
                         .await;
+                    let execution_failed = execution_result.is_err();
 
                     {
                         let mut writer = RunStateWriter::new(state);
@@ -382,14 +415,80 @@ where
                     self.run_repository
                         .finish_step_record(state, record_id, &finished_record)
                         .await?;
+
+                    if execution_failed {
+                        self.run_repository
+                            .update_iteration_status(
+                                state,
+                                iteration_id,
+                                RunIterationStatus::FinishedWithError,
+                            )
+                            .await?;
+                    }
                 }
                 PolicyTransition::FinishWithResult { result } => {
+                    let iteration_id = {
+                        let mut writer = RunStateWriter::new(state);
+                        let current = writer.current_iteration()?;
+                        let iteration_id = current.iteration_id();
+                        writer.finish_current_iteration_success()?;
+                        iteration_id
+                    };
+
+                    self.run_repository
+                        .update_iteration_status(
+                            state,
+                            iteration_id,
+                            RunIterationStatus::FinishedWithSuccess,
+                        )
+                        .await?;
+
                     return Ok(RunOutcome::Finished {
                         run_id: state.run_id,
                         result,
                     });
                 }
+                PolicyTransition::WaitForUser {
+                    follow_up_questions,
+                } => {
+                    {
+                        let mut writer = RunStateWriter::new(state);
+                        writer.wait_for_user()?;
+                    }
+
+                    self.run_repository
+                        .update_iteration_status(
+                            state,
+                            RunStateView::new(state)
+                                .last_iteration()
+                                .expect("wait_for_user requires current iteration")
+                                .iteration_id(),
+                            RunIterationStatus::FinishedWithWaitInput,
+                        )
+                        .await?;
+
+                    return Ok(RunOutcome::WaitingForUser {
+                        run_id: state.run_id,
+                        follow_up_questions,
+                    });
+                }
                 PolicyTransition::FinishWithError { error } => {
+                    let iteration_id = {
+                        let mut writer = RunStateWriter::new(state);
+                        let current = writer.current_iteration()?;
+                        let iteration_id = current.iteration_id();
+                        writer.finish_current_iteration_error()?;
+                        iteration_id
+                    };
+
+                    self.run_repository
+                        .update_iteration_status(
+                            state,
+                            iteration_id,
+                            RunIterationStatus::FinishedWithError,
+                        )
+                        .await?;
+
                     return Ok(RunOutcome::Failed {
                         run_id: state.run_id,
                         error,
@@ -427,11 +526,23 @@ Normative rules for this loop:
 - the finished record passed to `RunRepository::finish_step_record(...)` must
   be the finished replacement of the same logical step record opened earlier in
   the loop, identified by the same `record_id`;
+- `PolicyTransition::WaitForUser` must:
+  - call `RunStateWriter::wait_for_user()`;
+  - persist the resulting iteration-status mutation and matching run-header
+    mutation through `RunRepository::update_iteration_status(...)`;
+  - return `RunOutcome::WaitingForUser` with the same `run_id` and exact
+    `follow_up_questions` payload provided by policy;
+- `PolicyTransition::FinishWithError` must:
+  - call `RunStateWriter::finish_current_iteration_error()`;
+  - persist the resulting iteration-status mutation and matching run-header
+    mutation through `RunRepository::update_iteration_status(...)`;
+  - return `RunOutcome::Failed` with the same `run_id` and exact `StepError`
+    payload provided by policy;
 - `PolicyTransition::FinishWithResult` must return `RunOutcome::Finished`
   without inferring that the persisted run has reached a terminal archived or
   closed state;
-- the loop must terminate only when policy returns `FinishWithResult` or
-  `FinishWithError`.
+- the loop must terminate only when policy returns `WaitForUser`,
+  `FinishWithResult`, or `FinishWithError`.
 
 ## 10) Canonical Entry-Point Algorithms
 
@@ -481,6 +592,9 @@ pub async fn resume(
     run_id: RunId,
 ) -> Result<RunOutcome, OrchestratorError> {
     let mut state = self.load_existing_run(run_id).await?;
+    if state.status == RunStatus::WaitingForUser {
+        return Err(OrchestratorError::WaitingForUserRequiresNewInput { run_id });
+    }
     self.drive_to_outcome(&mut state).await
 }
 ```
@@ -590,12 +704,24 @@ The generated implementation must treat it as:
   forcing a full rerun from the first step unless policy naturally selects that
   outcome from the stored state.
 
+If the loaded run header is `RunStatus::WaitingForUser`, `resume(run_id)` must
+return `Err(OrchestratorError::WaitingForUserRequiresNewInput { run_id })`
+rather than re-entering the short iteration.
+
 The generated implementation must treat a run that previously returned
 `RunOutcome::Finished` as still resumable unless it has later been explicitly
 archived.
 
-`resume_with_input(run_id, user_input)` is the entrypoint for the future
-multi-turn interaction shape.
+The generated implementation must treat a run that previously returned
+`RunOutcome::WaitingForUser` as resumable through `resume_with_input(...)`
+using a newly appended iteration.
+
+The generated implementation must not treat `resume(run_id)` as the mechanism
+for answering follow-up questions after `RunOutcome::WaitingForUser`; that
+answer path is owned by `resume_with_input(...)`.
+
+`resume_with_input(run_id, user_input)` is the entrypoint for the multi-turn
+interaction shape.
 
 The generated implementation must treat it as:
 

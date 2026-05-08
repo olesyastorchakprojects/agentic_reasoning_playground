@@ -95,9 +95,19 @@ pub struct PromptTheoryEvidenceChunk {
     pub text: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EvidenceTopology {
+    pub primary_evidence_roles: Vec<String>,
+    pub alternative_context_present: bool,
+    pub alternative_context_case_ids: Vec<String>,
+    pub theory_evidence_present: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromptContextAssemblyOutput {
     pub prompt: String,
+    pub response_schema: serde_json::Value,
+    pub evidence_topology: EvidenceTopology,
     pub incident_evidence_chunks: Vec<PromptIncidentEvidenceChunk>,
     pub theory_chunks: Vec<PromptTheoryEvidenceChunk>,
 }
@@ -112,6 +122,8 @@ Shared-type rules:
 - `PromptIncidentEvidenceChunk.chunk_tags` must contain only recognized tags parsed from the source `IncidentEvidenceChunk.chunk_tags`;
 - unknown collection-returned tag strings must not be included in `PromptIncidentEvidenceChunk.chunk_tags`;
 - `PromptContextAssemblyOutput.prompt` is the fully rendered prompt string passed to the next model-generation module;
+- `PromptContextAssemblyOutput.response_schema` is the validated prompt-owned response schema passed unchanged to the next model-generation module;
+- `PromptContextAssemblyOutput.evidence_topology` is the compact summary of which evidence branches and role buckets were actually embedded in the rendered prompt context;
 - `PromptContextAssemblyOutput.incident_evidence_chunks` contains the selected incident chunks separately from the prompt for history and traceability;
 - `PromptContextAssemblyOutput.theory_chunks` contains the selected theory chunks separately from the prompt for history and traceability;
 - the selected chunks returned separately in `PromptContextAssemblyOutput` must be exactly the selected chunks embedded inside the rendered prompt context.
@@ -122,6 +134,12 @@ Import rule for the generated Rust module:
 
 Shared-type placement rule:
 - before code generation for this module, all shared prompt-context types listed in this section must exist in `src/shared_types.rs`.
+
+`EvidenceTopology` rules:
+- `primary_evidence_roles` must contain only prompt-facing snake-case role names;
+- `primary_evidence_roles` must preserve role order;
+- `alternative_context_case_ids` must contain unique case ids in first-seen order;
+- `theory_evidence_present` must reflect whether any theory chunk was selected.
 
 ## 3) Settings Dependency
 
@@ -577,7 +595,7 @@ Insufficient query-structure data rules:
 `matched_incident_card.context.later_symptoms`:
 - <- concatenate in order:
   - `IncidentCard.incident_phases[*].symptoms[*]`
-  - `IncidentCard.user_visible_impact`
+  - `IncidentCard.incident_phases[*].user_visible_impact[*]`
 - preserve first occurrence order after de-duplicating exact string matches;
 - omit empty strings if present.
 

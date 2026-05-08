@@ -29,6 +29,7 @@ pub(crate) enum QueryStructuringMetricsError {
     InvalidRawUserQuery { reason: String },
 
     #[error("unexpected computation state for field '{field}': {reason}")]
+    #[allow(dead_code)]
     UnexpectedComputationState { field: String, reason: String },
 }
 

@@ -7,6 +7,7 @@ use super::{PolicyError, PolicyTransition, TransitionPolicy};
 const CANONICAL_STEPS: &[StepKind] = &[
     StepKind::InputNormalization,
     StepKind::QueryStructuring,
+    StepKind::InformationAdequacyInitial,
     StepKind::CandidateCardRetrieval,
     StepKind::CardHydration,
     StepKind::IncidentEvidenceRetrieval,
@@ -91,7 +92,7 @@ fn check_user_input(iteration: IterationView<'_>) -> Result<(), PolicyError> {
 // ─── Section 13: Successful-Step Validation ──────────────────────────────────
 
 fn validate_successful_history(iteration: IterationView<'_>) -> Result<(), PolicyError> {
-    let mut successful = [false; 9];
+    let mut successful = [false; 10];
 
     for view in iteration.finished_steps() {
         let kind = view.kind();
@@ -137,6 +138,10 @@ fn result_variant_matches(kind: StepKind, envelope: &StepResultEnvelope) -> bool
         (kind, envelope),
         (StepKind::InputNormalization, StepResultEnvelope::InputNormalization(_))
             | (StepKind::QueryStructuring, StepResultEnvelope::QueryStructuring(_))
+            | (
+                StepKind::InformationAdequacyInitial,
+                StepResultEnvelope::InformationAdequacy(_)
+            )
             | (
                 StepKind::CandidateCardRetrieval,
                 StepResultEnvelope::CandidateCardRetrieval(_)
@@ -216,7 +221,7 @@ fn next_step(iteration: IterationView<'_>) -> StepKind {
 mod tests {
     use super::*;
     use crate::orchestrator::run_state::model::{
-        FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId, RunState,
+        FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId, RunIterationStatus, RunState,
         RunStatus, StepError, StepKind, StepRecord, StepRecordId, StepResultEnvelope,
     };
     use crate::orchestrator::run_state::view::RunStateView;
@@ -286,6 +291,7 @@ mod tests {
             iterations: vec![RunIteration {
                 iteration_id: new_iteration_id(),
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: records,
             }],
         }
@@ -314,6 +320,7 @@ mod tests {
             iterations: vec![RunIteration {
                 iteration_id: new_iteration_id(),
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: vec![user_input_ok()],
             }],
         }
@@ -382,10 +389,24 @@ mod tests {
         )
     }
 
+    fn information_adequacy_initial_ok() -> StepRecord {
+        use crate::shared_types::{AdequacyAssessment, AdequacyStatus};
+        finished_ok(
+            StepKind::InformationAdequacyInitial,
+            StepResultEnvelope::InformationAdequacy(AdequacyAssessment {
+                status: AdequacyStatus::Sufficient,
+                missing_information_topics: vec![],
+                follow_up_questions: vec![],
+                summary_reason: "sufficient".to_string(),
+            }),
+        )
+    }
+
     fn candidate_card_retrieval_ok() -> StepRecord {
         finished_ok(
             StepKind::CandidateCardRetrieval,
             StepResultEnvelope::CandidateCardRetrieval(CandidateCardRetrievalOutput {
+                ranked_candidates: vec![],
                 primary: None,
                 alternatives: vec![],
             metrics: None,
@@ -452,20 +473,26 @@ mod tests {
     }
 
     fn minimal_final_result() -> ResponseValidationAndNormalizationOutput {
+        use crate::shared_types::{Confidence, Hypothesis, HypothesisEvidenceSource, HypothesisId, HypothesisStatus};
+        use uuid::Uuid;
         ResponseValidationAndNormalizationOutput {
             response: DiagnosticResponse {
                 problem_understanding: "service down".to_string(),
                 similar_practical_context: "similar incident".to_string(),
-                active_hypotheses: vec![
-                    crate::shared_types::ActiveHypothesis {
-                        hypothesis: "overload".to_string(),
-                        source: crate::shared_types::HypothesisSource::PrimaryIncident,
-                        confidence: crate::shared_types::HypothesisConfidence::Medium,
+                hypotheses: vec![
+                    Hypothesis {
+                        id: HypothesisId(Uuid::from_u128(0x1111)),
+                        text: "overload".to_string(),
+                        status: HypothesisStatus::Active,
+                        source: HypothesisEvidenceSource::PrimaryIncident,
+                        confidence: Confidence::Medium,
                     },
-                    crate::shared_types::ActiveHypothesis {
-                        hypothesis: "network fault".to_string(),
-                        source: crate::shared_types::HypothesisSource::AlternativeContext,
-                        confidence: crate::shared_types::HypothesisConfidence::Low,
+                    Hypothesis {
+                        id: HypothesisId(Uuid::from_u128(0x2222)),
+                        text: "network fault".to_string(),
+                        status: HypothesisStatus::Weakened,
+                        source: HypothesisEvidenceSource::AlternativeContext,
+                        confidence: Confidence::Low,
                     },
                 ],
                 first_check: "check logs".to_string(),
@@ -474,10 +501,7 @@ mod tests {
                     supports_competing_if: "no errors".to_string(),
                     inconclusive_if: None,
                 },
-                alternative_context_assessment: crate::shared_types::AlternativeContextAssessment {
-                    used_as_hypothesis: true,
-                    reason: "alternative case shows a different failure mechanism".to_string(),
-                },
+                competing_interpretation: None,
             },
         }
     }
@@ -494,6 +518,7 @@ mod tests {
             user_input_ok(),
             input_normalization_ok(),
             query_structuring_ok(),
+            information_adequacy_initial_ok(),
             candidate_card_retrieval_ok(),
             card_hydration_ok(),
             incident_evidence_retrieval_ok(),
@@ -513,6 +538,7 @@ mod tests {
             StepKind::UserInputReceived => user_input_ok(),
             StepKind::InputNormalization => input_normalization_ok(),
             StepKind::QueryStructuring => query_structuring_ok(),
+            StepKind::InformationAdequacyInitial => information_adequacy_initial_ok(),
             StepKind::CandidateCardRetrieval => candidate_card_retrieval_ok(),
             StepKind::CardHydration => card_hydration_ok(),
             StepKind::IncidentEvidenceRetrieval => incident_evidence_retrieval_ok(),
@@ -520,6 +546,12 @@ mod tests {
             StepKind::PromptContextAssembly => prompt_context_assembly_ok(),
             StepKind::LlmStructuredGeneration => llm_structured_generation_ok(),
             StepKind::ResponseValidationAndNormalization => response_validation_ok(),
+            StepKind::CardBranchReranking => panic!("CardBranchReranking not used in linear pipeline tests"),
+            StepKind::DiagnosticUpdatePromptContextAssembly => panic!("DiagnosticUpdatePromptContextAssembly not used in linear pipeline tests"),
+            StepKind::ObservationBoundaryResolver => panic!("ObservationBoundaryResolver not used in linear pipeline tests"),
+            StepKind::ObservationExtraction => panic!("ObservationExtraction not used in linear pipeline tests"),
+            StepKind::InformationAdequacySupportedObservation => panic!("InformationAdequacySupportedObservation not used in linear pipeline tests"),
+            StepKind::InformationAdequacyUnsupportedObservation => panic!("InformationAdequacyUnsupportedObservation not used in linear pipeline tests"),
         }
     }
 

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use super::shared_types::{ModelGenerationRequest, ModelGenerationResponse};
+use super::shared_types::{ModelGenerationRequest, ModelGenerationResponse, ModelResponseMode};
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, thiserror::Error)]
 pub enum ModelClientError {
@@ -45,6 +45,13 @@ pub fn validate_request(req: &ModelGenerationRequest) -> Result<(), ModelClientE
         if max_tokens == 0 {
             return Err(ModelClientError::InvalidRequest(
                 "max_output_tokens must be > 0".to_string(),
+            ));
+        }
+    }
+    if let ModelResponseMode::JsonSchema(value) = &req.response_mode {
+        if !value.is_object() {
+            return Err(ModelClientError::InvalidRequest(
+                "JsonSchema value must be a JSON object".to_string(),
             ));
         }
     }

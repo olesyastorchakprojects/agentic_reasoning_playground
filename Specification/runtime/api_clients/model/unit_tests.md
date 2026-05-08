@@ -33,12 +33,14 @@ Generated unit tests for `TogetherModelClient` must include all of the following
 - empty message content fails with the exact `ModelClientError::InvalidRequest` variant before any HTTP call is sent;
 - invalid `temperature` fails with the exact `ModelClientError::InvalidRequest` variant before any HTTP call is sent;
 - invalid `max_output_tokens` fails with the exact `ModelClientError::InvalidRequest` variant before any HTTP call is sent;
+- `ModelResponseMode::JsonSchema(value)` where `value` is not a JSON object fails with the exact `ModelClientError::InvalidRequest` variant before any HTTP call is sent;
 - outbound request body contains exactly the configured `model_name`;
 - outbound request body preserves message order;
 - outbound request body preserves message content exactly;
 - when `max_output_tokens = None`, outbound request omits `max_tokens`;
 - `ModelResponseMode::Text` omits `response_format`;
 - `ModelResponseMode::JsonObject` sends the exact `response_format = { \"type\": \"json_object\" }` shape;
+- `ModelResponseMode::JsonSchema(schema)` sends the exact `response_format = { \"type\": \"json_schema\", \"json_schema\": { \"name\": \"judge_response\", \"schema\": schema } }` shape;
 - when response `choices` contains more than one element, the implementation uses the first choice as the canonical answer;
 - response `message.role` is ignored during response validation and mapping;
 - successful response maps `message.content` into `ModelGenerationResponse.content`;
@@ -64,6 +66,7 @@ Generated unit tests for `OllamaModelClient` must include all of the following c
 - empty message content fails with the exact `ModelClientError::InvalidRequest` variant before any HTTP call is sent;
 - invalid `temperature` fails with the exact `ModelClientError::InvalidRequest` variant before any HTTP call is sent;
 - invalid `max_output_tokens` fails with the exact `ModelClientError::InvalidRequest` variant before any HTTP call is sent;
+- `ModelResponseMode::JsonSchema(value)` where `value` is not a JSON object fails with the exact `ModelClientError::InvalidRequest` variant before any HTTP call is sent;
 - outbound request body contains exactly the configured `model_name`;
 - outbound request body preserves message order;
 - outbound request body preserves message content exactly;
@@ -72,6 +75,7 @@ Generated unit tests for `OllamaModelClient` must include all of the following c
 - when `max_output_tokens = Some(value)`, it is encoded under `options.num_predict`;
 - `ModelResponseMode::Text` omits `format`;
 - `ModelResponseMode::JsonObject` sends `format = \"json\"`;
+- `ModelResponseMode::JsonSchema(_)` also sends `format = \"json\"`;
 - response `message.role` is ignored during response validation and mapping;
 - successful response maps `message.content` into `ModelGenerationResponse.content`;
 - successful response maps `prompt_eval_count` and `eval_count` into token counts;

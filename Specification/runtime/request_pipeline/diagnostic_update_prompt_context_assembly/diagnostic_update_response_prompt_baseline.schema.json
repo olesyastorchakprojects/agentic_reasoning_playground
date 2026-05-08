@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dist-sys-assistant.local/schemas/diagnostic_update_response_prompt_baseline.schema.json",
+  "title": "DiagnosticUpdateResponsePromptBaseline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "name",
+    "template",
+    "context_placeholder",
+    "required_placeholders",
+    "response_schema",
+    "policy_constraints"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "template": {
+      "type": "string",
+      "minLength": 1
+    },
+    "context_placeholder": {
+      "type": "string",
+      "const": "{{json_context}}"
+    },
+    "required_placeholders": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "const": "json_context"
+      },
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true
+    },
+    "response_schema": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "policy_constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1
+    }
+  }
+}

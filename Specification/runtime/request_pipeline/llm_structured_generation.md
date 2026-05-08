@@ -226,7 +226,7 @@ The current call must use:
 - exactly one model message:
   - `role = ModelMessageRole::User`
   - `content = prompt_context.prompt.clone()`
-- `response_mode = ModelResponseMode::JsonObject`
+- `response_mode = ModelResponseMode::JsonSchema(prompt_context.response_schema.clone())`
 - `temperature = 0.0`
 - `max_output_tokens = Some(settings.max_output_tokens)`
 

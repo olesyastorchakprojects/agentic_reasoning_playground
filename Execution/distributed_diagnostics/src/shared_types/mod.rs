@@ -231,6 +231,11 @@ pub struct NormalizedUserRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RetrievalQueryInput {
+    pub query_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StructuredUserQuery {
     pub intent: String,
     pub scenario: String,
@@ -382,14 +387,47 @@ pub struct CandidateCard {
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CandidateCardRetrievalOutput {
+    pub ranked_candidates: Vec<CandidateCard>,
     pub primary: Option<CandidateCard>,
     pub alternatives: Vec<CandidateCard>,
     pub metrics: Option<CandidateCardRetrievalMetrics>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PrimaryCardStatus {
+    Tentative,
+    Sticky,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CardBranchRerankingOutput {
+    pub primary_card_id: String,
+    pub primary_card_status: PrimaryCardStatus,
+    pub alternative_card_ids: Vec<String>,
+    pub challenger_card_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum IterationProfile {
+    Initial,
+    Continuation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IncidentEvidenceCardBranchesInput {
+    pub primary_card_id: String,
+    pub alternative_card_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CardHydrationOutput {
     pub primary: Option<IncidentCard>,
+    pub alternatives: Vec<IncidentCard>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct HydratedCardBranchesInput {
+    pub primary: IncidentCard,
     pub alternatives: Vec<IncidentCard>,
 }
 
@@ -520,43 +558,96 @@ pub struct ResponseValidationAndNormalizationOutput {
     pub response: DiagnosticResponse,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AdequacyStatus {
+    Blocking,
+    WeakButRunnable,
+    Sufficient,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum MissingInformationTopic {
+    SymptomDescription,
+    AffectedComponent,
+    TriggerOrRecentChange,
+    FailureMechanismHint,
+    ExpectedVsActual,
+    ObservedResult,
+    ExecutionContext,
+    CheckOutcome,
+    ScopeOrBlastRadius,
+    CorrectionTarget,
+    TermClarification,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HypothesisSource {
+pub struct AdequacyAssessment {
+    pub status: AdequacyStatus,
+    pub missing_information_topics: Vec<MissingInformationTopic>,
+    pub follow_up_questions: Vec<String>,
+    pub summary_reason: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct HypothesisId(pub uuid::Uuid);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HypothesisEvidenceSource {
     PrimaryIncident,
     AlternativeContext,
     TheoryMechanism,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HypothesisConfidence {
+pub enum HypothesisStatus {
+    Active,
+    Weakened,
+    Rejected(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Confidence {
     Low,
     Medium,
     High,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ActiveHypothesis {
-    pub hypothesis: String,
-    pub source: HypothesisSource,
-    pub confidence: HypothesisConfidence,
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AlternativeContextAssessment {
-    pub used_as_hypothesis: bool,
-    pub reason: String,
+pub struct Hypothesis {
+    pub id: HypothesisId,
+    pub text: String,
+    pub status: HypothesisStatus,
+    pub source: HypothesisEvidenceSource,
+    pub confidence: Confidence,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DiagnosticResponse {
     pub problem_understanding: String,
     pub similar_practical_context: String,
-    pub active_hypotheses: Vec<ActiveHypothesis>,
+    pub hypotheses: Vec<Hypothesis>,
     pub first_check: String,
     pub result_interpretation: DiagnosticResultInterpretation,
-    pub alternative_context_assessment: AlternativeContextAssessment,
+    pub competing_interpretation: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ResolvedObservation {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum ObservationBoundaryResolution {
+    Supported(ResolvedObservation),
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ObservationBoundaryResolverOutput {
+    pub normalized_user_input: String,
+    pub confidence: Confidence,
+    pub reason: String,
+    pub resolution: ObservationBoundaryResolution,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -579,3 +670,44 @@ pub struct RunConfigSnapshot {
     pub retrieval_theory_top_k: usize,
     pub retrieval_theory_collection: String,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationPolarity {
+    Present,
+    Absent,
+    Corrected,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ExtractedObservation {
+    pub statement: String,
+    pub confidence: Confidence,
+    pub condition: Option<String>,
+    pub polarity: ObservationPolarity,
+    pub time_relation: Option<String>,
+    pub source_span: String,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ObservationExtractionOutput {
+    pub normalized_user_input: String,
+    pub resolved_observation: ResolvedObservation,
+    pub confidence: Confidence,
+    pub observations: Vec<ExtractedObservation>,
+    pub needs_more_context: bool,
+    pub missing_context_questions: Vec<String>,
+    pub token_usage: ModelTokenUsage,
+}
+
+mod card_selection_context;
+pub use card_selection_context::{
+    CardSelectionContext, CardSelectionContextError, CardSelectionSnapshot,
+};
+
+mod diagnostic_context;
+pub use diagnostic_context::{
+    DiagnosticContext, DiagnosticContextError, HypothesisState, Observation, ObservationStatus,
+    ProblemUnderstanding, ProblemUnderstandingSource, SuggestedCheck, TrackedHypothesis,
+};
+

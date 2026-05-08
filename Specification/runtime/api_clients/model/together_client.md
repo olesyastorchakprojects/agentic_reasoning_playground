@@ -116,6 +116,24 @@ Response mode mapping rules:
   }
 }
 ```
+- `ModelResponseMode::JsonSchema(schema)` must send:
+
+```json
+{
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "judge_response",
+      "schema": {}
+    }
+  }
+}
+```
+
+Rules:
+- the exact supplied schema JSON object must be serialized under `response_format.json_schema.schema`;
+- the current version must use `"judge_response"` as the stable schema wrapper name for `response_format.json_schema.name`;
+- this module must not rewrite or normalize the supplied schema object before sending it.
 
 Max-output-token mapping rule:
 - when `max_output_tokens = Some(value)`, the request must send `max_tokens = value`;

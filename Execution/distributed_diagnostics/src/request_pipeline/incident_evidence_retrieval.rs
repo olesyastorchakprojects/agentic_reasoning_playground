@@ -799,6 +799,7 @@ mod tests {
         let mock = MockCollection::new(vec![]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![],
             metrics: None,
@@ -818,6 +819,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(vec![hit("c1", "card-1", 0.8)])]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![],
             metrics: None,
@@ -835,6 +837,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(vec![])]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![],
             metrics: None,
@@ -853,6 +856,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(vec![])]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-42")),
             alternatives: vec![],
             metrics: None,
@@ -870,6 +874,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(vec![hit("c1", "card-2", 0.7)])]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![candidate("card-2")],
             metrics: None,
@@ -887,6 +892,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(vec![])]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![candidate("card-2")],
             metrics: None,
@@ -905,6 +911,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(vec![])]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![
                 candidate("card-A"),
@@ -932,6 +939,7 @@ mod tests {
         ]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2"), candidate("card-3")],
             metrics: None,
@@ -952,6 +960,7 @@ mod tests {
         ]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2")],
             metrics: None,
@@ -973,6 +982,7 @@ mod tests {
         s.score_threshold = 0.42;
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), s).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![],
             metrics: None,
@@ -992,6 +1002,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(vec![])]);
         let sut = IncidentEvidenceRetrieval::new(mock.clone(), settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![],
             metrics: None,
@@ -1016,6 +1027,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(hits)]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("x")),
             alternatives: vec![],
             metrics: None,
@@ -1037,6 +1049,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(hits)]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![candidate("x")],
             metrics: None,
@@ -1059,6 +1072,7 @@ mod tests {
         let mock = MockCollection::new(vec![ok_result(vec![hit("c1", "returned-case-id", 0.8)])]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("different-case-id")),
             alternatives: vec![],
             metrics: None,
@@ -1078,6 +1092,7 @@ mod tests {
         ))]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![],
             metrics: None,
@@ -1094,6 +1109,7 @@ mod tests {
         ))]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![candidate("card-2")],
             metrics: None,
@@ -1113,6 +1129,7 @@ mod tests {
         ]);
         let sut = IncidentEvidenceRetrieval::new(mock, settings(5)).unwrap();
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2")],
             metrics: None,

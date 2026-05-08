@@ -29,6 +29,7 @@ use crate::orchestrator::run_state::model::{
     PendingStepRecord,
     RunIteration,
     RunIterationId,
+    RunIterationStatus,
     RunState,
     RunStatus,
     StepError,
@@ -74,6 +75,9 @@ pub enum StateApplyError {
     #[error("pending step already exists")]
     PendingStepAlreadyExists,
 
+    #[error("current iteration is closed")]
+    CurrentIterationClosed,
+
     #[error("pending step handle is stale")]
     StalePendingStep,
 
@@ -111,6 +115,10 @@ impl<'a> RunStateWriter<'a> {
     pub fn current_iteration(
         &mut self,
     ) -> Result<CurrentIterationWriter<'_>, StateApplyError>;
+
+    pub fn finish_current_iteration_success(&mut self) -> Result<(), StateApplyError>;
+
+    pub fn finish_current_iteration_error(&mut self) -> Result<(), StateApplyError>;
 
     pub fn wait_for_user(&mut self) -> Result<(), StateApplyError>;
 
@@ -202,6 +210,10 @@ Generated timestamps must use `Utc::now()`.
 The new iteration's `step_records` must contain only the generated
 `UserInputReceived` finished step.
 
+The new iteration must set:
+
+- `status = RunIterationStatus::Active`.
+
 ## 11) current_iteration
 
 `current_iteration()` must:
@@ -218,6 +230,8 @@ The new iteration's `step_records` must contain only the generated
 
 - return `StateApplyError::PendingStepAlreadyExists` when any
   `StepRecord::Pending(_)` exists in the whole `RunState`;
+- return `StateApplyError::CurrentIterationClosed` when the current iteration
+  status is not `RunIterationStatus::Active`;
 - create a new `StepRecordId`;
 - append `StepRecord::Pending(PendingStepRecord { ... })` to the current
   iteration;
@@ -255,6 +269,10 @@ The pending record must store:
   ... })`;
 - set `state.status = RunStatus::Active`.
 
+`record_success(result)` must not change the current iteration status. The
+iteration remains `RunIterationStatus::Active` until orchestration explicitly
+marks it as success or wait-input at invocation termination time.
+
 The finished record must preserve:
 
 - `record_id`;
@@ -265,6 +283,23 @@ The finished record must set:
 
 - `finished_at = Utc::now()`;
 - `result = Ok(result)`.
+
+`record_success(result)` must use the same `StepKind` ↔
+`StepResultEnvelope` compatibility contract defined in
+`Specification/runtime/orchestrator/run_state/model.md`.
+
+In particular, the current version must accept these success mappings in
+addition to the earlier initial-flow steps:
+
+| pending `step` | accepted success `result` |
+| --- | --- |
+| `StepKind::ObservationBoundaryResolver` | `StepResultEnvelope::ObservationBoundaryResolver(_)` |
+| `StepKind::ObservationExtraction` | `StepResultEnvelope::ObservationExtraction(_)` |
+| `StepKind::InformationAdequacyInitial` | `StepResultEnvelope::InformationAdequacy(_)` |
+| `StepKind::InformationAdequacySupportedObservation` | `StepResultEnvelope::InformationAdequacy(_)` |
+| `StepKind::InformationAdequacyUnsupportedObservation` | `StepResultEnvelope::InformationAdequacy(_)` |
+| `StepKind::CardBranchReranking` | `StepResultEnvelope::CardBranchReranking(_)` |
+| `StepKind::DiagnosticUpdatePromptContextAssembly` | `StepResultEnvelope::DiagnosticUpdatePromptContextAssembly(_)` |
 
 ## 15) record_failure
 
@@ -281,6 +316,7 @@ The finished record must set:
 - replace the pending record with `StepRecord::Finished(FinishedStepRecord {
   ... })`;
 - set `state.status = RunStatus::Error`.
+- set the current iteration status to `RunIterationStatus::FinishedWithError`.
 
 The finished record must preserve:
 
@@ -295,15 +331,68 @@ The finished record must set:
 
 Non-step-specific `StepError` variants may be recorded for any `StepKind`.
 
-## 16) wait_for_user
+`record_failure(error)` must use the same step-specific `StepKind` ↔
+`StepError` compatibility contract defined in
+`Specification/runtime/orchestrator/run_state/model.md`.
+
+In particular, the current version must accept these step-specific error
+mappings in addition to the earlier initial-flow steps:
+
+| pending `step` | accepted step-specific `error` |
+| --- | --- |
+| `StepKind::ObservationBoundaryResolver` | `StepError::ObservationBoundaryResolver(_)` |
+| `StepKind::ObservationExtraction` | `StepError::ObservationExtraction(_)` |
+| `StepKind::InformationAdequacyInitial` | `StepError::InformationAdequacy(_)` |
+| `StepKind::InformationAdequacySupportedObservation` | `StepError::InformationAdequacy(_)` |
+| `StepKind::InformationAdequacyUnsupportedObservation` | `StepError::InformationAdequacy(_)` |
+| `StepKind::CardBranchReranking` | `StepError::CardBranchReranking(_)` |
+| `StepKind::DiagnosticUpdatePromptContextAssembly` | `StepError::DiagnosticUpdatePromptContextAssembly(_)` |
+
+## 16) finish_current_iteration_success
+
+`finish_current_iteration_success()` must:
+
+- return `StateApplyError::NoCurrentIteration` when `state.iterations` is
+  empty;
+- return `StateApplyError::PendingStepAlreadyExists` when any
+  `StepRecord::Pending(_)` exists in the whole `RunState`;
+- return `StateApplyError::CurrentIterationClosed` when the current iteration
+  status is not `RunIterationStatus::Active`;
+- set the current iteration status to
+  `RunIterationStatus::FinishedWithSuccess`;
+- set `state.status = RunStatus::Active`.
+
+## 16a) finish_current_iteration_error
+
+`finish_current_iteration_error()` must:
+
+- return `StateApplyError::NoCurrentIteration` when `state.iterations` is
+  empty;
+- return `StateApplyError::PendingStepAlreadyExists` when any
+  `StepRecord::Pending(_)` exists in the whole `RunState`;
+- return `StateApplyError::CurrentIterationClosed` when the current iteration
+  status is not `RunIterationStatus::Active`;
+- set the current iteration status to
+  `RunIterationStatus::FinishedWithError`;
+- set `state.status = RunStatus::Error`.
+
+## 17) wait_for_user
 
 `wait_for_user()` must:
 
 - return `StateApplyError::PendingStepAlreadyExists` when any
   `StepRecord::Pending(_)` exists in the whole `RunState`;
-- set `state.status = RunStatus::WaitingForUser`.
+- return `StateApplyError::CurrentIterationClosed` when the current iteration
+  status is not `RunIterationStatus::Active`;
+- set `state.status = RunStatus::WaitingForUser`;
+- set the current iteration status to
+  `RunIterationStatus::FinishedWithWaitInput`;
+- leave the current last iteration structurally unchanged except for the
+  iteration-status mutation and the matching run-header mutation;
+- treat the current last iteration as closed for further step execution by
+  later orchestration logic.
 
-## 17) archive_run
+## 18) archive_run
 
 `archive_run()` must:
 
@@ -318,7 +407,7 @@ Calling `archive_run()` when the run is already archived is a pure no-op:
 - `state.updated_at` is not modified;
 - `state.revision` is not incremented.
 
-## 18) Validation Helpers
+## 19) Validation Helpers
 
 The generated module may define private helpers for:
 

@@ -346,8 +346,8 @@ mod tests {
         StepKind, StepRecord, StepRecordId, StepResultEnvelope,
     };
     use distributed_diagnostics::shared_types::{
-        AlternativeContextAssessment, DiagnosticResponse, DiagnosticResultInterpretation,
-        HypothesisConfidence, HypothesisSource, IncidentEvidenceRetrievalOutput,
+        Confidence, DiagnosticResponse, DiagnosticResultInterpretation, Hypothesis,
+        HypothesisEvidenceSource, HypothesisId, HypothesisStatus, IncidentEvidenceRetrievalOutput,
         LlmStructuredGenerationOutput, ModelTokenUsage, NormalizedUserRequest,
         PromptContextAssemblyOutput, QueryStructuringOutput, ResponseValidationAndNormalizationOutput,
         StructuredUserQuery, StructuredUserQueryConfidence, UserRequest,
@@ -495,11 +495,13 @@ mod tests {
                             response: DiagnosticResponse {
                                 problem_understanding: "foo".to_string(),
                                 similar_practical_context: "bar".to_string(),
-                                active_hypotheses: vec![
-                                    distributed_diagnostics::shared_types::ActiveHypothesis {
-                                        hypothesis: "leader election instability".to_string(),
-                                        source: HypothesisSource::PrimaryIncident,
-                                        confidence: HypothesisConfidence::Medium,
+                                hypotheses: vec![
+                                    Hypothesis {
+                                        id: HypothesisId(Uuid::from_u128(0xABCD)),
+                                        text: "leader election instability".to_string(),
+                                        status: HypothesisStatus::Active,
+                                        source: HypothesisEvidenceSource::PrimaryIncident,
+                                        confidence: Confidence::Medium,
                                     },
                                 ],
                                 first_check: "check raft logs".to_string(),
@@ -508,10 +510,7 @@ mod tests {
                                     supports_competing_if: "if logs are clean".to_string(),
                                     inconclusive_if: Some("if logs are missing".to_string()),
                                 },
-                                alternative_context_assessment: AlternativeContextAssessment {
-                                    used_as_hypothesis: false,
-                                    reason: "primary precedent dominates".to_string(),
-                                },
+                                competing_interpretation: None,
                             },
                         },
                     ),

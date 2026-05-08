@@ -32,22 +32,32 @@ types:
 
 ```rust
 use crate::shared_types::{
+    AdequacyAssessment,
     CandidateCardRetrievalOutput,
+    CardBranchRerankingOutput,
     CardHydrationOutput,
     IncidentEvidenceRetrievalOutput,
     LlmStructuredGenerationOutput,
     NormalizedUserRequest,
+    ObservationExtractionOutput,
+    ObservationBoundaryResolverOutput,
     PromptContextAssemblyOutput,
     QueryStructuringOutput,
     ResponseValidationAndNormalizationOutput,
+    RunConfigSnapshot,
     TheoryEvidenceRetrievalOutput,
     UserRequest,
 };
 use crate::request_pipeline::candidate_card_retrieval::CandidateCardRetrievalError;
+use crate::request_pipeline::card_branch_reranking::CardBranchRerankingError;
 use crate::request_pipeline::card_hydration::CardHydrationError;
+use crate::request_pipeline::diagnostic_update_prompt_context_assembly::DiagnosticUpdatePromptContextAssemblyError;
+use crate::request_pipeline::information_adequacy_analyzer::InformationAdequacyAnalyzerError;
 use crate::request_pipeline::incident_evidence_retrieval::IncidentEvidenceRetrievalError;
 use crate::request_pipeline::input_normalization::InputNormalizationError;
 use crate::request_pipeline::llm_structured_generation::LlmStructuredGenerationError;
+use crate::request_pipeline::observation_boundary_resolver::ObservationBoundaryResolverError;
+use crate::request_pipeline::observation_extraction::ObservationExtractionError;
 use crate::request_pipeline::prompt_context_assembly::PromptContextAssemblyError;
 use crate::request_pipeline::query_structuring::QueryStructuringError;
 use crate::request_pipeline::response_validation_and_normalization::ResponseValidationAndNormalizationError;
@@ -91,6 +101,26 @@ pub enum RunStatus {
     Archived,
 }
 
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    EnumString,
+    Display,
+    AsRefStr,
+)]
+pub enum RunIterationStatus {
+    Active,
+    FinishedWithSuccess,
+    FinishedWithError,
+    FinishedWithWaitInput,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub run_id: RunId,
@@ -118,13 +148,20 @@ pub enum StepKind {
     UserInputReceived,
     InputNormalization,
     QueryStructuring,
+    InformationAdequacyInitial,
+    InformationAdequacySupportedObservation,
+    InformationAdequacyUnsupportedObservation,
     CandidateCardRetrieval,
+    CardBranchReranking,
     CardHydration,
     IncidentEvidenceRetrieval,
     TheoryEvidenceRetrieval,
     PromptContextAssembly,
+    DiagnosticUpdatePromptContextAssembly,
     LlmStructuredGeneration,
     ResponseValidationAndNormalization,
+    ObservationBoundaryResolver,
+    ObservationExtraction,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -132,13 +169,18 @@ pub enum StepResultEnvelope {
     UserInputReceived(UserRequest),
     InputNormalization(NormalizedUserRequest),
     QueryStructuring(QueryStructuringOutput),
+    InformationAdequacy(AdequacyAssessment),
     CandidateCardRetrieval(CandidateCardRetrievalOutput),
+    CardBranchReranking(CardBranchRerankingOutput),
     CardHydration(CardHydrationOutput),
     IncidentEvidenceRetrieval(IncidentEvidenceRetrievalOutput),
     TheoryEvidenceRetrieval(TheoryEvidenceRetrievalOutput),
     PromptContextAssembly(PromptContextAssemblyOutput),
+    DiagnosticUpdatePromptContextAssembly(PromptContextAssemblyOutput),
     LlmStructuredGeneration(LlmStructuredGenerationOutput),
     ResponseValidationAndNormalization(ResponseValidationAndNormalizationOutput),
+    ObservationBoundaryResolver(ObservationBoundaryResolverOutput),
+    ObservationExtraction(ObservationExtractionOutput),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Error)]
@@ -156,7 +198,13 @@ pub enum StepError {
     QueryStructuring(#[from] QueryStructuringError),
 
     #[error(transparent)]
+    InformationAdequacy(#[from] InformationAdequacyAnalyzerError),
+
+    #[error(transparent)]
     CandidateCardRetrieval(#[from] CandidateCardRetrievalError),
+
+    #[error(transparent)]
+    CardBranchReranking(#[from] CardBranchRerankingError),
 
     #[error(transparent)]
     CardHydration(#[from] CardHydrationError),
@@ -171,10 +219,19 @@ pub enum StepError {
     PromptContextAssembly(#[from] PromptContextAssemblyError),
 
     #[error(transparent)]
+    DiagnosticUpdatePromptContextAssembly(#[from] DiagnosticUpdatePromptContextAssemblyError),
+
+    #[error(transparent)]
     LlmStructuredGeneration(#[from] LlmStructuredGenerationError),
 
     #[error(transparent)]
     ResponseValidationAndNormalization(#[from] ResponseValidationAndNormalizationError),
+
+    #[error(transparent)]
+    ObservationBoundaryResolver(#[from] ObservationBoundaryResolverError),
+
+    #[error(transparent)]
+    ObservationExtraction(#[from] ObservationExtractionError),
 
     #[error("external dependency failure: {message}")]
     ExternalDependency { message: String },
@@ -208,6 +265,8 @@ pub struct FinishedStepRecord {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunIteration {
     pub iteration_id: RunIterationId,
+    pub config_snapshot: Option<RunConfigSnapshot>,
+    pub status: RunIterationStatus,
     pub step_records: Vec<StepRecord>,
 }
 ```
@@ -253,12 +312,38 @@ Pending step invariant:
 - `RunStatus::Active` means that the run remains open for future orchestration
   invocations, including retry with the same iteration or continuation with a
   later user input;
+- `RunStatus::WaitingForUser` means the latest orchestration invocation paused
+  after requesting follow-up input and the next supported continuation path is
+  `resume_with_input(...)` with a newly appended iteration;
 - a successful user-facing response from one orchestration invocation does not
   by itself move the run into a separate terminal success status;
 - `RunStatus::Archived` is the current explicit closed-state marker for a run;
-- `RunStatus::Error` means the last attempted step recording ended in failure,
-  but the run may still later be resumed or superseded by a new iteration if
-  higher-level product behavior allows that.
+- `RunStatus::Error` means the latest orchestration attempt for the current
+  iteration ended in failure, whether through a failed executable step or a
+  policy-driven error finish; the run may still later be resumed or
+  superseded by a new iteration if higher-level product behavior allows that.
+
+`RunIterationStatus` semantics:
+
+- `RunIterationStatus::Active` means the iteration remains eligible for
+  further step execution in the current version;
+- `RunIterationStatus::FinishedWithSuccess` means the iteration completed
+  through `PolicyTransition::FinishWithResult`;
+- `RunIterationStatus::FinishedWithError` means the iteration completed
+  through either a failed executable step or
+  `PolicyTransition::FinishWithError`;
+- `RunIterationStatus::FinishedWithWaitInput` means the iteration completed
+  through `PolicyTransition::WaitForUser` and is a short iteration for
+  history-view purposes.
+
+Iteration-status invariants:
+
+- at most one `RunIteration` in a `RunState` may have
+  `status = RunIterationStatus::Active`;
+- if an active iteration exists, it must be the last element of
+  `RunState.iterations`;
+- any iteration whose `status != RunIterationStatus::Active` must contain no
+  pending step record.
 
 `FinishedStepRecord.result` success variant must match `FinishedStepRecord.step`:
 
@@ -267,13 +352,20 @@ Pending step invariant:
 | `StepKind::UserInputReceived` | `StepResultEnvelope::UserInputReceived(_)` |
 | `StepKind::InputNormalization` | `StepResultEnvelope::InputNormalization(_)` |
 | `StepKind::QueryStructuring` | `StepResultEnvelope::QueryStructuring(_)` |
+| `StepKind::InformationAdequacyInitial` | `StepResultEnvelope::InformationAdequacy(_)` |
+| `StepKind::InformationAdequacySupportedObservation` | `StepResultEnvelope::InformationAdequacy(_)` |
+| `StepKind::InformationAdequacyUnsupportedObservation` | `StepResultEnvelope::InformationAdequacy(_)` |
 | `StepKind::CandidateCardRetrieval` | `StepResultEnvelope::CandidateCardRetrieval(_)` |
+| `StepKind::CardBranchReranking` | `StepResultEnvelope::CardBranchReranking(_)` |
 | `StepKind::CardHydration` | `StepResultEnvelope::CardHydration(_)` |
 | `StepKind::IncidentEvidenceRetrieval` | `StepResultEnvelope::IncidentEvidenceRetrieval(_)` |
 | `StepKind::TheoryEvidenceRetrieval` | `StepResultEnvelope::TheoryEvidenceRetrieval(_)` |
 | `StepKind::PromptContextAssembly` | `StepResultEnvelope::PromptContextAssembly(_)` |
+| `StepKind::DiagnosticUpdatePromptContextAssembly` | `StepResultEnvelope::DiagnosticUpdatePromptContextAssembly(_)` |
 | `StepKind::LlmStructuredGeneration` | `StepResultEnvelope::LlmStructuredGeneration(_)` |
 | `StepKind::ResponseValidationAndNormalization` | `StepResultEnvelope::ResponseValidationAndNormalization(_)` |
+| `StepKind::ObservationBoundaryResolver` | `StepResultEnvelope::ObservationBoundaryResolver(_)` |
+| `StepKind::ObservationExtraction` | `StepResultEnvelope::ObservationExtraction(_)` |
 
 `FinishedStepRecord.result` step-specific error variants must match
 `FinishedStepRecord.step`:
@@ -282,13 +374,20 @@ Pending step invariant:
 | --- | --- |
 | `StepKind::InputNormalization` | `StepError::InputNormalization(_)` |
 | `StepKind::QueryStructuring` | `StepError::QueryStructuring(_)` |
+| `StepKind::InformationAdequacyInitial` | `StepError::InformationAdequacy(_)` |
+| `StepKind::InformationAdequacySupportedObservation` | `StepError::InformationAdequacy(_)` |
+| `StepKind::InformationAdequacyUnsupportedObservation` | `StepError::InformationAdequacy(_)` |
 | `StepKind::CandidateCardRetrieval` | `StepError::CandidateCardRetrieval(_)` |
+| `StepKind::CardBranchReranking` | `StepError::CardBranchReranking(_)` |
 | `StepKind::CardHydration` | `StepError::CardHydration(_)` |
 | `StepKind::IncidentEvidenceRetrieval` | `StepError::IncidentEvidenceRetrieval(_)` |
 | `StepKind::TheoryEvidenceRetrieval` | `StepError::TheoryEvidenceRetrieval(_)` |
 | `StepKind::PromptContextAssembly` | `StepError::PromptContextAssembly(_)` |
+| `StepKind::DiagnosticUpdatePromptContextAssembly` | `StepError::DiagnosticUpdatePromptContextAssembly(_)` |
 | `StepKind::LlmStructuredGeneration` | `StepError::LlmStructuredGeneration(_)` |
 | `StepKind::ResponseValidationAndNormalization` | `StepError::ResponseValidationAndNormalization(_)` |
+| `StepKind::ObservationBoundaryResolver` | `StepError::ObservationBoundaryResolver(_)` |
+| `StepKind::ObservationExtraction` | `StepError::ObservationExtraction(_)` |
 
 Non-step-specific `StepError` variants may be used for any `StepKind`.
 

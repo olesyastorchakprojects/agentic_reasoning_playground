@@ -43,7 +43,8 @@ Required ownership by file:
   - `TransitionPolicy` trait;
   - `PolicyTransition`;
   - `PolicyError`;
-  - re-export of `LinearPipelineTransitionPolicy`.
+  - re-export of `LinearPipelineTransitionPolicy`;
+  - re-export of `DiagnosticLoopTransitionPolicy`.
 - `src/orchestrator/transition_policy/linear_pipeline.rs` owns:
   - `LinearPipelineTransitionPolicy`;
   - `impl TransitionPolicy for LinearPipelineTransitionPolicy`;
@@ -85,6 +86,9 @@ pub trait TransitionPolicy {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PolicyTransition {
     ExecuteStep { step: StepKind },
+    WaitForUser {
+        follow_up_questions: Vec<String>,
+    },
     FinishWithResult {
         result: ResponseValidationAndNormalizationOutput,
     },
@@ -143,13 +147,25 @@ impl LinearPipelineTransitionPolicy {
 
 1. `StepKind::InputNormalization`
 2. `StepKind::QueryStructuring`
-3. `StepKind::CandidateCardRetrieval`
-4. `StepKind::CardHydration`
-5. `StepKind::IncidentEvidenceRetrieval`
-6. `StepKind::TheoryEvidenceRetrieval`
-7. `StepKind::PromptContextAssembly`
-8. `StepKind::LlmStructuredGeneration`
-9. `StepKind::ResponseValidationAndNormalization`
+3. `StepKind::InformationAdequacyInitial`
+4. `StepKind::CandidateCardRetrieval`
+5. `StepKind::CardHydration`
+6. `StepKind::IncidentEvidenceRetrieval`
+7. `StepKind::TheoryEvidenceRetrieval`
+8. `StepKind::PromptContextAssembly`
+9. `StepKind::LlmStructuredGeneration`
+10. `StepKind::ResponseValidationAndNormalization`
+
+Policy rule for the adequacy step:
+- when `StepKind::InformationAdequacyInitial` completed successfully with
+  `AdequacyAssessment.status = Blocking` or `WeakButRunnable`,
+  `LinearPipelineTransitionPolicy` must return
+  `PolicyTransition::WaitForUser { follow_up_questions }`;
+- the returned `follow_up_questions` must equal the exact
+  `AdequacyAssessment.follow_up_questions` payload stored in the successful
+  step result;
+- when `AdequacyAssessment.status = Sufficient`, policy must continue to the
+  next canonical executable step.
 
 `StepKind::UserInputReceived` is a required current-iteration anchor record but
 is not part of the executable canonical order and must never be returned inside

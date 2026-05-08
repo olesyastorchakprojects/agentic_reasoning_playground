@@ -53,6 +53,7 @@ use crate::orchestrator::run_state::model::{
     RunId,
     RunIteration,
     RunIterationId,
+    RunIterationStatus,
     RunState,
     RunStatus,
     StepKind,
@@ -111,6 +112,13 @@ impl RunRepository {
     pub async fn update_run_header(
         &self,
         run: &RunState,
+    ) -> Result<(), RunRepositoryError>;
+
+    pub async fn update_iteration_status(
+        &self,
+        run: &RunState,
+        iteration_id: RunIterationId,
+        status: RunIterationStatus,
     ) -> Result<(), RunRepositoryError>;
 
     pub async fn list_runs(
@@ -276,10 +284,32 @@ Canonical store-call sequence for `finish_step_record(...)`:
 - not insert or update iterations;
 - not insert or update step records.
 
-This method exists for run-level mutations such as `wait_for_user()` and
-`archive_run()` that do not append or finish child records.
+This method exists for pure run-header mutations such as `archive_run()` that
+do not append, finish, or reclassify child records.
 
-## 13) `list_runs`
+## 13) `update_iteration_status`
+
+`update_iteration_status(run, iteration_id, status)` must:
+
+- persist only the target iteration row's `status` field;
+- update the run header to match `run.status`, `run.updated_at`, and
+  `run.revision`;
+- not insert or update step records;
+- not insert additional iterations;
+- when used for a wait-for-user pause, persist that pause through the target
+  iteration status plus the matching run-header update, without creating any
+  synthetic iteration marker row or synthetic step-record row.
+
+Canonical store-call sequence for `update_iteration_status(...)`:
+
+1. call `run_state_store.with_transaction(...)`;
+2. inside the callback call
+   `tx.update_iteration_status(iteration_id, status)`;
+3. then call
+   `tx.update_run_header(run.run_id, run.status, run.updated_at, run.revision)`;
+4. return `Ok(())` from the callback only after both writes succeed.
+
+## 14) `list_runs`
 
 `list_runs()` must return a user-facing run summary projection:
 
@@ -317,7 +347,7 @@ Err(RunRepositoryError::MissingInitialUserQuery { run_id })
 
 The current version does not define filtering parameters for `list_runs(...)`.
 
-## 14) Projection Read Rules For `list_runs`
+## 15) Projection Read Rules For `list_runs`
 
 The repository must derive `RunListItem` from information already persisted in
 storage.
@@ -387,7 +417,7 @@ The current version must use the last successful
 `ResponseValidationAndNormalization` record from the first iteration when more
 than one such successful record is present.
 
-## 15) Transactionality
+## 16) Transactionality
 
 Repository methods may compose lower-level store operations.
 
@@ -405,6 +435,7 @@ update in one transaction:
 - `append_iteration(...)`
 - `append_step_record(...)`
 - `finish_step_record(...)`
+- `update_iteration_status(...)`
 
 Canonical transaction shape:
 

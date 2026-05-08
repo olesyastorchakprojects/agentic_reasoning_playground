@@ -118,6 +118,17 @@ Response mode mapping rules:
   "format": "json"
 }
 ```
+- `ModelResponseMode::JsonSchema(_)` must also send:
+
+```json
+{
+  "format": "json"
+}
+```
+
+Rules:
+- the current Ollama-compatible path does not transmit the schema object separately;
+- `JsonSchema(_)` and `JsonObject` therefore share the same wire-level `format = "json"` mapping in the current version.
 
 ## 6) Full HTTP JSON Examples
 

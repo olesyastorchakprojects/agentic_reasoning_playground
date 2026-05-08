@@ -4,8 +4,6 @@ use strum_macros::{AsRefStr, Display, EnumString};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::shared_types::RunConfigSnapshot;
-
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -17,8 +15,9 @@ mod tests {
     use uuid::Uuid;
 
     use crate::orchestrator::run_state::model::{
-        FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId, RunState,
-        RunStatus, StepError, StepKind, StepRecord, StepRecordId, StepResultEnvelope,
+        FinishedStepRecord, PendingStepRecord, RunId, RunIteration, RunIterationId,
+        RunIterationStatus, RunState, RunStatus, StepError, StepKind, StepRecord, StepRecordId,
+        StepResultEnvelope,
     };
     use crate::request_pipeline::input_normalization::InputNormalizationError;
     use crate::shared_types::UserRequest;
@@ -222,6 +221,7 @@ mod tests {
             StepKind::PromptContextAssembly,
             StepKind::LlmStructuredGeneration,
             StepKind::ResponseValidationAndNormalization,
+            StepKind::ObservationBoundaryResolver,
         ];
         for kind in kinds {
             let json = serde_json::to_string(&kind).unwrap();
@@ -250,6 +250,10 @@ mod tests {
             (
                 StepKind::ResponseValidationAndNormalization,
                 "ResponseValidationAndNormalization",
+            ),
+            (
+                StepKind::ObservationBoundaryResolver,
+                "ObservationBoundaryResolver",
             ),
         ];
         for (kind, expected) in cases {
@@ -355,6 +359,7 @@ mod tests {
             iterations: vec![RunIteration {
                 iteration_id: iteration_id(),
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: vec![finished_ok(
                     StepKind::UserInputReceived,
                     user_input_result(),
@@ -372,18 +377,24 @@ mod tests {
 
 use crate::request_pipeline::candidate_card_retrieval::CandidateCardRetrievalError;
 use crate::request_pipeline::card_hydration::CardHydrationError;
+use crate::request_pipeline::card_branch_reranking::CardBranchRerankingError;
+use crate::request_pipeline::diagnostic_update_prompt_context_assembly::DiagnosticUpdatePromptContextAssemblyError;
 use crate::request_pipeline::incident_evidence_retrieval::IncidentEvidenceRetrievalError;
+use crate::request_pipeline::information_adequacy_analyzer::InformationAdequacyAnalyzerError;
 use crate::request_pipeline::input_normalization::InputNormalizationError;
 use crate::request_pipeline::llm_structured_generation::LlmStructuredGenerationError;
+use crate::request_pipeline::observation_boundary_resolver::ObservationBoundaryResolverError;
+use crate::request_pipeline::observation_extraction::ObservationExtractionError;
 use crate::request_pipeline::prompt_context_assembly::PromptContextAssemblyError;
 use crate::request_pipeline::query_structuring::QueryStructuringError;
 use crate::request_pipeline::response_validation_and_normalization::ResponseValidationAndNormalizationError;
 use crate::request_pipeline::theory_evidence_retrieval::TheoryEvidenceRetrievalError;
 use crate::shared_types::{
-    CandidateCardRetrievalOutput, CardHydrationOutput, IncidentEvidenceRetrievalOutput,
-    LlmStructuredGenerationOutput, NormalizedUserRequest, PromptContextAssemblyOutput,
-    QueryStructuringOutput, ResponseValidationAndNormalizationOutput,
-    TheoryEvidenceRetrievalOutput, UserRequest,
+    AdequacyAssessment, CandidateCardRetrievalOutput, CardBranchRerankingOutput,
+    CardHydrationOutput, IncidentEvidenceRetrievalOutput, LlmStructuredGenerationOutput,
+    NormalizedUserRequest, ObservationBoundaryResolverOutput, ObservationExtractionOutput,
+    PromptContextAssemblyOutput, QueryStructuringOutput, ResponseValidationAndNormalizationOutput,
+    RunConfigSnapshot, TheoryEvidenceRetrievalOutput, UserRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -432,17 +443,34 @@ impl RunState {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, EnumString, Display, AsRefStr,
 )]
+pub enum RunIterationStatus {
+    Active,
+    FinishedWithSuccess,
+    FinishedWithError,
+    FinishedWithWaitInput,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, EnumString, Display, AsRefStr,
+)]
 pub enum StepKind {
     UserInputReceived,
     InputNormalization,
     QueryStructuring,
+    InformationAdequacyInitial,
+    InformationAdequacySupportedObservation,
+    InformationAdequacyUnsupportedObservation,
     CandidateCardRetrieval,
+    CardBranchReranking,
     CardHydration,
     IncidentEvidenceRetrieval,
     TheoryEvidenceRetrieval,
     PromptContextAssembly,
+    DiagnosticUpdatePromptContextAssembly,
     LlmStructuredGeneration,
     ResponseValidationAndNormalization,
+    ObservationBoundaryResolver,
+    ObservationExtraction,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -450,13 +478,18 @@ pub enum StepResultEnvelope {
     UserInputReceived(UserRequest),
     InputNormalization(NormalizedUserRequest),
     QueryStructuring(QueryStructuringOutput),
+    InformationAdequacy(AdequacyAssessment),
     CandidateCardRetrieval(CandidateCardRetrievalOutput),
+    CardBranchReranking(CardBranchRerankingOutput),
     CardHydration(CardHydrationOutput),
     IncidentEvidenceRetrieval(IncidentEvidenceRetrievalOutput),
     TheoryEvidenceRetrieval(TheoryEvidenceRetrievalOutput),
     PromptContextAssembly(PromptContextAssemblyOutput),
+    DiagnosticUpdatePromptContextAssembly(PromptContextAssemblyOutput),
     LlmStructuredGeneration(LlmStructuredGenerationOutput),
     ResponseValidationAndNormalization(ResponseValidationAndNormalizationOutput),
+    ObservationBoundaryResolver(ObservationBoundaryResolverOutput),
+    ObservationExtraction(ObservationExtractionOutput),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Error)]
@@ -474,7 +507,13 @@ pub enum StepError {
     QueryStructuring(#[from] QueryStructuringError),
 
     #[error(transparent)]
+    InformationAdequacy(#[from] InformationAdequacyAnalyzerError),
+
+    #[error(transparent)]
     CandidateCardRetrieval(#[from] CandidateCardRetrievalError),
+
+    #[error(transparent)]
+    CardBranchReranking(#[from] CardBranchRerankingError),
 
     #[error(transparent)]
     CardHydration(#[from] CardHydrationError),
@@ -489,10 +528,19 @@ pub enum StepError {
     PromptContextAssembly(#[from] PromptContextAssemblyError),
 
     #[error(transparent)]
+    DiagnosticUpdatePromptContextAssembly(#[from] DiagnosticUpdatePromptContextAssemblyError),
+
+    #[error(transparent)]
     LlmStructuredGeneration(#[from] LlmStructuredGenerationError),
 
     #[error(transparent)]
     ResponseValidationAndNormalization(#[from] ResponseValidationAndNormalizationError),
+
+    #[error(transparent)]
+    ObservationBoundaryResolver(#[from] ObservationBoundaryResolverError),
+
+    #[error(transparent)]
+    ObservationExtraction(#[from] ObservationExtractionError),
 
     #[error("external dependency failure: {message}")]
     ExternalDependency { message: String },
@@ -527,5 +575,6 @@ pub struct FinishedStepRecord {
 pub struct RunIteration {
     pub iteration_id: RunIterationId,
     pub config_snapshot: Option<RunConfigSnapshot>,
+    pub status: RunIterationStatus,
     pub step_records: Vec<StepRecord>,
 }

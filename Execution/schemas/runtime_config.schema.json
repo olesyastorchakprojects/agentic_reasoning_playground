@@ -9,8 +9,12 @@
     "retrieval",
     "input_normalization",
     "query_structuring",
+    "observation_boundary_resolver",
+    "observation_extraction",
+    "incident_evidence_retrieval",
     "llm_structured_generation",
     "prompt_context",
+    "diagnostic_update_prompt_context",
     "model",
     "observability"
   ],
@@ -65,6 +69,15 @@
     "query_structuring": {
       "$ref": "#/$defs/query_structuring"
     },
+    "observation_boundary_resolver": {
+      "$ref": "#/$defs/observation_boundary_resolver"
+    },
+    "observation_extraction": {
+      "$ref": "#/$defs/observation_extraction"
+    },
+    "incident_evidence_retrieval": {
+      "$ref": "#/$defs/incident_evidence_retrieval"
+    },
     "llm_structured_generation": {
       "type": "object",
       "additionalProperties": false,
@@ -80,6 +93,9 @@
     },
     "prompt_context": {
       "$ref": "#/$defs/prompt_context"
+    },
+    "diagnostic_update_prompt_context": {
+      "$ref": "#/$defs/diagnostic_update_prompt_context"
     },
     "observability": {
       "type": "object",
@@ -214,6 +230,109 @@
         }
       }
     },
+    "observation_boundary_resolver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "prompt_asset_path",
+        "max_output_tokens"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt_asset_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "observation_extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "prompt_asset_path",
+        "max_output_tokens"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt_asset_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "incident_evidence_tag_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_tags",
+        "alternative_tags"
+      ],
+      "properties": {
+        "primary_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "alternative_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "incident_evidence_retrieval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "retrieval",
+        "profiles"
+      ],
+      "properties": {
+        "retrieval": { "$ref": "#/$defs/collection_retrieval" },
+        "profiles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "initial",
+            "continuation"
+          ],
+          "properties": {
+            "initial": { "$ref": "#/$defs/incident_evidence_tag_profile" },
+            "continuation": { "$ref": "#/$defs/incident_evidence_tag_profile" }
+          }
+        }
+      }
+    },
     "prompt_context": {
       "type": "object",
       "additionalProperties": false,
@@ -239,6 +358,38 @@
           "properties": {
             "evidence_for_match": { "$ref": "#/$defs/incident_chunk_role_required" },
             "first_check_hint": { "$ref": "#/$defs/incident_chunk_role_required" },
+            "supporting_explanation": { "$ref": "#/$defs/incident_chunk_role_optional" },
+            "alternative_context": { "$ref": "#/$defs/alternative_chunk_role" },
+            "mechanism_explanation": { "$ref": "#/$defs/theory_chunk_role" }
+          }
+        }
+      }
+    },
+    "diagnostic_update_prompt_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prompt_asset_path",
+        "chunk_packing"
+      ],
+      "properties": {
+        "prompt_asset_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chunk_packing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "evidence_for_match",
+            "next_check_hint",
+            "supporting_explanation",
+            "alternative_context",
+            "mechanism_explanation"
+          ],
+          "properties": {
+            "evidence_for_match": { "$ref": "#/$defs/incident_chunk_role_required" },
+            "next_check_hint": { "$ref": "#/$defs/incident_chunk_role_required" },
             "supporting_explanation": { "$ref": "#/$defs/incident_chunk_role_optional" },
             "alternative_context": { "$ref": "#/$defs/alternative_chunk_role" },
             "mechanism_explanation": { "$ref": "#/$defs/theory_chunk_role" }

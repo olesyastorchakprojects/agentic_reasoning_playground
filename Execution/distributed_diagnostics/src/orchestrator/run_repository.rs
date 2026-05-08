@@ -5,7 +5,7 @@ use crate::api_clients::postgres::run_state_store::{
     PostgresRunStateStore, PostgresRunStateStoreTx, RunStateStoreError, RunSummaryRow,
 };
 use crate::orchestrator::run_state::model::{
-    FinishedStepRecord, RunId, RunIteration, RunIterationId, RunState, RunStatus, StepRecord,
+    FinishedStepRecord, RunId, RunIteration, RunIterationId, RunIterationStatus, RunState, RunStatus, StepRecord,
     StepRecordId,
 };
 
@@ -198,6 +198,26 @@ impl RunRepository {
             .map_err(map_store_error)
     }
 
+    pub async fn update_iteration_status(
+        &self,
+        run: &RunState,
+        iteration_id: RunIterationId,
+        status: RunIterationStatus,
+    ) -> Result<(), RunRepositoryError> {
+        let run = run.clone();
+        self.run_state_store
+            .with_transaction(|tx: &mut PostgresRunStateStoreTx<'_>| {
+                Box::pin(async move {
+                    tx.update_iteration_status(iteration_id, status).await?;
+                    tx.update_run_header(run.run_id, run.status, run.updated_at, run.revision)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .await
+            .map_err(map_store_error)
+    }
+
     pub async fn list_runs(&self) -> Result<Vec<RunListItem>, RunRepositoryError> {
         let summaries = self
             .run_state_store
@@ -281,6 +301,7 @@ mod tests {
             iterations: vec![RunIteration {
                 iteration_id: RunIterationId(uuid::Uuid::new_v4()),
                 config_snapshot: None,
+                status: RunIterationStatus::Active,
                 step_records: vec![],
             }],
         };

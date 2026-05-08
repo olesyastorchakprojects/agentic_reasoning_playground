@@ -309,7 +309,9 @@ fn map_response(wire: WireResponse) -> Result<ModelGenerationResponse, ModelClie
 fn is_retryable(err: &ModelClientError) -> bool {
     matches!(
         err,
-        ModelClientError::Transport(_) | ModelClientError::UnexpectedStatus(500..=599)
+        ModelClientError::Transport(_)
+            | ModelClientError::UnexpectedStatus(500..=599)
+            | ModelClientError::InvalidResponse(_)
     )
 }
 
@@ -470,6 +472,38 @@ mod tests {
             client.generate(&req).await.unwrap_err(),
             ModelClientError::InvalidRequest(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn json_schema_non_object_fails_before_http() {
+        let server = MockHttpServer::new(vec![]).await;
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let mut req = simple_request();
+        req.response_mode = ModelResponseMode::JsonSchema(serde_json::json!([1, 2, 3]));
+        assert!(matches!(
+            client.generate(&req).await.unwrap_err(),
+            ModelClientError::InvalidRequest(_)
+        ));
+        assert!(server.take_bodies().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn json_schema_mode_sends_correct_response_format() {
+        let resp_body = serde_json::json!({
+            "choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}]
+        })
+        .to_string();
+        let server = MockHttpServer::new(vec![MockResponse::ok(resp_body)]).await;
+        let client = TogetherModelClient::new(config(&server.base_url()), policy()).unwrap();
+        let mut req = simple_request();
+        let schema = serde_json::json!({"type": "object", "properties": {"x": {"type": "string"}}});
+        req.response_mode = ModelResponseMode::JsonSchema(schema.clone());
+        client.generate(&req).await.unwrap();
+        let bodies = server.take_bodies().await;
+        let body: serde_json::Value = serde_json::from_slice(&bodies[0]).unwrap();
+        assert_eq!(body["response_format"]["type"], "json_schema");
+        assert_eq!(body["response_format"]["json_schema"]["name"], "judge_response");
+        assert_eq!(body["response_format"]["json_schema"]["schema"], schema);
     }
 
     #[tokio::test]

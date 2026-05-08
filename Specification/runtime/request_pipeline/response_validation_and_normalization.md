@@ -51,28 +51,31 @@ Parent module exposure:
 The generated Rust runtime must define shared types equivalent in ownership to:
 
 ```rust
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResponseValidationAndNormalizationOutput {
     pub response: DiagnosticResponse,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiagnosticResponse {
     pub problem_understanding: String,
     pub similar_practical_context: String,
-    pub active_hypotheses: Vec<String>,
+    pub hypotheses: Vec<Hypothesis>,
     pub first_check: String,
     pub result_interpretation: DiagnosticResultInterpretation,
     pub competing_interpretation: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DiagnosticResultInterpretation {
     pub supports_primary_if: String,
     pub supports_competing_if: String,
     pub inconclusive_if: Option<String>,
 }
 ```
+
+`Hypothesis` is the shared type defined in `Specification/runtime/runtime.md` and `src/shared_types.rs`.
+`DiagnosticResponse` and `ResponseValidationAndNormalizationOutput` must be defined in `src/shared_types.rs`.
 
 Type ownership rules:
 - these are trusted cross-module response types and must be defined in
@@ -140,7 +143,7 @@ Rules:
 The accepted top-level JSON object must contain exactly these fields:
 - `problem_understanding`
 - `similar_practical_context`
-- `active_hypotheses`
+- `hypotheses`
 - `first_check`
 - `result_interpretation`
 - `competing_interpretation`
@@ -150,10 +153,18 @@ Rules:
 - unknown top-level fields must fail validation;
 - `problem_understanding` must be a string;
 - `similar_practical_context` must be a string;
-- `active_hypotheses` must be an array of strings;
+- `hypotheses` must be an array of hypothesis objects;
 - `first_check` must be a string;
 - `result_interpretation` must be an object;
 - `competing_interpretation` must be either a string or null.
+
+Each hypothesis object in `hypotheses` must contain exactly these fields:
+- `id` — a string parseable as a UUID
+- `text` — a non-empty string
+- `status` — one of `"active"`, `"weakened"`, `"rejected"`
+- `rejection_reason` — a string or null; must be non-empty when `status = "rejected"`, must be null when status is not `"rejected"`
+- `source` — one of `"primary_incident"`, `"alternative_context"`, `"theory_mechanism"`
+- `confidence` — one of `"low"`, `"medium"`, `"high"`
 
 The nested `result_interpretation` object must contain exactly these fields:
 - `supports_primary_if`
@@ -179,12 +190,16 @@ The module must enforce these MVP business rules after shape validation:
 
 - all string fields must be non-empty after trimming;
 - string values must be normalized by trimming leading and trailing whitespace;
-- `active_hypotheses` items that become empty after trimming must be dropped
-  before hypothesis-count validation;
-- `active_hypotheses.len()` must be `2` or `3`;
+- `hypotheses` must contain between `1` and `3` items inclusive;
+- each hypothesis `text` must be non-empty after trimming;
+- each hypothesis `status` must parse into `HypothesisStatus`;
+- each hypothesis `source` must parse into `HypothesisEvidenceSource`;
+- each hypothesis `confidence` must parse into `Confidence`;
+- each hypothesis `id` must parse as a valid UUID into `HypothesisId`;
+- when `status = "rejected"`, `rejection_reason` must be a non-empty trimmed string; the parsed value becomes the payload of `HypothesisStatus::Rejected(reason)`;
+- when `status` is not `"rejected"`, `rejection_reason` must be null;
 - `first_check` must be one compact next check, not an empty value;
-- `competing_interpretation = Some(value)` must contain a non-empty trimmed
-  string;
+- `competing_interpretation = Some(value)` must contain a non-empty trimmed string;
 - `inconclusive_if = Some(value)` must contain a non-empty trimmed string.
 
 Prohibited final-diagnosis language:
@@ -212,23 +227,23 @@ Successful normalization must produce:
 - `ResponseValidationAndNormalizationOutput.response`
 
 Field mapping rules:
-- `response.problem_understanding` <- trimmed
-  `response_json.problem_understanding`;
-- `response.similar_practical_context` <- trimmed
-  `response_json.similar_practical_context`;
-- `response.active_hypotheses` <- each trimmed item from
-  `response_json.active_hypotheses` in original order, excluding items that
-  become empty after trimming;
+- `response.problem_understanding` <- trimmed `response_json.problem_understanding`;
+- `response.similar_practical_context` <- trimmed `response_json.similar_practical_context`;
+- `response.hypotheses` <- each validated and normalized `Hypothesis` from `response_json.hypotheses` in original order:
+  - `Hypothesis.id` <- `HypothesisId(Uuid::parse_str(item.id))`;
+  - `Hypothesis.text` <- trimmed `item.text`;
+  - `Hypothesis.status` <- parsed `HypothesisStatus` from `item.status` and `item.rejection_reason`;
+  - `Hypothesis.source` <- parsed `HypothesisEvidenceSource` from `item.source`;
+  - `Hypothesis.confidence` <- parsed `Confidence` from `item.confidence`;
 - `response.first_check` <- trimmed `response_json.first_check`;
 - `response.result_interpretation.supports_primary_if` <- trimmed nested value;
 - `response.result_interpretation.supports_competing_if` <- trimmed nested value;
-- `response.result_interpretation.inconclusive_if` <- `None` or trimmed nested
-  value;
+- `response.result_interpretation.inconclusive_if` <- `None` or trimmed nested value;
 - `response.competing_interpretation` <- `None` or trimmed top-level value.
 
 Rules:
-- output must preserve the model-returned ordering of `active_hypotheses`;
-- output must not sort, deduplicate, summarize, or rephrase hypotheses;
+- output must preserve the model-returned ordering of `hypotheses`;
+- output must not sort, deduplicate, summarize, or rephrase hypothesis text;
 - output must not include raw `serde_json::Value`;
 - output must not include model token usage in the current version.
 
@@ -252,7 +267,7 @@ Variant rules:
   - covers missing required fields, unknown fields, wrong field types, invalid
     nested shape, or a top-level value that is not an object;
 - `BusinessRuleViolation`
-  - covers empty required strings, invalid `active_hypotheses` length, empty
+  - covers empty required strings, invalid hypothesis count, empty
     hypothesis strings, non-empty nullable fields that normalize to empty, or
     prohibited final-diagnosis language.
 

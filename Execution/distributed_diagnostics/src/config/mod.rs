@@ -5,12 +5,15 @@ pub use load::load;
 pub use settings::{
     BagOfWordsSettings, Bm25LikeSettings, ChunkPackingSettings, ChunkPackingSource,
     ChunkRolePackingSettings, CollectionRetrievalSettings, CollectionSettings,
-    DenseCollectionSettings, EmbeddingModelSettings, HybridCollectionSettings,
-    InputNormalizationSettings, LlmStructuredGenerationSettings, ModelSettings,
-    ModelTransportSettings, ObservabilitySettings, OllamaModelSettings, PostgresSettings,
-    PromptContextSettings, QueryStructuringSettings, RetrievalSettings, RuntimeSettings, Settings,
-    SparsePreprocessingSettings, SparseSettings, SparseStrategySettings, TogetherModelSettings,
-    TokenizerSettings,
+    DenseCollectionSettings, DiagnosticUpdateChunkPackingSettings,
+    DiagnosticUpdatePromptContextSettings, EmbeddingModelSettings, HybridCollectionSettings,
+    IncidentEvidenceRetrievalProfiles, IncidentEvidenceRetrievalSettings,
+    IncidentEvidenceTagProfile, InputNormalizationSettings, LlmStructuredGenerationSettings,
+    ModelSettings, ModelTransportSettings, ObservabilitySettings,
+    ObservationBoundaryResolverRuntimeSettings, ObservationExtractionRuntimeSettings,
+    OllamaModelSettings, PostgresSettings, PromptContextSettings, QueryStructuringSettings,
+    RetrievalSettings, RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
+    SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
 };
 
 use thiserror::Error;

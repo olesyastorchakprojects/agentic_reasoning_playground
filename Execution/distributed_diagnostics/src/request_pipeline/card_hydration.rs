@@ -356,6 +356,7 @@ mod tests {
         let mock = Arc::new(MockPostgresIncidentCardStore::new(vec![]));
         let sut = CardHydration::new(mock.clone());
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![],
             metrics: None,
@@ -377,6 +378,7 @@ mod tests {
         )])]));
         let sut = CardHydration::new(mock);
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![],
             metrics: None,
@@ -398,6 +400,7 @@ mod tests {
         ])]));
         let sut = CardHydration::new(mock);
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![candidate("card-A"), candidate("card-B")],
             metrics: None,
@@ -425,6 +428,7 @@ mod tests {
         ])]));
         let sut = CardHydration::new(mock.clone());
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2"), candidate("card-3")],
             metrics: None,
@@ -453,6 +457,7 @@ mod tests {
         ])]));
         let sut = CardHydration::new(mock.clone());
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![candidate("card-2"), candidate("card-3")],
             metrics: None,
@@ -471,6 +476,7 @@ mod tests {
         let mock = Arc::new(MockPostgresIncidentCardStore::new(vec![ok(vec![])]));
         let sut = CardHydration::new(mock);
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![],
             metrics: None,
@@ -487,6 +493,7 @@ mod tests {
         )])]));
         let sut = CardHydration::new(mock);
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: None,
             alternatives: vec![candidate("card-1"), candidate("card-missing")],
             metrics: None,
@@ -507,6 +514,7 @@ mod tests {
         )]));
         let sut = CardHydration::new(mock);
         let candidates = CandidateCardRetrievalOutput {
+            ranked_candidates: vec![],
             primary: Some(candidate("card-1")),
             alternatives: vec![],
             metrics: None,
