@@ -15,8 +15,16 @@ pub struct GoldenQuestion {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GoldenObservationSpec {
+    pub observation_id: String,
+    pub raw: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GoldenQuestionQuery {
     pub raw: String,
+    #[serde(default)]
+    pub observations: Vec<GoldenObservationSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

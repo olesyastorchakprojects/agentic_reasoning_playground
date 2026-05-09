@@ -110,7 +110,7 @@ impl TransitionPolicy for DiagnosticLoopTransitionPolicy {
             });
         }
 
-        // Priority 8a: adequacy gate — WaitForUser when blocking or weak
+        // Priority 8a: adequacy gate
         if let Some(wait) = check_adequacy_wait(iteration, canonical) {
             return Ok(wait);
         }
@@ -265,10 +265,7 @@ fn check_adequacy_wait(
     if canonical.contains(&StepKind::InformationAdequacyInitial) {
         if let Some(view) = iteration.finished_step(StepKind::InformationAdequacyInitial) {
             if let Ok(StepResultEnvelope::InformationAdequacy(assessment)) = view.result() {
-                if matches!(
-                    assessment.status,
-                    AdequacyStatus::Blocking | AdequacyStatus::WeakButRunnable
-                ) {
+                if matches!(assessment.status, AdequacyStatus::Blocking) {
                     return Some(PolicyTransition::WaitForUser {
                         follow_up_questions: assessment.follow_up_questions.clone(),
                     });
@@ -1046,7 +1043,7 @@ mod tests {
     }
 
     #[test]
-    fn initial_returns_wait_for_user_when_adequacy_is_weak() {
+    fn initial_continues_when_adequacy_is_weak_but_runnable() {
         let state = single_iteration_run(vec![
             user_input_ok(),
             input_normalization_ok(),
@@ -1056,8 +1053,8 @@ mod tests {
         let view = RunStateView::new(&state);
         assert_eq!(
             policy().next_transition(view).unwrap(),
-            PolicyTransition::WaitForUser {
-                follow_up_questions: vec!["What component?".to_string()]
+            PolicyTransition::ExecuteStep {
+                step: StepKind::CandidateCardRetrieval
             }
         );
     }

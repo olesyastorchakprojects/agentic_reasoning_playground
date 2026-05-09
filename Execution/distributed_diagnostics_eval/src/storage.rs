@@ -134,6 +134,7 @@ pub struct JudgeLlmCallRow {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EvalIterationSummaryRow {
     pub key: EvalSubjectKey,
+    pub iteration_kind: String,
     pub query_structuring_judge_score: f64,
     pub evidence_pack_judge_score: f64,
     pub final_answer_judge_score: f64,
@@ -155,6 +156,15 @@ pub struct EvalIterationSummaryRow {
     pub final_hypothesis_source_alignment_score: i16,
     pub final_alternative_context_handling_score: i16,
     pub final_result_interpretation_usefulness_score: i16,
+    // Continuation-only scores; None = n/a (initial iteration)
+    pub continuation_hypothesis_update_discipline_score: Option<i16>,
+    pub continuation_problem_understanding_update_score: Option<i16>,
+    pub continuation_next_check_progression_score: Option<i16>,
+    pub continuation_observation_resolution_context_recovery_score: Option<i16>,
+    // Continuation-only booleans; None = n/a
+    pub usable_continuation_response: Option<bool>,
+    pub continuation_update_no_hard_fail: Option<bool>,
+    pub continuation_input_no_hard_fail: Option<bool>,
     pub runtime_qs_metrics: Option<serde_json::Value>,
     pub runtime_candidate_cards_metrics: Option<serde_json::Value>,
     pub runtime_incident_primary_metrics: Option<serde_json::Value>,
@@ -195,6 +205,18 @@ pub struct EvalRunSummaryRow {
     pub evidence_pack_strict_pass_rate: f64,
     pub final_answer_strict_pass_rate: f64,
     pub diagnostic_move_hard_fail_rate: f64,
+    // Continuation aggregates; None when no continuation iterations were evaluated
+    pub usable_continuation_response_rate: Option<f64>,
+    pub continuation_update_judge_score: Option<f64>,
+    pub continuation_input_judge_score: Option<f64>,
+    pub continuation_update_no_hard_fail_rate: Option<f64>,
+    pub continuation_update_strict_pass_rate: Option<f64>,
+    pub continuation_input_no_hard_fail_rate: Option<f64>,
+    pub continuation_input_strict_pass_rate: Option<f64>,
+    pub continuation_hypothesis_update_discipline_score_avg: Option<f64>,
+    pub continuation_problem_understanding_update_score_avg: Option<f64>,
+    pub continuation_next_check_progression_score_avg: Option<f64>,
+    pub continuation_observation_resolution_context_recovery_score_avg: Option<f64>,
     pub runtime_qs_core_success_rate: f64,
     pub runtime_qs_macro_precision_soft: f64,
     pub runtime_qs_macro_recall_strict: f64,
@@ -257,34 +279,32 @@ impl PostgresEvalStore {
         let limit_i64 = limit.map(|v| v as i64).unwrap_or(i64::MAX);
         let rows = sqlx::query(
             r#"
-            WITH latest_iterations AS (
-                SELECT DISTINCT ON (ri.run_id)
-                    ri.run_id,
-                    ri.iteration_id,
-                    r.created_at
+            WITH eligible_runs AS (
+                SELECT DISTINCT ri.run_id, MAX(r.created_at) AS created_at
                 FROM diagnostics.run_iterations ri
                 JOIN diagnostics.runs r ON r.run_id = ri.run_id
-                ORDER BY ri.run_id, ri.sequence_no DESC
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM diagnostics.run_step_records s
+                    WHERE s.iteration_id = ri.iteration_id
+                      AND s.record_status = 'finished'
+                      AND s.step = 'ResponseValidationAndNormalization'
+                      AND s.result_json IS NOT NULL
+                )
+                GROUP BY ri.run_id
+                ORDER BY MAX(r.created_at) DESC, ri.run_id DESC
+                LIMIT $1
             )
             SELECT
-                li.run_id AS runtime_run_id,
-                li.iteration_id,
-                li.created_at AS subject_received_at
-            FROM latest_iterations li
+                ri.run_id AS runtime_run_id,
+                ri.iteration_id,
+                er.created_at AS subject_received_at
+            FROM diagnostics.run_iterations ri
+            JOIN eligible_runs er ON er.run_id = ri.run_id
             WHERE EXISTS (
                 SELECT 1
                 FROM diagnostics.run_step_records s
-                WHERE s.iteration_id = li.iteration_id
-                  AND s.record_status = 'finished'
-                  AND s.step = 'UserInputReceived'
-                  AND jsonb_typeof(
-                        s.result_json -> 'UserInputReceived' -> 'golden_question'
-                      ) = 'object'
-            )
-              AND EXISTS (
-                SELECT 1
-                FROM diagnostics.run_step_records s
-                WHERE s.iteration_id = li.iteration_id
+                WHERE s.iteration_id = ri.iteration_id
                   AND s.record_status = 'finished'
                   AND s.step = 'ResponseValidationAndNormalization'
                   AND s.result_json IS NOT NULL
@@ -292,14 +312,15 @@ impl PostgresEvalStore {
               AND NOT EXISTS (
                 SELECT 1
                 FROM diagnostics.eval_processing_state eps
-                WHERE eps.runtime_run_id = li.run_id
-                  AND eps.iteration_id = li.iteration_id
+                WHERE eps.eval_run_id = $2
+                  AND eps.runtime_run_id = ri.run_id
+                  AND eps.iteration_id = ri.iteration_id
             )
-            ORDER BY li.created_at DESC, li.run_id DESC
-            LIMIT $1
+            ORDER BY er.created_at DESC, ri.run_id DESC
             "#,
         )
         .bind(limit_i64)
+        .bind(eval_run_id)
         .fetch_all(&self.pool)
         .await
         .map_err(|e| StorageError::Query(e.to_string()))?;
@@ -748,6 +769,7 @@ impl PostgresEvalStore {
                 eval_run_id,
                 runtime_run_id,
                 iteration_id,
+                iteration_kind,
                 query_structuring_judge_score,
                 evidence_pack_judge_score,
                 final_answer_judge_score,
@@ -769,6 +791,13 @@ impl PostgresEvalStore {
                 final_hypothesis_source_alignment_score,
                 final_alternative_context_handling_score,
                 final_result_interpretation_usefulness_score,
+                continuation_hypothesis_update_discipline_score,
+                continuation_problem_understanding_update_score,
+                continuation_next_check_progression_score,
+                continuation_observation_resolution_context_recovery_score,
+                usable_continuation_response,
+                continuation_update_no_hard_fail,
+                continuation_input_no_hard_fail,
                 runtime_prompt_tokens,
                 runtime_completion_tokens,
                 runtime_total_tokens,
@@ -789,11 +818,13 @@ impl PostgresEvalStore {
                 $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
-                $31, $32, $33, $34,
-                $35::jsonb, $36::jsonb, $37::jsonb, $38::jsonb, $39::jsonb
+                $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
+                $41, $42,
+                $43::jsonb, $44::jsonb, $45::jsonb, $46::jsonb, $47::jsonb
             )
             ON CONFLICT (eval_run_id, runtime_run_id, iteration_id)
             DO UPDATE SET
+                iteration_kind = EXCLUDED.iteration_kind,
                 query_structuring_judge_score = EXCLUDED.query_structuring_judge_score,
                 evidence_pack_judge_score = EXCLUDED.evidence_pack_judge_score,
                 final_answer_judge_score = EXCLUDED.final_answer_judge_score,
@@ -815,6 +846,13 @@ impl PostgresEvalStore {
                 final_hypothesis_source_alignment_score = EXCLUDED.final_hypothesis_source_alignment_score,
                 final_alternative_context_handling_score = EXCLUDED.final_alternative_context_handling_score,
                 final_result_interpretation_usefulness_score = EXCLUDED.final_result_interpretation_usefulness_score,
+                continuation_hypothesis_update_discipline_score = EXCLUDED.continuation_hypothesis_update_discipline_score,
+                continuation_problem_understanding_update_score = EXCLUDED.continuation_problem_understanding_update_score,
+                continuation_next_check_progression_score = EXCLUDED.continuation_next_check_progression_score,
+                continuation_observation_resolution_context_recovery_score = EXCLUDED.continuation_observation_resolution_context_recovery_score,
+                usable_continuation_response = EXCLUDED.usable_continuation_response,
+                continuation_update_no_hard_fail = EXCLUDED.continuation_update_no_hard_fail,
+                continuation_input_no_hard_fail = EXCLUDED.continuation_input_no_hard_fail,
                 runtime_prompt_tokens = EXCLUDED.runtime_prompt_tokens,
                 runtime_completion_tokens = EXCLUDED.runtime_completion_tokens,
                 runtime_total_tokens = EXCLUDED.runtime_total_tokens,
@@ -836,6 +874,7 @@ impl PostgresEvalStore {
         .bind(row.key.eval_run_id)
         .bind(row.key.runtime_run_id)
         .bind(row.key.iteration_id)
+        .bind(&row.iteration_kind)
         .bind(row.query_structuring_judge_score)
         .bind(row.evidence_pack_judge_score)
         .bind(row.final_answer_judge_score)
@@ -857,6 +896,13 @@ impl PostgresEvalStore {
         .bind(row.final_hypothesis_source_alignment_score)
         .bind(row.final_alternative_context_handling_score)
         .bind(row.final_result_interpretation_usefulness_score)
+        .bind(row.continuation_hypothesis_update_discipline_score)
+        .bind(row.continuation_problem_understanding_update_score)
+        .bind(row.continuation_next_check_progression_score)
+        .bind(row.continuation_observation_resolution_context_recovery_score)
+        .bind(row.usable_continuation_response)
+        .bind(row.continuation_update_no_hard_fail)
+        .bind(row.continuation_input_no_hard_fail)
         .bind(row.runtime_prompt_tokens)
         .bind(row.runtime_completion_tokens)
         .bind(row.runtime_total_tokens)
@@ -909,6 +955,14 @@ impl PostgresEvalStore {
                 final_hypothesis_source_alignment_score,
                 final_alternative_context_handling_score,
                 final_result_interpretation_usefulness_score,
+                iteration_kind,
+                continuation_hypothesis_update_discipline_score,
+                continuation_problem_understanding_update_score,
+                continuation_next_check_progression_score,
+                continuation_observation_resolution_context_recovery_score,
+                usable_continuation_response,
+                continuation_update_no_hard_fail,
+                continuation_input_no_hard_fail,
                 runtime_prompt_tokens,
                 runtime_completion_tokens,
                 runtime_total_tokens,
@@ -982,6 +1036,17 @@ impl PostgresEvalStore {
                 query_structuring_strict_pass_rate,
                 evidence_pack_strict_pass_rate,
                 final_answer_strict_pass_rate,
+                usable_continuation_response_rate,
+                continuation_update_judge_score,
+                continuation_input_judge_score,
+                continuation_update_no_hard_fail_rate,
+                continuation_update_strict_pass_rate,
+                continuation_input_no_hard_fail_rate,
+                continuation_input_strict_pass_rate,
+                continuation_hypothesis_update_discipline_score_avg,
+                continuation_problem_understanding_update_score_avg,
+                continuation_next_check_progression_score_avg,
+                continuation_observation_resolution_context_recovery_score_avg,
                 runtime_prompt_tokens,
                 runtime_completion_tokens,
                 runtime_total_tokens,
@@ -998,7 +1063,8 @@ impl PostgresEvalStore {
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
                 $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-                $41, $42, $43, $44, $45, $46, $47, $48
+                $41, $42, $43, $44, $45, $46, $47, $48, $49, $50,
+                $51, $52, $53, $54, $55, $56, $57, $58, $59
             )
             ON CONFLICT (eval_run_id)
             DO UPDATE SET
@@ -1039,6 +1105,17 @@ impl PostgresEvalStore {
                 query_structuring_strict_pass_rate = EXCLUDED.query_structuring_strict_pass_rate,
                 evidence_pack_strict_pass_rate = EXCLUDED.evidence_pack_strict_pass_rate,
                 final_answer_strict_pass_rate = EXCLUDED.final_answer_strict_pass_rate,
+                usable_continuation_response_rate = EXCLUDED.usable_continuation_response_rate,
+                continuation_update_judge_score = EXCLUDED.continuation_update_judge_score,
+                continuation_input_judge_score = EXCLUDED.continuation_input_judge_score,
+                continuation_update_no_hard_fail_rate = EXCLUDED.continuation_update_no_hard_fail_rate,
+                continuation_update_strict_pass_rate = EXCLUDED.continuation_update_strict_pass_rate,
+                continuation_input_no_hard_fail_rate = EXCLUDED.continuation_input_no_hard_fail_rate,
+                continuation_input_strict_pass_rate = EXCLUDED.continuation_input_strict_pass_rate,
+                continuation_hypothesis_update_discipline_score_avg = EXCLUDED.continuation_hypothesis_update_discipline_score_avg,
+                continuation_problem_understanding_update_score_avg = EXCLUDED.continuation_problem_understanding_update_score_avg,
+                continuation_next_check_progression_score_avg = EXCLUDED.continuation_next_check_progression_score_avg,
+                continuation_observation_resolution_context_recovery_score_avg = EXCLUDED.continuation_observation_resolution_context_recovery_score_avg,
                 runtime_prompt_tokens = EXCLUDED.runtime_prompt_tokens,
                 runtime_completion_tokens = EXCLUDED.runtime_completion_tokens,
                 runtime_total_tokens = EXCLUDED.runtime_total_tokens,
@@ -1090,6 +1167,17 @@ impl PostgresEvalStore {
         .bind(row.query_structuring_strict_pass_rate)
         .bind(row.evidence_pack_strict_pass_rate)
         .bind(row.final_answer_strict_pass_rate)
+        .bind(row.usable_continuation_response_rate)
+        .bind(row.continuation_update_judge_score)
+        .bind(row.continuation_input_judge_score)
+        .bind(row.continuation_update_no_hard_fail_rate)
+        .bind(row.continuation_update_strict_pass_rate)
+        .bind(row.continuation_input_no_hard_fail_rate)
+        .bind(row.continuation_input_strict_pass_rate)
+        .bind(row.continuation_hypothesis_update_discipline_score_avg)
+        .bind(row.continuation_problem_understanding_update_score_avg)
+        .bind(row.continuation_next_check_progression_score_avg)
+        .bind(row.continuation_observation_resolution_context_recovery_score_avg)
         .bind(row.runtime_prompt_tokens)
         .bind(row.runtime_completion_tokens)
         .bind(row.runtime_total_tokens)
@@ -1346,6 +1434,32 @@ fn decode_eval_iteration_summary_row(
         final_result_interpretation_usefulness_score: row
             .try_get("final_result_interpretation_usefulness_score")
             .map_err(|_| StorageError::InvalidStoredRow("final_result_interpretation_usefulness_score"))?,
+        iteration_kind: row
+            .try_get::<Option<String>, _>("iteration_kind")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "initial".to_string()),
+        continuation_hypothesis_update_discipline_score: row
+            .try_get("continuation_hypothesis_update_discipline_score")
+            .ok(),
+        continuation_problem_understanding_update_score: row
+            .try_get("continuation_problem_understanding_update_score")
+            .ok(),
+        continuation_next_check_progression_score: row
+            .try_get("continuation_next_check_progression_score")
+            .ok(),
+        continuation_observation_resolution_context_recovery_score: row
+            .try_get("continuation_observation_resolution_context_recovery_score")
+            .ok(),
+        usable_continuation_response: row
+            .try_get("usable_continuation_response")
+            .ok(),
+        continuation_update_no_hard_fail: row
+            .try_get("continuation_update_no_hard_fail")
+            .ok(),
+        continuation_input_no_hard_fail: row
+            .try_get("continuation_input_no_hard_fail")
+            .ok(),
         runtime_prompt_tokens: row
             .try_get("runtime_prompt_tokens")
             .map_err(|_| StorageError::InvalidStoredRow("runtime_prompt_tokens"))?,

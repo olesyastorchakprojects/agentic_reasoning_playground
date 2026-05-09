@@ -34,6 +34,12 @@ The current MVP report must include at least these sections, in order:
 7. `## Worst-Case Preview`
 8. `## Token Usage`
 
+When continuation iterations are present in the evaluated scope, the report
+must also include:
+
+9. `## Iteration Detail`
+10. `## Initial vs Continuation Quality`
+
 Optional sections may be added later, but these are the MVP minimum.
 
 ## 4) Run Metadata Section
@@ -61,6 +67,7 @@ At minimum it must include:
 
 - category-level aggregate scores;
 - `usable_first_response_rate`;
+- `usable_continuation_response_rate` when continuation suites are enabled;
 - strict pass rates where available;
 - hard-fail rate.
 
@@ -121,6 +128,20 @@ iteration subjects with the weakest key signals, such as:
 The section must include identifiers sufficient to trace the case back to raw
 artifacts and stored rows.
 
+## 9a) Iteration Detail Section
+
+When continuation iterations are present, the report must include one compact
+per-iteration section that shows at least:
+
+- `runtime_run_id`
+- `iteration_id`
+- `iteration_kind`
+- the enabled suite scores for that iteration
+- the iteration-level usability signal appropriate to that kind
+
+For continuation iterations, the report should also show the new observation
+and the updated next check in compact form.
+
 ## 10) Token Usage Section
 
 The report must include a runtime usage subsection and a judge usage
@@ -147,3 +168,9 @@ The report should:
 - favor compact tables and short bullet metadata;
 - expose identifiers and key counts without overwhelming raw detail;
 - support manual debugging before dashboards are fully mature.
+
+The report should make it easy to distinguish:
+
+- first-response quality problems;
+- continuation-update quality problems;
+- whole-trajectory degradation across later iterations.

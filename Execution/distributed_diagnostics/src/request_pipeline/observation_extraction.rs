@@ -137,17 +137,6 @@ impl ObservationExtraction {
         let oi_span = crate::observability::oi_llm_observation_extraction_span(
             &context.open_inference.root_span,
         );
-        let resolved_text = match &input.resolution {
-            crate::shared_types::ObservationBoundaryResolution::Supported(r) => r.text.as_str(),
-            crate::shared_types::ObservationBoundaryResolution::Unsupported => "",
-        };
-        let oi_input_json = serde_json::json!({
-            "normalized_user_input": input.normalized_user_input,
-            "resolved_observation": resolved_text,
-        })
-        .to_string();
-        oi_span.record("input.value", oi_input_json.as_str());
-        oi_span.record("input.mime_type", "application/json");
         oi_span.record("llm.model_name", "unknown");
         oi_span.record("llm.provider", "unknown");
         oi_span.record(
@@ -218,6 +207,16 @@ impl ObservationExtraction {
             .user_template
             .replacen(USER_MESSAGE_PLACEHOLDER, &resolved_text, 1);
 
+        // ── Record full prompt in oi_span ─────────────────────────────────────
+
+        let full_prompt = format!(
+            "SYSTEM:\n{}\n\nUSER:\n{}",
+            self.prompt_asset.system_prompt,
+            user_message
+        );
+        oi_span.record("input.value", full_prompt.as_str());
+        oi_span.record("input.mime_type", "text/plain");
+
         // ── Model call ────────────────────────────────────────────────────────
 
         let llm_span = info_span!(
@@ -254,6 +253,7 @@ impl ObservationExtraction {
             async {
                 match self.model_client.generate(&model_request).await {
                     Ok(r) => {
+                        oi_span.record("llm.raw_response", r.content.as_str());
                         oi_span.record("llm.model_name", "unknown");
                         oi_span.record("llm.provider", "unknown");
                         tracing::Span::current().record("model.response_mode", "JsonSchema");
@@ -314,7 +314,6 @@ impl ObservationExtraction {
             total_tokens: response.total_tokens,
         };
         let finish_reason = response.finish_reason.clone();
-        oi_span.record("llm.raw_response", response.content.as_str());
 
         // ── Finish-reason check ───────────────────────────────────────────────
 
@@ -540,8 +539,8 @@ impl ObservationExtraction {
                 None => None,
             };
 
-            let source_span = raw_obs.source_span.trim().to_string();
-            if source_span.is_empty() {
+            let raw_source_span = raw_obs.source_span.trim().to_string();
+            if raw_source_span.is_empty() {
                 let reason = "observation source_span is empty after trimming".to_string();
                 tracing::Span::current().record("module.outcome", "failure");
                 tracing::Span::current().record("status", "error");
@@ -557,25 +556,13 @@ impl ObservationExtraction {
                 });
             }
 
-            // source_span must be an exact substring of the resolved observation text
-            if !resolved_text.contains(source_span.as_str()) {
-                let reason = format!(
-                    "source_span '{}' is not a substring of the resolved observation text",
-                    source_span
-                );
-                tracing::Span::current().record("module.outcome", "failure");
-                tracing::Span::current().record("status", "error");
-                crate::observability::record_error(
-                    oi_span,
-                    "ObservationExtraction.InvalidModelOutput",
-                    &reason,
-                );
-                return Err(ObservationExtractionError::InvalidModelOutput {
-                    reason,
-                    finish_reason,
-                    token_usage,
-                });
-            }
+            // Prefer exact provenance when the model returns one; otherwise soften to the
+            // full resolved observation text so extraction can continue.
+            let source_span = if resolved_text.contains(raw_source_span.as_str()) {
+                raw_source_span
+            } else {
+                resolved_text.clone()
+            };
 
             observations.push(ExtractedObservation {
                 statement,
@@ -1308,7 +1295,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn source_span_not_substring_of_resolved_text_fails() {
+    async fn source_span_not_substring_of_resolved_text_is_auto_repaired() {
         let resolved_text = "Memory usage spiked to 95%";
         let dir = TempArtifactDir::new();
         let path = write_both(&dir);
@@ -1335,8 +1322,8 @@ mod tests {
         )
         .unwrap();
         let input = make_supported_input(resolved_text);
-        let err = oe.extract(&input).await.unwrap_err();
-        assert!(matches!(err, ObservationExtractionError::InvalidModelOutput { .. }));
+        let out = oe.extract(&input).await.unwrap();
+        assert_eq!(out.observations[0].source_span, resolved_text);
     }
 
     #[tokio::test]

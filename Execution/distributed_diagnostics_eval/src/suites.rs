@@ -6,12 +6,31 @@ use serde::Deserialize;
 use crate::config::SuitesSettings;
 use crate::summary::{validate_supported_suite_subset, SummaryError};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuiteApplicability {
+    InitialOnly,
+    ContinuationOnly,
+    Shared,
+}
+
+impl SuiteApplicability {
+    pub fn applies_to_initial(self) -> bool {
+        matches!(self, Self::InitialOnly | Self::Shared)
+    }
+
+    pub fn applies_to_continuation(self) -> bool {
+        matches!(self, Self::ContinuationOnly | Self::Shared)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct JudgeSuiteDefinition {
     pub id: String,
     pub version: String,
     pub category: String,
     pub scope: String,
+    pub applies_to: SuiteApplicability,
     pub required_for_mvp: bool,
     pub input_variables: Vec<String>,
     pub prompt_template: String,
@@ -110,6 +129,7 @@ mod tests {
       "version": "v1",
       "category": "final_answer",
       "scope": "iteration",
+      "applies_to": "shared",
       "required_for_mvp": true,
       "input_variables": ["final_answer"],
       "prompt_template": "x",
@@ -121,6 +141,7 @@ mod tests {
       "version": "v1",
       "category": "final_answer",
       "scope": "iteration",
+      "applies_to": "shared",
       "required_for_mvp": false,
       "input_variables": ["final_answer"],
       "prompt_template": "y",

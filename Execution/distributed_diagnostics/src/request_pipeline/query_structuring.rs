@@ -1455,7 +1455,7 @@ mod tests {
     fn make_golden_question(query: &str) -> GoldenQuestion {
         GoldenQuestion {
             case_id: "test-q001".to_string(),
-            query: GoldenQuestionQuery { raw: query.to_string() },
+            query: GoldenQuestionQuery { raw: query.to_string(), observations: vec![] },
             expected_query_structuring: GoldenQueryStructuringTargets {
                 symptoms: empty_vocab_field(),
                 affected_subsystems: empty_vocab_field(),

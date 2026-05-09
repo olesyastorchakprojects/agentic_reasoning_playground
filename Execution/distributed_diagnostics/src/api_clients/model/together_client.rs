@@ -130,24 +130,24 @@ struct WireJsonSchema {
     schema: serde_json::Value,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct WireResponse {
     choices: Vec<WireChoice>,
     usage: Option<WireUsage>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct WireChoice {
     message: WireAssistantMessage,
     finish_reason: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct WireAssistantMessage {
     content: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct WireUsage {
     prompt_tokens: Option<usize>,
     completion_tokens: Option<usize>,
@@ -242,10 +242,12 @@ impl ModelClient for TogetherModelClient {
         };
 
         let wire_resp: WireResponse = serde_json::from_slice(&raw_response).map_err(|_| {
+            let raw_str = String::from_utf8_lossy(&raw_response).to_string();
+            tracing::info!("failed to parse response JSON; raw_response: {}", raw_str);
             ModelClientError::InvalidResponse("failed to parse response JSON".to_string())
         })?;
 
-        map_response(wire_resp)
+        map_response(wire_resp, &raw_response, request.max_output_tokens)
     }
 }
 
@@ -267,25 +269,43 @@ fn map_finish_reason(s: &str) -> ModelFinishReason {
     }
 }
 
-fn map_response(wire: WireResponse) -> Result<ModelGenerationResponse, ModelClientError> {
+fn map_response(wire: WireResponse, raw_response: &[u8], max_output_tokens: Option<u32>) -> Result<ModelGenerationResponse, ModelClientError> {
+    let raw_str = String::from_utf8_lossy(raw_response).to_string();
+
     if wire.choices.is_empty() {
+        tracing::info!("choices array is empty; raw_response: {}", raw_str);
         return Err(ModelClientError::InvalidResponse(
             "choices array is empty".to_string(),
         ));
     }
 
     let choice = &wire.choices[0];
+
+    // Check for length truncation first - this takes priority
+    if let Some(ref finish) = choice.finish_reason {
+        if finish == "length" {
+            if let Some(max_tokens) = max_output_tokens {
+                tracing::info!("model output was truncated due to length limit; finish_reason='length'; max_output_tokens={}; raw_response: {}", max_tokens, raw_str);
+                return Err(ModelClientError::InvalidResponseWithLimit {
+                    max_output_tokens: max_tokens,
+                });
+            }
+        }
+    }
+
     let content = choice
         .message
         .content
         .as_deref()
-        .ok_or(ModelClientError::InvalidResponse(
-            "missing message.content".to_string(),
-        ))?;
+        .ok_or_else(|| {
+            tracing::info!("missing message.content; raw_response: {}", raw_str);
+            ModelClientError::InvalidResponse("missing message.content".to_string())
+        })?;
 
     if content.trim().is_empty() {
+        tracing::info!("model returned empty content; raw_response: {}", raw_str);
         return Err(ModelClientError::InvalidResponse(
-            "assistant content is empty".to_string(),
+            "assistant content is empty (choices[0].message.content is empty or whitespace-only)".to_string(),
         ));
     }
 

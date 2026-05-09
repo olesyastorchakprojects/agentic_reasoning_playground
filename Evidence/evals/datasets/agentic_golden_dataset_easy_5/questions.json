@@ -2,31 +2,81 @@
   {
     "case_id": "easy_q001",
     "query": {
-      "raw": "Our Amazon RDS for PostgreSQL reader endpoint misses writes that are already visible on the writer endpoint, even though there was no failover. What should we check first?"
+      "raw": "Our Amazon RDS for PostgreSQL reader endpoint misses writes that are already visible on the writer endpoint, even though there was no failover. What should we check first?",
+      "observations": [
+        {
+          "observation_id": "obs_1",
+          "raw": "If we read the same row from the writer endpoint immediately after commit, it is visible there, but the reader endpoint still misses it for a few seconds, and the reader returns the new value only after that delay passes."
+        },
+        {
+          "observation_id": "obs_2",
+          "raw": "CloudWatch shows replica lag spikes at the same moments when the stale reads from the reader endpoint happen, and the stale-read window shrinks again when the lag returns to normal."
+        }
+      ]
     }
   },
   {
     "case_id": "easy_q002",
     "query": {
-      "raw": "Two etcd clients both think they hold the same lock after a short lease TTL, and updates to the protected external set are lost. What should we check first?"
+      "raw": "Two etcd clients both think they hold the same lock after a short lease TTL, and updates to the protected external set are lost. What should we check first?",
+      "observations": [
+        {
+          "observation_id": "obs_1",
+          "raw": "The client kept writing to the external resource even though its etcd lease had already expired and had not been renewed, and another client acquired the same lock during that expired interval."
+        },
+        {
+          "observation_id": "obs_2",
+          "raw": "When we increased the lease TTL substantially, the duplicate-lock-holder behavior became much rarer, and the lost updates to the external resource became much less frequent as well."
+        }
+      ]
     }
   },
   {
     "case_id": "easy_q003",
     "query": {
-      "raw": "In RavenDB single-node transactions, two sessions both read the same version and both commit appends, but one write disappears while optimistic concurrency is off. What should we check first?"
+      "raw": "In RavenDB single-node transactions, two sessions both read the same version and both commit appends, but one write disappears while optimistic concurrency is off. What should we check first?",
+      "observations": [
+        {
+          "observation_id": "obs_1",
+          "raw": "Both sessions read the same document version before appending, no concurrency exception was raised on either commit, and the final document still contained only one of the appended values."
+        },
+        {
+          "observation_id": "obs_2",
+          "raw": "When we rerun the same test with optimistic concurrency enabled, one of the concurrent writes is rejected instead of being silently lost, and the final document keeps the surviving append without dropping it later."
+        }
+      ]
     }
   },
   {
     "case_id": "easy_q004",
     "query": {
-      "raw": "In MySQL 8.0 Repeatable Read, two transactions both read a missing key and append the first value, but one update disappears. What should we check first?"
+      "raw": "In MySQL 8.0 Repeatable Read, two transactions both read a missing key and append the first value, but one update disappears. What should we check first?",
+      "observations": [
+        {
+          "observation_id": "obs_1",
+          "raw": "Both transactions observed the key as absent before either commit, both then inserted the first value, and after both commits only one inserted value remained in the row."
+        },
+        {
+          "observation_id": "obs_2",
+          "raw": "When we repeat the same workflow using locking reads such as SELECT ... FOR UPDATE, the lost update no longer reproduces, and the second transaction waits instead of racing through the same missing-key path."
+        }
+      ]
     }
   },
   {
     "case_id": "easy_q005",
     "query": {
-      "raw": "In a CockroachDB monotonic test, cross-range transactions sometimes create duplicate writes with the same timestamp while clock offset stays below the threshold. What should we check first?"
+      "raw": "In a CockroachDB monotonic test, cross-range transactions sometimes create duplicate writes with the same timestamp while clock offset stays below the threshold. What should we check first?",
+      "observations": [
+        {
+          "observation_id": "obs_1",
+          "raw": "The duplicate writes come from a single cross-range transaction path, the node clock offset stays within the configured bound throughout the test, and the duplicate timestamps are still identical when the anomaly appears."
+        },
+        {
+          "observation_id": "obs_2",
+          "raw": "When we constrain the workload to a single range, the duplicate writes stop. When we switch back to a cross-range workload, the duplicate writes with the same timestamp appear again."
+        }
+      ]
     }
   }
 ]

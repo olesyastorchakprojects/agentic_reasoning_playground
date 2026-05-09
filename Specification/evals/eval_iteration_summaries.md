@@ -37,6 +37,7 @@ Each row must contain at least:
 - `eval_run_id`
 - `runtime_run_id`
 - `iteration_id`
+- `iteration_kind`
 - `created_at`
 - `updated_at`
 
@@ -51,6 +52,7 @@ Each row must contain at least:
 - `evidence_pack_no_hard_fail`
 - `final_answer_no_hard_fail`
 - `usable_first_response`
+- `usable_continuation_response`
 - `no_root_cause_gate_passed`
 - `single_check_gate_passed`
 - `source_alignment_gate_passed`
@@ -69,6 +71,9 @@ Each row must contain at least:
 
 The table may also include denormalized per-suite score columns for the current
 MVP suite set.
+
+For continuation iterations, the table should additionally expose explicit
+per-suite score columns for the enabled continuation suite set.
 
 ## 5) Per-Suite Score Fields
 
@@ -121,7 +126,8 @@ aggregate rules.
 
 ## 8) Usability Signal
 
-`usable_first_response` is a first-class iteration-level boolean summary signal.
+`usable_first_response` is a first-class iteration-level boolean summary signal
+for `iteration_kind = initial`.
 
 Its purpose is to answer:
 
@@ -130,6 +136,17 @@ Its purpose is to answer:
 
 The exact formula belongs to the aggregate specification, but the resulting
 boolean must be stored here for efficient downstream use.
+
+`usable_continuation_response` is the corresponding first-class iteration-level
+boolean summary signal for `iteration_kind = continuation`.
+
+Its purpose is to answer:
+
+- can this iteration's updated response plausibly be shown to a user as a
+  useful diagnostic update after the new observation?
+
+Exactly one of these usability booleans may be meaningful for a given
+iteration-kind contract; both may be stored for schema stability.
 
 ## 9) Usage And Cost Fields
 
@@ -153,3 +170,6 @@ The summary builder must upsert one row only after:
 
 The table must be resumable and idempotent for the same
 `(eval_run_id, runtime_run_id, iteration_id)` key.
+
+The summary semantics must remain iteration-kind-aware even though the storage
+key remains the same for initial and continuation iterations.

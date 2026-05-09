@@ -184,8 +184,33 @@ impl EvalOrchestrator {
             &prepared_subject.processing_state.key.iteration_id.to_string(),
         );
 
+        let iteration_kind = prepared_subject.snapshot.iteration_kind;
+
         let mut first_error: Option<JudgeExecutionError> = None;
         for suite_name in &enabled_suites {
+            let suite_def = catalog
+                .get(suite_name)
+                .ok_or_else(|| OrchestratorError::JudgeExecution(
+                    JudgeExecutionError::MissingSuiteDefinition(suite_name.clone()),
+                ))?;
+
+            let applicable = match iteration_kind {
+                distributed_diagnostics::shared_types::IterationProfile::Initial => {
+                    suite_def.applies_to.applies_to_initial()
+                }
+                distributed_diagnostics::shared_types::IterationProfile::Continuation => {
+                    suite_def.applies_to.applies_to_continuation()
+                }
+            };
+            if !applicable {
+                tracing::debug!(
+                    suite_name,
+                    ?iteration_kind,
+                    "skipping suite: applies_to does not match iteration kind"
+                );
+                continue;
+            }
+
             let already_done = self
                 .store
                 .judge_result_exists(&prepared_subject.processing_state.key, suite_name)

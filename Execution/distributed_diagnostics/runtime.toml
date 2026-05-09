@@ -59,7 +59,7 @@ max_output_tokens = 600
 provider = "together"
 model = "openai/gpt-oss-20b"
 prompt_asset_path = "/home/olesia/code/dist_sys_assistant/Specification/runtime/request_pipeline/observation_extraction/observation_extraction_prompt_baseline.manual_test.json"
-max_output_tokens = 600
+max_output_tokens = 3000
 
 [incident_evidence_retrieval.retrieval]
 top_k = 12

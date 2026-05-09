@@ -36,6 +36,10 @@ Its semantics are intentionally unified because:
 all differ primarily in prompt and payload shape, not in scheduling or
 persistence behavior.
 
+This same generic stage must remain the execution boundary for continuation
+iteration suites; continuation evaluation does not require a separate
+storage-stage concept.
+
 ## 3) Public Boundary
 
 The stage must expose one in-process callable boundary similar in style to the
@@ -107,6 +111,10 @@ For one eligible subject, the stage must:
 4. inspect which required suites are already satisfied;
 5. build prompt payloads only for missing suites.
 
+When the selected iteration is a continuation iteration, input construction
+must include the required prior-iteration context and continuation-specific
+step outputs before any continuation suite payload is rendered.
+
 The canonical prompt source of truth is:
 
 - `Specification/evals/prompts.json`
@@ -117,6 +125,7 @@ Each suite must read from the catalog:
 - `version`
 - `prompt_template`
 - `input_variables`
+- `applies_to`
 - category metadata
 
 The stage must not hardcode alternative prompt content that diverges from the
@@ -133,6 +142,32 @@ The current MVP stage must support request-level or iteration-level suites for:
 The exact required suite set is defined by the suite catalog and eval
 configuration.
 
+The suite catalog must also support suite subsets that apply only to:
+
+- initial iterations
+- continuation iterations
+
+The canonical suite-catalog field for this is:
+
+- `applies_to = "shared" | "initial_only" | "continuation_only"`
+
+Semantics:
+
+- `shared`
+  - run on both initial and continuation iterations
+- `initial_only`
+  - run only on initial iterations
+- `continuation_only`
+  - run only on continuation iterations
+
+The first continuation suite slice should cover at least:
+
+- observation extraction fidelity
+- problem-understanding update quality
+- hypothesis-update discipline
+- next-check progression
+- result-interpretation alignment
+
 The stage must treat a suite as complete for a subject iff the corresponding
 normalized result row already exists for:
 
@@ -140,6 +175,12 @@ normalized result row already exists for:
 - `runtime_run_id`
 - `iteration_id`
 - `suite_name`
+
+The worker must not require continuation-only suites for an initial iteration,
+or initial-only suites for a continuation iteration, unless the suite catalog
+explicitly marks that suite as applicable to both kinds.
+
+A suite definition without an explicit `applies_to` classification is invalid.
 
 ## 9) Judge Call And Usage Persistence
 

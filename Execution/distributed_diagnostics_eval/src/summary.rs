@@ -6,6 +6,7 @@ use crate::snapshot::DiagnosticEvalIterationSnapshot;
 use crate::storage::{
     EvalIterationSummaryRow, EvalRunSummaryRow, EvalSubjectKey, JudgeLlmCallRow, JudgeResultRow,
 };
+use distributed_diagnostics::shared_types::IterationProfile;
 
 pub const FINAL_ANSWER_SUITES: &[&str] = &[
     "final_no_root_cause_claim",
@@ -155,6 +156,45 @@ pub fn build_iteration_summary_row(
     let usable_first_response =
         no_root_cause_score >= 1 && first_check_score >= 1 && interp_score >= 1;
 
+    // --- Continuation scores (None = n/a for initial iterations) ---
+    let is_continuation = snapshot.iteration_kind == IterationProfile::Continuation;
+    let iteration_kind = if is_continuation { "continuation".to_string() } else { "initial".to_string() };
+
+    let cu1 = suite_score(judge_results, "continuation_hypothesis_update_discipline");
+    let cu2 = suite_score(judge_results, "continuation_problem_understanding_update");
+    let cu3 = suite_score(judge_results, "continuation_next_check_progression");
+    let cu4 = suite_score(judge_results, "continuation_observation_resolution_context_recovery");
+
+    let (
+        continuation_hypothesis_update_discipline_score,
+        continuation_problem_understanding_update_score,
+        continuation_next_check_progression_score,
+        continuation_observation_resolution_context_recovery_score,
+        usable_continuation_response,
+        continuation_update_no_hard_fail,
+        continuation_input_no_hard_fail,
+    ) = if is_continuation {
+        let cu1_s = cu1;
+        let cu2_s = cu2;
+        let cu3_s = cu3;
+        let cu4_s = cu4;
+        let usable = cu1_s.map(|c1| c1 >= 1)
+            .zip(cu2_s.map(|c2| c2 >= 1))
+            .zip(cu3_s.map(|c3| c3 >= 1))
+            .map(|((c1, c2), c3)| {
+                c1 && c2 && c3
+                    && no_root_cause_score >= 1
+                    && first_check_score >= 1
+                    && interp_score >= 1
+            });
+        let no_hard_fail = cu1_s.zip(cu2_s).zip(cu3_s)
+            .map(|((c1, c2), c3)| c1 > 0 && c2 > 0 && c3 > 0);
+        let input_no_hard_fail = cu4_s.map(|c4| c4 > 0);
+        (cu1_s, cu2_s, cu3_s, cu4_s, usable, no_hard_fail, input_no_hard_fail)
+    } else {
+        (None, None, None, None, None, None, None)
+    };
+
     // --- Runtime gold metrics ---
     let runtime_qs_metrics = snapshot.query_structuring_output.metrics.as_ref()
         .and_then(|m| serde_json::to_value(m).ok());
@@ -215,6 +255,7 @@ pub fn build_iteration_summary_row(
 
     Ok(EvalIterationSummaryRow {
         key,
+        iteration_kind,
         query_structuring_judge_score,
         evidence_pack_judge_score,
         final_answer_judge_score,
@@ -236,6 +277,13 @@ pub fn build_iteration_summary_row(
         final_hypothesis_source_alignment_score: source_align_score,
         final_alternative_context_handling_score: alt_ctx_score,
         final_result_interpretation_usefulness_score: interp_score,
+        continuation_hypothesis_update_discipline_score,
+        continuation_problem_understanding_update_score,
+        continuation_next_check_progression_score,
+        continuation_observation_resolution_context_recovery_score,
+        usable_continuation_response,
+        continuation_update_no_hard_fail,
+        continuation_input_no_hard_fail,
         runtime_qs_metrics,
         runtime_candidate_cards_metrics,
         runtime_incident_primary_metrics,
@@ -511,6 +559,75 @@ pub fn build_run_summary_row(
         .count() as f64
         / denom;
 
+    // --- Continuation aggregates (only over continuation iterations) ---
+    let cont_rows: Vec<&EvalIterationSummaryRow> = iteration_rows
+        .iter()
+        .filter(|r| r.iteration_kind == "continuation")
+        .collect();
+    let cont_count = cont_rows.len();
+
+    let opt_mean_score = |get: &dyn Fn(&EvalIterationSummaryRow) -> Option<i16>| -> Option<f64> {
+        let vals: Vec<f64> = cont_rows.iter().filter_map(|r| get(r).map(|s| s as f64)).collect();
+        if vals.is_empty() { None } else { Some(vals.iter().sum::<f64>() / vals.len() as f64) }
+    };
+    let opt_frac_bool = |get: &dyn Fn(&EvalIterationSummaryRow) -> Option<bool>| -> Option<f64> {
+        let applicable: Vec<bool> = cont_rows.iter().filter_map(|r| get(r)).collect();
+        if applicable.is_empty() { None } else {
+            Some(applicable.iter().filter(|&&v| v).count() as f64 / applicable.len() as f64)
+        }
+    };
+
+    let continuation_hypothesis_update_discipline_score_avg =
+        opt_mean_score(&|r| r.continuation_hypothesis_update_discipline_score);
+    let continuation_problem_understanding_update_score_avg =
+        opt_mean_score(&|r| r.continuation_problem_understanding_update_score);
+    let continuation_next_check_progression_score_avg =
+        opt_mean_score(&|r| r.continuation_next_check_progression_score);
+    let continuation_observation_resolution_context_recovery_score_avg =
+        opt_mean_score(&|r| r.continuation_observation_resolution_context_recovery_score);
+
+    let usable_continuation_response_rate =
+        opt_frac_bool(&|r| r.usable_continuation_response);
+    let continuation_update_no_hard_fail_rate =
+        opt_frac_bool(&|r| r.continuation_update_no_hard_fail);
+    let continuation_input_no_hard_fail_rate =
+        opt_frac_bool(&|r| r.continuation_input_no_hard_fail);
+
+    let continuation_update_judge_score = if cont_count == 0 {
+        None
+    } else {
+        let cu1_vals: Vec<f64> = cont_rows.iter().filter_map(|r| r.continuation_hypothesis_update_discipline_score.map(|s| s as f64)).collect();
+        let cu2_vals: Vec<f64> = cont_rows.iter().filter_map(|r| r.continuation_problem_understanding_update_score.map(|s| s as f64)).collect();
+        let cu3_vals: Vec<f64> = cont_rows.iter().filter_map(|r| r.continuation_next_check_progression_score.map(|s| s as f64)).collect();
+        let iter_avgs: Vec<f64> = cu1_vals.iter().zip(cu2_vals.iter()).zip(cu3_vals.iter())
+            .map(|((c1, c2), c3)| (c1 + c2 + c3) / 3.0)
+            .collect();
+        if iter_avgs.is_empty() { None }
+        else { Some(iter_avgs.iter().sum::<f64>() / iter_avgs.len() as f64) }
+    };
+
+    let continuation_input_judge_score =
+        opt_mean_score(&|r| r.continuation_observation_resolution_context_recovery_score);
+
+    let continuation_update_strict_pass_rate = if cont_count == 0 { None } else {
+        let applicable: Vec<bool> = cont_rows.iter().filter_map(|r| {
+            r.continuation_hypothesis_update_discipline_score.zip(
+            r.continuation_problem_understanding_update_score).zip(
+            r.continuation_next_check_progression_score)
+            .map(|((c1, c2), c3)| c1 == 2 && c2 == 2 && c3 == 2)
+        }).collect();
+        if applicable.is_empty() { None }
+        else { Some(applicable.iter().filter(|&&v| v).count() as f64 / applicable.len() as f64) }
+    };
+
+    let continuation_input_strict_pass_rate = if cont_count == 0 { None } else {
+        let applicable: Vec<bool> = cont_rows.iter()
+            .filter_map(|r| r.continuation_observation_resolution_context_recovery_score.map(|s| s == 2))
+            .collect();
+        if applicable.is_empty() { None }
+        else { Some(applicable.iter().filter(|&&v| v).count() as f64 / applicable.len() as f64) }
+    };
+
     let runtime_prompt_tokens: i64 =
         iteration_rows.iter().map(|row| row.runtime_prompt_tokens).sum();
     let runtime_completion_tokens: i64 =
@@ -572,6 +689,17 @@ pub fn build_run_summary_row(
         bad_final_due_to_query_rate,
         bad_final_due_to_evidence_rate,
         bad_final_with_good_query_and_evidence_rate: bad_final_with_good_query_and_evidence_rate,
+        usable_continuation_response_rate,
+        continuation_update_judge_score,
+        continuation_input_judge_score,
+        continuation_update_no_hard_fail_rate,
+        continuation_update_strict_pass_rate,
+        continuation_input_no_hard_fail_rate,
+        continuation_input_strict_pass_rate,
+        continuation_hypothesis_update_discipline_score_avg,
+        continuation_problem_understanding_update_score_avg,
+        continuation_next_check_progression_score_avg,
+        continuation_observation_resolution_context_recovery_score_avg,
         runtime_prompt_tokens,
         runtime_completion_tokens,
         runtime_total_tokens,

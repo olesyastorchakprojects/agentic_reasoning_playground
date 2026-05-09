@@ -26,6 +26,13 @@ const QUERY_STRUCTURING_GROUNDING_CONSERVATISM: &str = "query_structuring_ground
 const EVIDENCE_PACK_ROLE_FIT: &str = "evidence_pack_role_fit";
 const EVIDENCE_PACK_SUFFICIENCY: &str = "evidence_pack_sufficiency";
 const FINAL_HYPOTHESIS_SOURCE_ALIGNMENT: &str = "final_hypothesis_source_alignment";
+const CONTINUATION_HYPOTHESIS_UPDATE_DISCIPLINE: &str =
+    "continuation_hypothesis_update_discipline";
+const CONTINUATION_PROBLEM_UNDERSTANDING_UPDATE: &str =
+    "continuation_problem_understanding_update";
+const CONTINUATION_NEXT_CHECK_PROGRESSION: &str = "continuation_next_check_progression";
+const CONTINUATION_OBSERVATION_RESOLUTION_CONTEXT_RECOVERY: &str =
+    "continuation_observation_resolution_context_recovery";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct JudgeCallRequest {
@@ -55,6 +62,8 @@ pub enum JudgeExecutionError {
     Storage(#[from] StorageError),
     #[error("suite is not supported yet in the first implementation slice: {0}")]
     UnsupportedSuite(String),
+    #[error("suite '{suite}' is not applicable to this iteration: {reason}")]
+    SuiteNotApplicable { suite: String, reason: String },
     #[error("suite catalog is missing definition for {0}")]
     MissingSuiteDefinition(String),
     #[error("normalized judge response is missing required field: {0}")]
@@ -181,6 +190,12 @@ async fn execute_one_suite_inner(
         "llm.token_count.total",
         (response.prompt_tokens + response.completion_tokens) as i64,
     );
+    span.record("input.value", suite_def.prompt_template.as_str());
+    span.record("input.mime_type", "text/plain");
+    if let Some(content) = response.raw_response.get("content").and_then(|v| v.as_str()) {
+        span.record("output.value", content);
+        span.record("output.mime_type", "application/json");
+    }
 
     let call_id = format!(
         "{}:{}:{}",
@@ -233,6 +248,18 @@ pub fn build_suite_request(
         EVIDENCE_PACK_SUFFICIENCY => build_evidence_pack_sufficiency_payload(snapshot),
         FINAL_HYPOTHESIS_SOURCE_ALIGNMENT => {
             build_final_hypothesis_source_alignment_payload(snapshot)
+        }
+        CONTINUATION_HYPOTHESIS_UPDATE_DISCIPLINE => {
+            build_continuation_hypothesis_update_discipline_payload(snapshot)?
+        }
+        CONTINUATION_PROBLEM_UNDERSTANDING_UPDATE => {
+            build_continuation_problem_understanding_update_payload(snapshot)?
+        }
+        CONTINUATION_NEXT_CHECK_PROGRESSION => {
+            build_continuation_next_check_progression_payload(snapshot)?
+        }
+        CONTINUATION_OBSERVATION_RESOLUTION_CONTEXT_RECOVERY => {
+            build_continuation_observation_resolution_context_recovery_payload(snapshot)?
         }
         other => return Err(JudgeExecutionError::UnsupportedSuite(other.to_string())),
     };
@@ -327,6 +354,151 @@ fn build_final_hypothesis_source_alignment_payload(
         "theory_chunks": snapshot.prompt_context_assembly_output.theory_chunks,
         "final_answer": serde_json::to_value(resp).expect("diagnostic response must serialize"),
     })
+}
+
+struct ContinuationContext<'a> {
+    prev_resp: &'a distributed_diagnostics::shared_types::DiagnosticResponse,
+    curr_resp: &'a distributed_diagnostics::shared_types::DiagnosticResponse,
+    oe: &'a distributed_diagnostics::shared_types::ObservationExtractionOutput,
+}
+
+fn extract_continuation_context<'a>(
+    snapshot: &'a DiagnosticEvalIterationSnapshot,
+    suite: &str,
+) -> Result<ContinuationContext<'a>, JudgeExecutionError> {
+    let prev = snapshot
+        .previous_snapshot
+        .as_deref()
+        .ok_or_else(|| JudgeExecutionError::SuiteNotApplicable {
+            suite: suite.to_string(),
+            reason: "iteration is initial (no previous snapshot)".to_string(),
+        })?;
+    let oe = snapshot
+        .observation_extraction_output
+        .as_ref()
+        .ok_or_else(|| JudgeExecutionError::SuiteNotApplicable {
+            suite: suite.to_string(),
+            reason: "observation_extraction_output is missing".to_string(),
+        })?;
+    Ok(ContinuationContext {
+        prev_resp: &prev.response_validation_and_normalization_output.response,
+        curr_resp: &snapshot.response_validation_and_normalization_output.response,
+        oe,
+    })
+}
+
+fn build_continuation_hypothesis_update_discipline_payload(
+    snapshot: &DiagnosticEvalIterationSnapshot,
+) -> Result<Value, JudgeExecutionError> {
+    let ctx = extract_continuation_context(snapshot, CONTINUATION_HYPOTHESIS_UPDATE_DISCIPLINE)?;
+
+    let previous_active_hypotheses: Vec<_> = ctx
+        .prev_resp
+        .hypotheses
+        .iter()
+        .filter(|h| h.status == distributed_diagnostics::shared_types::HypothesisStatus::Active)
+        .collect();
+
+    Ok(json!({
+        "previous_response": serde_json::to_value(ctx.prev_resp).expect("response must serialize"),
+        "previous_active_hypotheses": serde_json::to_value(&previous_active_hypotheses).expect("hypotheses must serialize"),
+        "previous_first_check": ctx.prev_resp.first_check,
+        "resolved_observation": ctx.oe.resolved_observation.text,
+        "observations": serde_json::to_value(&ctx.oe.observations).expect("observations must serialize"),
+        "current_response": serde_json::to_value(ctx.curr_resp).expect("response must serialize"),
+    }))
+}
+
+fn build_continuation_problem_understanding_update_payload(
+    snapshot: &DiagnosticEvalIterationSnapshot,
+) -> Result<Value, JudgeExecutionError> {
+    let ctx = extract_continuation_context(snapshot, CONTINUATION_PROBLEM_UNDERSTANDING_UPDATE)?;
+
+    Ok(json!({
+        "previous_response": serde_json::to_value(ctx.prev_resp).expect("response must serialize"),
+        "resolved_observation": ctx.oe.resolved_observation.text,
+        "observations": serde_json::to_value(&ctx.oe.observations).expect("observations must serialize"),
+        "current_response": serde_json::to_value(ctx.curr_resp).expect("response must serialize"),
+    }))
+}
+
+fn build_continuation_next_check_progression_payload(
+    snapshot: &DiagnosticEvalIterationSnapshot,
+) -> Result<Value, JudgeExecutionError> {
+    let ctx = extract_continuation_context(snapshot, CONTINUATION_NEXT_CHECK_PROGRESSION)?;
+
+    let previous_active_hypotheses: Vec<_> = ctx
+        .prev_resp
+        .hypotheses
+        .iter()
+        .filter(|h| h.status == distributed_diagnostics::shared_types::HypothesisStatus::Active)
+        .collect();
+
+    Ok(json!({
+        "previous_first_check": ctx.prev_resp.first_check,
+        "previous_active_hypotheses": serde_json::to_value(&previous_active_hypotheses).expect("hypotheses must serialize"),
+        "resolved_observation": ctx.oe.resolved_observation.text,
+        "observations": serde_json::to_value(&ctx.oe.observations).expect("observations must serialize"),
+        "current_response": serde_json::to_value(ctx.curr_resp).expect("response must serialize"),
+    }))
+}
+
+fn build_continuation_observation_resolution_context_recovery_payload(
+    snapshot: &DiagnosticEvalIterationSnapshot,
+) -> Result<Value, JudgeExecutionError> {
+    let ctx = extract_continuation_context(
+        snapshot,
+        CONTINUATION_OBSERVATION_RESOLUTION_CONTEXT_RECOVERY,
+    )?;
+
+    let previous_active_hypotheses: Vec<_> = ctx
+        .prev_resp
+        .hypotheses
+        .iter()
+        .filter(|h| h.status == distributed_diagnostics::shared_types::HypothesisStatus::Active)
+        .collect();
+
+    Ok(json!({
+        "previous_response": serde_json::to_value(ctx.prev_resp).expect("response must serialize"),
+        "previous_active_hypotheses": serde_json::to_value(&previous_active_hypotheses).expect("hypotheses must serialize"),
+        "raw_new_observation": snapshot.user_request.query,
+        "resolved_observation": ctx.oe.resolved_observation.text,
+    }))
+}
+
+// Heavy keys whose values are replaced with "..." to keep span payloads small.
+const HEAVY_KEYS: &[&str] = &[
+    "incident_evidence_chunks",
+    "theory_chunks",
+    "evidence_topology",
+    "primary_chunks",
+    "alternative_chunks",
+];
+
+fn truncate_payload(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                if HEAVY_KEYS.contains(&k.as_str()) {
+                    out.insert(k.clone(), Value::String("...".to_string()));
+                } else {
+                    out.insert(k.clone(), truncate_payload(v));
+                }
+            }
+            Value::Object(out)
+        }
+        Value::String(s) if s.len() > 800 => {
+            Value::String(format!("{}...", &s[..800]))
+        }
+        Value::Array(arr) if arr.len() > 3 => {
+            let mut truncated: Vec<Value> = arr[..3].iter().map(truncate_payload).collect();
+            truncated.push(Value::String(format!("... {} more", arr.len() - 3)));
+            Value::Array(truncated)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(truncate_payload).collect()),
+        other => other.clone(),
+    }
 }
 
 fn render_prompt_with_payload(suite_def: &JudgeSuiteDefinition, payload: &Value) -> String {
@@ -532,15 +704,16 @@ mod tests {
     use chrono::Utc;
     use distributed_diagnostics::api_clients::model::RetryBackoffKind;
     use distributed_diagnostics::orchestrator::run_state::model::{
-        FinishedStepRecord, RunId, RunIteration, RunIterationId, RunState, RunStatus, StepKind,
+        FinishedStepRecord, RunId, RunIteration, RunIterationId, RunIterationStatus, RunState, RunStatus, StepKind,
         StepRecord, StepRecordId, StepResultEnvelope,
     };
     use distributed_diagnostics::shared_types::{
-        Confidence, DiagnosticResponse, DiagnosticResultInterpretation, Hypothesis,
-        HypothesisEvidenceSource, HypothesisId, HypothesisStatus, LlmStructuredGenerationOutput,
-        ModelTokenUsage, NormalizedUserRequest, PromptContextAssemblyOutput, QueryStructuringOutput,
-        ResponseValidationAndNormalizationOutput, StructuredUserQuery,
-        StructuredUserQueryConfidence, UserRequest,
+        Confidence, DiagnosticResponse, DiagnosticResultInterpretation, ExtractedObservation,
+        Hypothesis, HypothesisEvidenceSource, HypothesisId, HypothesisStatus,
+        LlmStructuredGenerationOutput, ModelTokenUsage, NormalizedUserRequest,
+        ObservationExtractionOutput, ObservationPolarity, PromptContextAssemblyOutput,
+        QueryStructuringOutput, ResponseValidationAndNormalizationOutput, ResolvedObservation,
+        StructuredUserQuery, StructuredUserQueryConfidence, UserRequest,
     };
     use serde_json::json;
     use uuid::Uuid;
@@ -548,7 +721,8 @@ mod tests {
     use crate::judge::{
         build_final_no_root_cause_claim_input, build_suite_request, canonical_normalized_result,
         parse_retry_backoff, JudgeCallRequest, JudgeCallResponse, JudgeClient, JudgeExecutionError,
-        EVIDENCE_PACK_ROLE_FIT, EVIDENCE_PACK_SUFFICIENCY, FINAL_ALTERNATIVE_CONTEXT_HANDLING,
+        CONTINUATION_HYPOTHESIS_UPDATE_DISCIPLINE, EVIDENCE_PACK_ROLE_FIT,
+        EVIDENCE_PACK_SUFFICIENCY, FINAL_ALTERNATIVE_CONTEXT_HANDLING,
         FINAL_FIRST_CHECK_DISCRIMINATES, FINAL_HYPOTHESIS_SOURCE_ALIGNMENT,
         FINAL_NO_ROOT_CAUSE_CLAIM, FINAL_RESULT_INTERPRETATION_USEFULNESS,
         QUERY_STRUCTURING_FIELD_BOUNDARY_CORRECTNESS, QUERY_STRUCTURING_GROUNDING_CONSERVATISM,
@@ -591,6 +765,7 @@ mod tests {
                     "version": "v1",
                     "category": "final_answer",
                     "scope": "iteration",
+                    "applies_to": "shared",
                     "required_for_mvp": true,
                     "input_variables": ["eval_context", "final_answer"],
                     "prompt_template": "Evaluate root cause overclaiming.",
@@ -602,6 +777,7 @@ mod tests {
                     "version": "v1",
                     "category": "final_answer",
                     "scope": "iteration",
+                    "applies_to": "shared",
                     "required_for_mvp": true,
                     "input_variables": ["eval_context", "final_answer"],
                     "prompt_template": "Evaluate first check discriminating power.",
@@ -613,6 +789,7 @@ mod tests {
                     "version": "v1",
                     "category": "final_answer",
                     "scope": "iteration",
+                    "applies_to": "shared",
                     "required_for_mvp": true,
                     "input_variables": ["eval_context", "final_answer"],
                     "prompt_template": "Evaluate alternative context handling.",
@@ -624,6 +801,7 @@ mod tests {
                     "version": "v1",
                     "category": "final_answer",
                     "scope": "iteration",
+                    "applies_to": "shared",
                     "required_for_mvp": true,
                     "input_variables": ["final_answer", "active_hypotheses", "first_check"],
                     "prompt_template": "Evaluate result interpretation usefulness.",
@@ -635,6 +813,7 @@ mod tests {
                     "version": "v1",
                     "category": "query_structuring",
                     "scope": "iteration",
+                    "applies_to": "initial_only",
                     "required_for_mvp": true,
                     "input_variables": ["raw_user_query", "structured_query"],
                     "prompt_template": "Evaluate query structuring field boundaries.",
@@ -646,6 +825,7 @@ mod tests {
                     "version": "v1",
                     "category": "query_structuring",
                     "scope": "iteration",
+                    "applies_to": "initial_only",
                     "required_for_mvp": true,
                     "input_variables": ["raw_user_query", "structured_query"],
                     "prompt_template": "Evaluate query structuring grounding conservatism.",
@@ -657,6 +837,7 @@ mod tests {
                     "version": "v1",
                     "category": "evidence_pack",
                     "scope": "iteration",
+                    "applies_to": "initial_only",
                     "required_for_mvp": true,
                     "input_variables": ["raw_user_query", "structured_query", "evidence_topology", "incident_evidence_chunks", "theory_chunks"],
                     "prompt_template": "Evaluate evidence pack role fit.",
@@ -668,6 +849,7 @@ mod tests {
                     "version": "v1",
                     "category": "evidence_pack",
                     "scope": "iteration",
+                    "applies_to": "initial_only",
                     "required_for_mvp": true,
                     "input_variables": ["raw_user_query", "structured_query", "matched_incident_card", "incident_evidence_chunks", "theory_chunks"],
                     "prompt_template": "Evaluate evidence pack sufficiency.",
@@ -679,10 +861,59 @@ mod tests {
                     "version": "v1",
                     "category": "final_answer",
                     "scope": "iteration",
+                    "applies_to": "shared",
                     "required_for_mvp": true,
                     "input_variables": ["evidence_topology", "matched_incident_card", "incident_evidence_chunks", "theory_chunks", "final_answer"],
                     "prompt_template": "Evaluate hypothesis source alignment.",
                     "normalized_output_schema_hint": {"required":["score","explanation"]},
+                    "response_schema": stub_schema()
+                },
+                "continuation_hypothesis_update_discipline": {
+                    "id": "evals.diagnostics.continuation_hypothesis_update_discipline",
+                    "version": "v1",
+                    "category": "continuation_update",
+                    "scope": "iteration",
+                    "applies_to": "continuation_only",
+                    "required_for_mvp": false,
+                    "input_variables": ["previous_response", "previous_active_hypotheses", "previous_first_check", "resolved_observation", "observations", "current_response"],
+                    "prompt_template": "Evaluate continuation hypothesis update discipline.",
+                    "normalized_output_schema_hint": {"required":["score","reason"]},
+                    "response_schema": stub_schema()
+                },
+                "continuation_problem_understanding_update": {
+                    "id": "evals.diagnostics.continuation_problem_understanding_update",
+                    "version": "v1",
+                    "category": "continuation_update",
+                    "scope": "iteration",
+                    "applies_to": "continuation_only",
+                    "required_for_mvp": false,
+                    "input_variables": ["previous_response", "resolved_observation", "observations", "current_response"],
+                    "prompt_template": "Evaluate continuation problem understanding update.",
+                    "normalized_output_schema_hint": {"required":["score","reason"]},
+                    "response_schema": stub_schema()
+                },
+                "continuation_next_check_progression": {
+                    "id": "evals.diagnostics.continuation_next_check_progression",
+                    "version": "v1",
+                    "category": "continuation_update",
+                    "scope": "iteration",
+                    "applies_to": "continuation_only",
+                    "required_for_mvp": false,
+                    "input_variables": ["previous_first_check", "previous_active_hypotheses", "resolved_observation", "observations", "current_response"],
+                    "prompt_template": "Evaluate continuation next check progression.",
+                    "normalized_output_schema_hint": {"required":["score","reason"]},
+                    "response_schema": stub_schema()
+                },
+                "continuation_observation_resolution_context_recovery": {
+                    "id": "evals.diagnostics.continuation_observation_resolution_context_recovery",
+                    "version": "v1",
+                    "category": "continuation_update",
+                    "scope": "iteration",
+                    "applies_to": "continuation_only",
+                    "required_for_mvp": false,
+                    "input_variables": ["previous_response", "previous_active_hypotheses", "raw_new_observation", "resolved_observation"],
+                    "prompt_template": "Evaluate continuation observation resolution context recovery.",
+                    "normalized_output_schema_hint": {"required":["score","reason"]},
                     "response_schema": stub_schema()
                 }
             }
@@ -705,6 +936,7 @@ mod tests {
         RunIteration {
             iteration_id,
             config_snapshot: None,
+            status: RunIterationStatus::Active,
             step_records: vec![
                 step_record(
                     StepKind::UserInputReceived,
@@ -750,6 +982,7 @@ mod tests {
                     StepKind::CandidateCardRetrieval,
                     StepResultEnvelope::CandidateCardRetrieval(
                         distributed_diagnostics::shared_types::CandidateCardRetrievalOutput {
+                            ranked_candidates: vec![],
                             primary: None,
                             alternatives: vec![],
                             metrics: None,
@@ -948,6 +1181,7 @@ mod tests {
             "version": "v1",
             "category": "final_answer",
             "scope": "iteration",
+            "applies_to": "shared",
             "required_for_mvp": false,
             "input_variables": [],
             "prompt_template": "x",
@@ -1077,6 +1311,214 @@ mod tests {
         assert!(request.input_payload.get("matched_incident_card").is_some());
         assert!(request.input_payload.get("final_answer").is_some());
         assert!(request.input_payload.get("eval_context").is_none());
+    }
+
+    fn minimal_continuation_iteration(
+        iteration_id: RunIterationId,
+    ) -> RunIteration {
+        RunIteration {
+            iteration_id,
+            config_snapshot: None,
+            status: RunIterationStatus::Active,
+            step_records: vec![
+                step_record(
+                    StepKind::UserInputReceived,
+                    StepResultEnvelope::UserInputReceived(UserRequest {
+                        query: "memory is stable on all nodes".to_string(),
+                        golden_question: None,
+                    }),
+                ),
+                step_record(
+                    StepKind::InputNormalization,
+                    StepResultEnvelope::InputNormalization(NormalizedUserRequest {
+                        query: "memory is stable".to_string(),
+                        input_token_count: 3,
+                    }),
+                ),
+                step_record(
+                    StepKind::ObservationBoundaryResolver,
+                    StepResultEnvelope::ObservationBoundaryResolver(
+                        distributed_diagnostics::shared_types::ObservationBoundaryResolverOutput {
+                            normalized_user_input: "memory is stable".to_string(),
+                            confidence: Confidence::High,
+                            reason: "new observation".to_string(),
+                            resolution: distributed_diagnostics::shared_types::ObservationBoundaryResolution::Supported(
+                                ResolvedObservation { text: "memory is stable".to_string() },
+                            ),
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::ObservationExtraction,
+                    StepResultEnvelope::ObservationExtraction(ObservationExtractionOutput {
+                        normalized_user_input: "memory is stable".to_string(),
+                        resolved_observation: ResolvedObservation {
+                            text: "memory is stable".to_string(),
+                        },
+                        confidence: Confidence::High,
+                        observations: vec![ExtractedObservation {
+                            statement: "memory usage is stable".to_string(),
+                            confidence: Confidence::High,
+                            condition: None,
+                            polarity: ObservationPolarity::Present,
+                            time_relation: None,
+                            source_span: "memory is stable".to_string(),
+                        }],
+                        needs_more_context: false,
+                        missing_context_questions: vec![],
+                        token_usage: ModelTokenUsage {
+                            prompt_tokens: Some(50),
+                            completion_tokens: Some(30),
+                            total_tokens: Some(80),
+                        },
+                    }),
+                ),
+                step_record(
+                    StepKind::CandidateCardRetrieval,
+                    StepResultEnvelope::CandidateCardRetrieval(
+                        distributed_diagnostics::shared_types::CandidateCardRetrievalOutput {
+                            ranked_candidates: vec![],
+                            primary: None,
+                            alternatives: vec![],
+                            metrics: None,
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::CardHydration,
+                    StepResultEnvelope::CardHydration(
+                        distributed_diagnostics::shared_types::CardHydrationOutput {
+                            primary: None,
+                            alternatives: vec![],
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::IncidentEvidenceRetrieval,
+                    StepResultEnvelope::IncidentEvidenceRetrieval(
+                        distributed_diagnostics::shared_types::IncidentEvidenceRetrievalOutput {
+                            primary_chunks: vec![],
+                            alternative_chunks: vec![],
+                            metrics: None,
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::TheoryEvidenceRetrieval,
+                    StepResultEnvelope::TheoryEvidenceRetrieval(
+                        distributed_diagnostics::shared_types::TheoryEvidenceRetrievalOutput {
+                            chunks: vec![],
+                            metrics: None,
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::DiagnosticUpdatePromptContextAssembly,
+                    StepResultEnvelope::DiagnosticUpdatePromptContextAssembly(
+                        PromptContextAssemblyOutput {
+                            prompt: "update prompt".to_string(),
+                            response_schema: json!({"type": "object"}),
+                            evidence_topology: Default::default(),
+                            incident_evidence_chunks: vec![],
+                            theory_chunks: vec![],
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::LlmStructuredGeneration,
+                    StepResultEnvelope::LlmStructuredGeneration(LlmStructuredGenerationOutput {
+                        response_json: json!({"problem_understanding": "updated"}),
+                        token_usage: ModelTokenUsage {
+                            prompt_tokens: Some(150),
+                            completion_tokens: Some(80),
+                            total_tokens: Some(230),
+                        },
+                    }),
+                ),
+                step_record(
+                    StepKind::ResponseValidationAndNormalization,
+                    StepResultEnvelope::ResponseValidationAndNormalization(
+                        ResponseValidationAndNormalizationOutput {
+                            response: DiagnosticResponse {
+                                problem_understanding: "updated understanding".to_string(),
+                                similar_practical_context: "bar".to_string(),
+                                hypotheses: vec![
+                                    Hypothesis {
+                                        id: HypothesisId(Uuid::from_u128(0xABCD)),
+                                        text: "leader election instability — reinforced".to_string(),
+                                        status: HypothesisStatus::Active,
+                                        source: HypothesisEvidenceSource::PrimaryIncident,
+                                        confidence: Confidence::High,
+                                    },
+                                ],
+                                first_check: "check memory allocator logs".to_string(),
+                                result_interpretation: DiagnosticResultInterpretation {
+                                    supports_primary_if: "if memory stable under load".to_string(),
+                                    supports_competing_if: "if GC pauses spike".to_string(),
+                                    inconclusive_if: None,
+                                },
+                                competing_interpretation: None,
+                            },
+                        },
+                    ),
+                ),
+            ],
+        }
+    }
+
+    #[test]
+    fn build_suite_request_continuation_hypothesis_update_discipline_has_all_required_fields() {
+        let initial = minimal_iteration(RunIterationId(Uuid::new_v4()));
+        let continuation = minimal_continuation_iteration(RunIterationId(Uuid::new_v4()));
+        let run = minimal_run_state(vec![initial, continuation.clone()]);
+        let snapshot = build_snapshot(
+            &run,
+            SnapshotIterationSelector::ExactIteration(continuation.iteration_id),
+        )
+        .expect("continuation snapshot");
+
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(CONTINUATION_HYPOTHESIS_UPDATE_DISCIPLINE).unwrap();
+
+        let request = build_suite_request(
+            CONTINUATION_HYPOTHESIS_UPDATE_DISCIPLINE.to_string(),
+            suite_def,
+            &snapshot,
+        )
+        .expect("request");
+
+        assert_eq!(request.suite_name, CONTINUATION_HYPOTHESIS_UPDATE_DISCIPLINE);
+        assert!(request.input_payload.get("previous_response").is_some());
+        assert!(request.input_payload.get("previous_active_hypotheses").is_some());
+        assert!(request.input_payload.get("previous_first_check").is_some());
+        assert!(request.input_payload.get("resolved_observation").is_some());
+        assert!(request.input_payload.get("observations").is_some());
+        assert!(request.input_payload.get("current_response").is_some());
+
+        // resolved_observation и observations должны отражать данные из текущей итерации
+        assert_eq!(request.input_payload["resolved_observation"], "memory is stable");
+        assert_eq!(request.input_payload["observations"].as_array().unwrap().len(), 1);
+
+        // previous_first_check должен содержать значение из предыдущей итерации
+        assert_eq!(request.input_payload["previous_first_check"], "check raft logs");
+    }
+
+    #[test]
+    fn build_suite_request_continuation_on_initial_snapshot_returns_not_applicable() {
+        let run = minimal_run_state(vec![minimal_iteration(RunIterationId(Uuid::new_v4()))]);
+        let snapshot = build_snapshot(&run, SnapshotIterationSelector::LastCompletedIteration)
+            .expect("snapshot");
+        let catalog = minimal_catalog();
+        let suite_def = catalog.get(CONTINUATION_HYPOTHESIS_UPDATE_DISCIPLINE).unwrap();
+
+        let err = build_suite_request(
+            CONTINUATION_HYPOTHESIS_UPDATE_DISCIPLINE.to_string(),
+            suite_def,
+            &snapshot,
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, JudgeExecutionError::SuiteNotApplicable { .. }));
     }
 
     #[test]

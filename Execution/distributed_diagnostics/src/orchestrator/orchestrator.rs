@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -17,12 +20,23 @@ use crate::shared_types::{
     UserRequest,
 };
 
-#[derive(Debug)]
 pub struct Orchestrator<P> {
     policy: P,
     executor: StepExecutor,
     run_repository: RunRepository,
     config_snapshot: Option<RunConfigSnapshot>,
+    run_otel_contexts: Mutex<HashMap<RunId, opentelemetry::Context>>,
+}
+
+impl<P: std::fmt::Debug> std::fmt::Debug for Orchestrator<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Orchestrator")
+            .field("policy", &self.policy)
+            .field("executor", &self.executor)
+            .field("run_repository", &self.run_repository)
+            .field("config_snapshot", &self.config_snapshot)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +86,7 @@ where
             executor,
             run_repository,
             config_snapshot: None,
+            run_otel_contexts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -81,10 +96,15 @@ where
     }
 
     pub async fn run(&self, user_input: UserRequest) -> Result<RunOutcome, OrchestratorError> {
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
         let mut state = RunState::new();
-        let run_id_str = state.run_id.0.to_string();
+        let run_id = state.run_id;
+        let run_id_str = run_id.0.to_string();
         let root_span = crate::observability::run_span(&run_id_str, "run");
         let _root_entered = root_span.enter();
+        root_span.record("input.value", user_input.query.as_str());
+        root_span.record("input.mime_type", "text/plain");
+        self.run_otel_contexts.lock().unwrap().insert(run_id, root_span.context());
         let outcome = self.run_body(user_input, &mut state).await;
         record_run_outcome(&root_span, &outcome, Some(&state));
         outcome
@@ -116,12 +136,17 @@ where
         self.run_repository
             .append_iteration(state, iteration_sequence_no, iteration)
             .await?;
-        self.drive_to_outcome(state).await
+        self.drive_to_outcome(state, None).await
     }
 
     pub async fn resume(&self, run_id: RunId) -> Result<RunOutcome, OrchestratorError> {
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
         let run_id_str = run_id.0.to_string();
+        let parent_ctx = self.run_otel_contexts.lock().unwrap().get(&run_id).cloned();
         let root_span = crate::observability::run_span(&run_id_str, "resume");
+        if let Some(ctx) = parent_ctx {
+            let _ = root_span.set_parent(ctx);
+        }
         let _root_entered = root_span.enter();
         let mut state = match self.load_existing_run(run_id).await {
             Err(e) => {
@@ -139,7 +164,7 @@ where
         if state.status == RunStatus::WaitingForUser {
             return Err(OrchestratorError::WaitingForUserRequiresNewInput { run_id });
         }
-        let outcome = self.drive_to_outcome(&mut state).await;
+        let outcome = self.drive_to_outcome(&mut state, None).await;
         record_run_outcome(&root_span, &outcome, Some(&state));
         outcome
     }
@@ -149,11 +174,8 @@ where
         run_id: RunId,
         user_input: UserRequest,
     ) -> Result<RunOutcome, OrchestratorError> {
-        let run_id_str = run_id.0.to_string();
-        let root_span = crate::observability::run_span(&run_id_str, "resume_with_input");
-        let _root_entered = root_span.enter();
-        let (outcome, state) = self.resume_with_input_body(run_id, user_input).await;
-        record_run_outcome(&root_span, &outcome, state.as_ref());
+        let parent_ctx = self.run_otel_contexts.lock().unwrap().get(&run_id).cloned();
+        let (outcome, _state) = self.resume_with_input_body(run_id, user_input, parent_ctx).await;
         outcome
     }
 
@@ -161,6 +183,7 @@ where
         &self,
         run_id: RunId,
         user_input: UserRequest,
+        parent_ctx: Option<opentelemetry::Context>,
     ) -> (Result<RunOutcome, OrchestratorError>, Option<RunState>) {
         let mut state = match self.load_existing_run(run_id).await {
             Err(e) => return (Err(e), None),
@@ -187,7 +210,7 @@ where
         {
             return (Err(OrchestratorError::from(e)), Some(state));
         }
-        let outcome = self.drive_to_outcome(&mut state).await;
+        let outcome = self.drive_to_outcome(&mut state, parent_ctx).await;
         (outcome, Some(state))
     }
 
@@ -198,8 +221,16 @@ where
     async fn drive_to_outcome(
         &self,
         state: &mut RunState,
+        parent_ctx: Option<opentelemetry::Context>,
     ) -> Result<RunOutcome, OrchestratorError> {
-        drive_to_outcome_impl(&self.policy, &self.executor, &self.run_repository, state).await
+        drive_to_outcome_impl(
+            &self.policy,
+            &self.executor,
+            &self.run_repository,
+            state,
+            parent_ctx.as_ref(),
+        )
+        .await
     }
 }
 
@@ -341,7 +372,7 @@ where
         .append_iteration(&state, iteration_sequence_no, iteration)
         .await?;
 
-    drive_to_outcome_impl(policy, executor, run_repository, &mut state).await
+    drive_to_outcome_impl(policy, executor, run_repository, &mut state, None).await
 }
 
 #[cfg(test)]
@@ -360,7 +391,7 @@ where
     if state.status == RunStatus::WaitingForUser {
         return Err(OrchestratorError::WaitingForUserRequiresNewInput { run_id });
     }
-    drive_to_outcome_impl(policy, executor, run_repository, &mut state).await
+    drive_to_outcome_impl(policy, executor, run_repository, &mut state, None).await
 }
 
 #[cfg(test)]
@@ -396,7 +427,7 @@ where
         .append_iteration(&state, iteration_sequence_no, iteration)
         .await?;
 
-    drive_to_outcome_impl(policy, executor, run_repository, &mut state).await
+    drive_to_outcome_impl(policy, executor, run_repository, &mut state, None).await
 }
 
 async fn load_existing_run_impl<R>(
@@ -417,6 +448,7 @@ async fn drive_to_outcome_impl<P, E, R>(
     executor: &E,
     run_repository: &R,
     state: &mut RunState,
+    parent_ctx: Option<&opentelemetry::Context>,
 ) -> Result<RunOutcome, OrchestratorError>
 where
     P: TransitionPolicy,
@@ -428,7 +460,8 @@ where
         Some(it) => {
             let iter_id = it.iteration_id.0.to_string();
             let seq = (state.iterations.len() - 1) as u64;
-            let span = crate::observability::iteration_span(&run_id_str, &iter_id, seq);
+            let span =
+                crate::observability::iteration_span(&run_id_str, &iter_id, seq, parent_ctx);
             (span, iter_id)
         }
         None => (tracing::Span::none(), String::new()),
@@ -769,15 +802,23 @@ fn record_run_outcome(
     state: Option<&RunState>,
 ) {
     match outcome {
-        Ok(RunOutcome::Finished { .. }) => {
+        Ok(RunOutcome::Finished { result, .. }) => {
             span.record("status", "ok");
             span.record("run.outcome", "success");
             span.record("terminal.transition", "FinishWithResult");
+            if let Ok(output_json) = serde_json::to_string(result) {
+                span.record("output.value", output_json.as_str());
+                span.record("output.mime_type", "application/json");
+            }
         }
-        Ok(RunOutcome::WaitingForUser { .. }) => {
+        Ok(RunOutcome::WaitingForUser { follow_up_questions, .. }) => {
             span.record("status", "ok");
             span.record("run.outcome", "waiting_for_user");
             span.record("terminal.transition", "WaitForUser");
+            if let Ok(output_json) = serde_json::to_string(follow_up_questions) {
+                span.record("output.value", output_json.as_str());
+                span.record("output.mime_type", "application/json");
+            }
         }
         Ok(RunOutcome::Failed { error, .. }) => {
             span.record("status", "error");
@@ -1341,7 +1382,7 @@ mod tests {
         );
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect("drive_to_outcome must succeed");
 
@@ -1381,7 +1422,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![Err(step_error.clone())], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect("drive_to_outcome must succeed");
 
@@ -1532,7 +1573,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect_err("policy failure must bubble up");
 
@@ -1556,7 +1597,7 @@ mod tests {
         let repo = FakeRepository::new(None, Arc::clone(&events))
             .with_append_step_record_results(vec![Err(invalid_repo_state("append step failed"))]);
 
-        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect_err("append_step_record failure must bubble up");
 
@@ -1582,7 +1623,7 @@ mod tests {
         let repo = FakeRepository::new(None, Arc::clone(&events))
             .with_finish_step_record_results(vec![Err(invalid_repo_state("finish step failed"))]);
 
-        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect_err("finish_step_record failure must bubble up");
 
@@ -1602,7 +1643,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect("must succeed");
 
@@ -1625,7 +1666,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect("must succeed");
 
@@ -1686,7 +1727,7 @@ mod tests {
         );
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect("must succeed");
 
@@ -1796,7 +1837,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect("must succeed");
 
@@ -1891,7 +1932,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![Err(step_error)], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect("must not return OrchestratorError");
 
@@ -1911,7 +1952,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
             .await
             .expect("must succeed");
 

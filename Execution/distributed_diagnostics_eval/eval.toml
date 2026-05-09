@@ -37,6 +37,10 @@ enabled = [
   "final_hypothesis_source_alignment",
   "final_alternative_context_handling",
   "final_result_interpretation_usefulness",
+  "continuation_hypothesis_update_discipline",
+  "continuation_problem_understanding_update",
+  "continuation_next_check_progression",
+  "continuation_observation_resolution_context_recovery",
 ]
 required_for_mvp_only = false
 
