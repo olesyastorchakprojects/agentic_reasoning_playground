@@ -41,6 +41,7 @@ Each row must contain at least:
 Each row must contain at least:
 
 - `usable_first_response_rate`
+- `usable_continuation_response_rate`
 - `query_structuring_judge_score`
 - `evidence_pack_judge_score`
 - `final_answer_judge_score`
@@ -53,7 +54,17 @@ Each row must contain at least:
 - `bad_final_due_to_evidence_rate`
 - `bad_final_with_good_query_and_evidence_rate`
 
+When continuation suites are enabled, the row must additionally preserve
+continuation-oriented aggregates sufficient to distinguish:
+
+- observation-understanding degradation;
+- diagnostic-update degradation;
+- continuation-response usability degradation.
+
 The exact formulas are defined by the aggregate spec.
+
+Run-level quality aggregation must not collapse initial and continuation
+iterations into one usability signal only.
 
 ## 5) Required Usage And Cost Fields
 

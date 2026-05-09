@@ -5,6 +5,7 @@
       "version": "v1",
       "category": "query_structuring",
       "scope": "iteration",
+      "applies_to": "initial_only",
       "required_for_mvp": true,
       "input_variables": [
         "raw_user_query",
@@ -71,6 +72,7 @@
       "version": "v1",
       "category": "query_structuring",
       "scope": "iteration",
+      "applies_to": "initial_only",
       "required_for_mvp": true,
       "input_variables": [
         "raw_user_query",
@@ -141,6 +143,7 @@
       "version": "v1",
       "category": "evidence_pack",
       "scope": "iteration",
+      "applies_to": "initial_only",
       "required_for_mvp": true,
       "input_variables": [
         "raw_user_query",
@@ -211,6 +214,7 @@
       "version": "v1",
       "category": "evidence_pack",
       "scope": "iteration",
+      "applies_to": "initial_only",
       "required_for_mvp": true,
       "input_variables": [
         "raw_user_query",
@@ -266,6 +270,7 @@
       "version": "v1",
       "category": "final_answer",
       "scope": "iteration",
+      "applies_to": "shared",
       "required_for_mvp": true,
       "input_variables": [
         "eval_context",
@@ -315,6 +320,7 @@
       "version": "v1",
       "category": "final_answer",
       "scope": "iteration",
+      "applies_to": "shared",
       "required_for_mvp": true,
       "input_variables": [
         "eval_context",
@@ -368,6 +374,7 @@
       "version": "v1",
       "category": "final_answer",
       "scope": "iteration",
+      "applies_to": "shared",
       "required_for_mvp": true,
       "input_variables": [
         "evidence_topology",
@@ -439,6 +446,7 @@
       "version": "v1",
       "category": "final_answer",
       "scope": "iteration",
+      "applies_to": "shared",
       "required_for_mvp": true,
       "input_variables": [
         "eval_context",
@@ -491,6 +499,7 @@
       "version": "v1",
       "category": "final_answer",
       "scope": "iteration",
+      "applies_to": "shared",
       "required_for_mvp": true,
       "input_variables": [
         "final_answer",
@@ -542,6 +551,281 @@
         "final answer",
         "active hypotheses",
         "first check"
+      ]
+    },
+    "continuation_hypothesis_update_discipline": {
+      "id": "evals.diagnostics.continuation_hypothesis_update_discipline",
+      "version": "v1",
+      "category": "continuation_update",
+      "scope": "iteration",
+      "applies_to": "continuation_only",
+      "required_for_mvp": false,
+      "input_variables": [
+        "previous_response",
+        "previous_active_hypotheses",
+        "previous_first_check",
+        "resolved_observation",
+        "observations",
+        "current_response"
+      ],
+      "prompt_template": "You are evaluating the quality of a continuation diagnostic update in a distributed-systems diagnostic assistant.\n\nGiven:\n- the previous validated diagnostic response\n- the previous active hypotheses\n- the previous first_check\n- the new resolved observation text\n- the structured extracted observations\n- the current validated diagnostic response\n\nJudge whether the current response updates the diagnosis with real discipline.\n\nA good continuation update:\n- incorporates the new observation into the updated diagnostic state;\n- changes hypothesis ranking, status, wording, or confidence when the new observation is diagnostically meaningful;\n- weakens at least one competing hypothesis when the new observation clearly favors another explanation;\n- does not merely cosmetically rewrite the previous answer;\n- does not drop previously established useful context without reason.\n\nQuestion:\nDid the model update hypotheses and the surrounding diagnostic frame in a disciplined way after the new observation?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"meaningful_update\":true|false,\"leading_hypothesis_changed_or_reinforced\":true|false,\"competing_hypothesis_explicitly_weakened\":true|false,\"cosmetic_rewrite_only\":true|false,\"dropped_supported_context\":true|false,\"reason\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "meaningful_update",
+          "leading_hypothesis_changed_or_reinforced",
+          "competing_hypothesis_explicitly_weakened",
+          "cosmetic_rewrite_only",
+          "dropped_supported_context",
+          "reason"
+        ]
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "meaningful_update": {
+            "type": "boolean"
+          },
+          "leading_hypothesis_changed_or_reinforced": {
+            "type": "boolean"
+          },
+          "competing_hypothesis_explicitly_weakened": {
+            "type": "boolean"
+          },
+          "cosmetic_rewrite_only": {
+            "type": "boolean"
+          },
+          "dropped_supported_context": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "meaningful_update",
+          "leading_hypothesis_changed_or_reinforced",
+          "competing_hypothesis_explicitly_weakened",
+          "cosmetic_rewrite_only",
+          "dropped_supported_context",
+          "reason"
+        ]
+      },
+      "what_it_checks": "Whether a continuation response updates hypotheses and the surrounding diagnostic frame in a disciplined way after a new observation",
+      "why_it_matters": "This is the core continuation behavior: the assistant must actually learn from the new observation rather than restating the previous answer",
+      "inputs_to_judge": [
+        "previous validated response",
+        "previous active hypotheses",
+        "previous first check",
+        "new resolved observation",
+        "structured extracted observations",
+        "current validated response"
+      ]
+    },
+    "continuation_problem_understanding_update": {
+      "id": "evals.diagnostics.continuation_problem_understanding_update",
+      "version": "v1",
+      "category": "continuation_update",
+      "scope": "iteration",
+      "applies_to": "continuation_only",
+      "required_for_mvp": false,
+      "input_variables": [
+        "previous_response",
+        "resolved_observation",
+        "observations",
+        "current_response"
+      ],
+      "prompt_template": "You are evaluating how a continuation diagnostic response updates problem_understanding after a new observation.\n\nGiven:\n- the previous validated diagnostic response\n- the new resolved observation text\n- the structured extracted observations\n- the current validated diagnostic response\n\nA good update to problem_understanding:\n- incorporates the new observation when it materially changes the diagnosis;\n- preserves the direction of the symptom correctly, including which endpoint or component sees newer vs older state;\n- does not ignore an explicit new configuration, mode, or state that now matters;\n- does not become vaguer or less technically faithful than the previous understanding.\n\nQuestion:\nDid the model update problem_understanding correctly and faithfully after the new observation?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"includes_new_observation\":true|false,\"preserves_directionality\":true|false,\"captures_material_configuration_or_state\":true|false,\"became_vaguer_or_less_faithful\":true|false,\"reason\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "includes_new_observation",
+          "preserves_directionality",
+          "captures_material_configuration_or_state",
+          "became_vaguer_or_less_faithful",
+          "reason"
+        ]
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "includes_new_observation": {
+            "type": "boolean"
+          },
+          "preserves_directionality": {
+            "type": "boolean"
+          },
+          "captures_material_configuration_or_state": {
+            "type": "boolean"
+          },
+          "became_vaguer_or_less_faithful": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "includes_new_observation",
+          "preserves_directionality",
+          "captures_material_configuration_or_state",
+          "became_vaguer_or_less_faithful",
+          "reason"
+        ]
+      },
+      "what_it_checks": "Whether problem_understanding is correctly updated to reflect the new observation without semantic inversion or loss of important state",
+      "why_it_matters": "A continuation response can sound plausible while still misframing the problem; this suite checks whether the updated framing stayed faithful",
+      "inputs_to_judge": [
+        "previous validated response",
+        "new resolved observation",
+        "structured extracted observations",
+        "current validated response"
+      ]
+    },
+    "continuation_next_check_progression": {
+      "id": "evals.diagnostics.continuation_next_check_progression",
+      "version": "v1",
+      "category": "continuation_update",
+      "scope": "iteration",
+      "applies_to": "continuation_only",
+      "required_for_mvp": false,
+      "input_variables": [
+        "previous_first_check",
+        "previous_active_hypotheses",
+        "resolved_observation",
+        "observations",
+        "current_response"
+      ],
+      "prompt_template": "You are evaluating whether a continuation diagnostic response proposes a useful next check after a new observation.\n\nGiven:\n- the previous first_check\n- the previous active hypotheses\n- the new resolved observation text\n- the structured extracted observations\n- the current validated diagnostic response\n\nA good continuation next check:\n- remains exactly one next check, not a checklist;\n- responds to the new observation and the updated hypothesis state;\n- does not repeat the previous first_check unless repetition is clearly justified by the new observation;\n- moves the diagnosis forward by testing the newly strengthened mechanism or discriminating between live alternatives.\n\nQuestion:\nDid the model choose a next check that meaningfully progresses the diagnosis after the new observation?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"is_single_check\":true|false,\"responds_to_new_observation\":true|false,\"avoids_unjustified_repetition\":true|false,\"progresses_diagnosis\":true|false,\"reason\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "is_single_check",
+          "responds_to_new_observation",
+          "avoids_unjustified_repetition",
+          "progresses_diagnosis",
+          "reason"
+        ]
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "is_single_check": {
+            "type": "boolean"
+          },
+          "responds_to_new_observation": {
+            "type": "boolean"
+          },
+          "avoids_unjustified_repetition": {
+            "type": "boolean"
+          },
+          "progresses_diagnosis": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "is_single_check",
+          "responds_to_new_observation",
+          "avoids_unjustified_repetition",
+          "progresses_diagnosis",
+          "reason"
+        ]
+      },
+      "what_it_checks": "Whether the continuation response proposes a next check that genuinely advances diagnosis after the new observation",
+      "why_it_matters": "A continuation loop is only useful if it converts new evidence into a better next move rather than repeating prior advice",
+      "inputs_to_judge": [
+        "previous first check",
+        "previous active hypotheses",
+        "new resolved observation",
+        "structured extracted observations",
+        "current validated response"
+      ]
+    },
+    "continuation_observation_resolution_context_recovery": {
+      "id": "evals.diagnostics.continuation_observation_resolution_context_recovery",
+      "version": "v1",
+      "category": "continuation_input",
+      "scope": "iteration",
+      "applies_to": "continuation_only",
+      "required_for_mvp": false,
+      "input_variables": [
+        "previous_response",
+        "previous_active_hypotheses",
+        "raw_new_observation",
+        "resolved_observation"
+      ],
+      "prompt_template": "You are evaluating how well a continuation observation resolver reconstructed a short or referential user observation using prior diagnostic context.\n\nGiven:\n- the previous validated diagnostic response\n- the previous active hypotheses\n- the raw new user observation\n- the resolved observation text produced by the system\n\nA good resolved observation:\n- turns a short or referential follow-up into a useful standalone observation when prior context is needed;\n- preserves the meaning of the user's new observation;\n- includes only prior context that is necessary to make the observation understandable;\n- does not invent facts that were not stated by the user or supported by the prior context;\n- does not become vague, over-expanded, or semantically distorted.\n\nQuestion:\nDid the system reconstruct the new observation from prior context in a faithful and useful way?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"is_usefully_standalone\":true|false,\"preserves_user_meaning\":true|false,\"uses_prior_context_appropriately\":true|false,\"introduced_unsupported_details\":true|false,\"reason\":\"string\"}",
+      "normalized_output_schema_hint": {
+        "required": [
+          "score",
+          "is_usefully_standalone",
+          "preserves_user_meaning",
+          "uses_prior_context_appropriately",
+          "introduced_unsupported_details",
+          "reason"
+        ]
+      },
+      "response_schema": {
+        "type": "object",
+        "properties": {
+          "score": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "is_usefully_standalone": {
+            "type": "boolean"
+          },
+          "preserves_user_meaning": {
+            "type": "boolean"
+          },
+          "uses_prior_context_appropriately": {
+            "type": "boolean"
+          },
+          "introduced_unsupported_details": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "score",
+          "is_usefully_standalone",
+          "preserves_user_meaning",
+          "uses_prior_context_appropriately",
+          "introduced_unsupported_details",
+          "reason"
+        ]
+      },
+      "what_it_checks": "Whether a short or referential continuation observation was reconstructed into a faithful and useful standalone observation using prior context",
+      "why_it_matters": "Continuation loops often depend on resolving terse follow-up observations; bad reconstruction can poison downstream update quality",
+      "inputs_to_judge": [
+        "previous validated response",
+        "previous active hypotheses",
+        "raw new observation",
+        "resolved observation"
       ]
     }
   }

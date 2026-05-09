@@ -26,6 +26,7 @@ This document is the top-level source of truth for:
 - the relationship between `RunState`, iteration snapshots, judge suites,
   reports, and aggregates;
 - MVP batch-eval behavior;
+- initial-vs-continuation iteration evaluation semantics;
 - forward compatibility with future multi-iteration agent loops.
 
 ## 2) Core Concepts
@@ -54,6 +55,16 @@ iteration.
 The eval engine must nevertheless treat the iteration, not the whole run, as
 the fundamental evaluation subject, because later agent-loop versions will add
 multiple user turns to the same runtime run.
+
+For eval purposes, iterations must also be classified into:
+
+- `initial`
+- `continuation`
+
+An `initial` iteration is evaluated as a standalone first diagnostic move.
+
+A `continuation` iteration is evaluated as an update from a prior diagnostic
+state after one new observation or check result.
 
 ### 2.3) Eval Run
 
@@ -91,6 +102,12 @@ The primary semantic subject of judge evaluation is:
 This subject must be materialized logically as
 `DiagnosticEvalIterationSnapshot`.
 
+For continuation iterations, the logical subject must include both:
+
+- the current iteration outputs;
+- the immediately prior completed iteration context required to judge update
+  quality.
+
 ## 3) MVP Operating Mode
 
 The required MVP operating mode is offline batch evaluation over golden-dataset
@@ -127,6 +144,9 @@ Instead, the eval engine must:
 - select one target iteration;
 - project that iteration into a logical eval snapshot;
 - build suite-specific judge payloads from that snapshot.
+
+For continuation iterations, the snapshot projection must also include the
+required prior-iteration context and continuation-specific step outputs.
 
 The eval engine may persist its own:
 
@@ -196,6 +216,13 @@ For the current MVP, the judge suites are expected to cover:
 - evidence pack quality;
 - final diagnostic answer quality.
 
+For the continuation eval slice, the judge suites must additionally cover:
+
+- observation understanding quality;
+- diagnostic-update quality;
+- updated next-check quality;
+- updated interpretation alignment.
+
 ## 8) Required Outputs
 
 For each completed eval run, the engine must produce:
@@ -206,6 +233,9 @@ For each completed eval run, the engine must produce:
 - eval-run-level summaries;
 - one `run_manifest.json`;
 - one `run_report.md`.
+
+These outputs must remain iteration-granular even when one runtime run contains
+multiple completed iterations of different kinds.
 
 The implementation order for product value is:
 
@@ -249,6 +279,8 @@ Therefore, all eval-owned identities and summaries must be designed so that:
 - one eval run may aggregate many runtime runs;
 - judge verdicts are keyed by iteration, not only by runtime run;
 - iteration-level summaries remain valid when later turns are added;
+- initial and continuation iterations may use different suite sets while still
+  sharing one eval-run identity model;
 - future loop-level judge suites can be added without redefining eval-run
   identity.
 

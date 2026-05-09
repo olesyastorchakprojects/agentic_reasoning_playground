@@ -172,6 +172,10 @@ pub fn eval_suite_span(
         llm.token_count.total = field::Empty,
         eval.total_cost_usd = field::Empty,
         eval.score = field::Empty,
+        input.value = field::Empty,
+        input.mime_type = field::Empty,
+        output.value = field::Empty,
+        output.mime_type = field::Empty,
         error.type = field::Empty,
         error.message = field::Empty,
     )

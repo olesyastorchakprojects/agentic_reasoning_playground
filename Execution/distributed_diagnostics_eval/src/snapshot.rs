@@ -4,8 +4,8 @@ use distributed_diagnostics::orchestrator::run_state::model::{
 };
 use distributed_diagnostics::shared_types::{
     CandidateCardRetrievalOutput, CardHydrationOutput, GoldenQuestion, IncidentEvidenceRetrievalOutput,
-    LlmStructuredGenerationOutput, ModelTokenUsage, NormalizedUserRequest,
-    PromptContextAssemblyOutput, QueryStructuringOutput,
+    IterationProfile, LlmStructuredGenerationOutput, ModelTokenUsage, NormalizedUserRequest,
+    ObservationExtractionOutput, PromptContextAssemblyOutput, QueryStructuringOutput,
     ResponseValidationAndNormalizationOutput, TheoryEvidenceRetrievalOutput, UserRequest,
 };
 
@@ -28,6 +28,7 @@ pub struct RuntimeTokenUsageSummary {
 pub struct DiagnosticEvalIterationSnapshot {
     pub runtime_run_id: RunId,
     pub iteration_id: RunIterationId,
+    pub iteration_kind: IterationProfile,
     pub run_created_at: chrono::DateTime<chrono::Utc>,
     pub run_updated_at: chrono::DateTime<chrono::Utc>,
     pub user_request: UserRequest,
@@ -41,6 +42,11 @@ pub struct DiagnosticEvalIterationSnapshot {
     pub prompt_context_assembly_output: PromptContextAssemblyOutput,
     pub llm_structured_generation_output: LlmStructuredGenerationOutput,
     pub response_validation_and_normalization_output: ResponseValidationAndNormalizationOutput,
+    /// Present only for continuation iterations.
+    pub observation_extraction_output: Option<ObservationExtractionOutput>,
+    /// Present only for continuation iterations — the snapshot of the directly preceding
+    /// completed iteration.
+    pub previous_snapshot: Option<Box<DiagnosticEvalIterationSnapshot>>,
     pub runtime_token_usage: RuntimeTokenUsageSummary,
 }
 
@@ -50,6 +56,11 @@ pub enum SnapshotBuildError {
     NoCompletedIteration { run_id: RunId },
     #[error("iteration {iteration_id:?} not found in run {run_id:?}")]
     IterationNotFound {
+        run_id: RunId,
+        iteration_id: RunIterationId,
+    },
+    #[error("continuation iteration {iteration_id:?} has no previous completed iteration in run {run_id:?}")]
+    NoPreviousCompletedIteration {
         run_id: RunId,
         iteration_id: RunIterationId,
     },
@@ -76,15 +87,44 @@ pub fn build_snapshot(
     selector: SnapshotIterationSelector,
 ) -> Result<DiagnosticEvalIterationSnapshot, SnapshotBuildError> {
     let iteration = select_iteration(run_state, selector)?;
+    build_snapshot_for_iteration(run_state, iteration)
+}
+
+fn build_snapshot_for_iteration(
+    run_state: &RunState,
+    iteration: &RunIteration,
+) -> Result<DiagnosticEvalIterationSnapshot, SnapshotBuildError> {
+    let iteration_kind = detect_iteration_kind(iteration);
 
     let user_request = expect_user_request(iteration)?;
     let normalized_user_request = expect_input_normalization(iteration)?;
-    let query_structuring_output = expect_query_structuring(iteration)?;
+
+    let (
+        query_structuring_output,
+        prompt_context_assembly_output,
+        observation_extraction_output,
+        previous_snapshot,
+    ) = if iteration_kind == IterationProfile::Continuation {
+        let prev_iteration = find_previous_completed_iteration(run_state, iteration)?;
+        let prev_snap = build_snapshot_for_iteration(run_state, prev_iteration)?;
+        let oe = expect_observation_extraction(iteration)?;
+        let pca = expect_diagnostic_update_prompt_context_assembly(iteration)?;
+        (
+            prev_snap.query_structuring_output.clone(),
+            pca,
+            Some(oe),
+            Some(Box::new(prev_snap)),
+        )
+    } else {
+        let qs = expect_query_structuring(iteration)?;
+        let pca = expect_prompt_context_assembly(iteration)?;
+        (qs, pca, None, None)
+    };
+
     let candidate_card_retrieval_output = expect_candidate_card_retrieval(iteration)?;
     let card_hydration_output = expect_card_hydration(iteration)?;
     let incident_evidence_retrieval_output = expect_incident_evidence_retrieval(iteration)?;
     let theory_evidence_retrieval_output = expect_theory_evidence_retrieval(iteration)?;
-    let prompt_context_assembly_output = expect_prompt_context_assembly(iteration)?;
     let llm_structured_generation_output = expect_llm_structured_generation(iteration)?;
     let response_validation_and_normalization_output =
         expect_response_validation_and_normalization(iteration)?;
@@ -95,20 +135,36 @@ pub fn build_snapshot(
         .map(|s| (s.input_cost_per_million_tokens, s.output_cost_per_million_tokens))
         .unwrap_or((0.0, 0.0));
 
-    let runtime_token_usage = RuntimeTokenUsageSummary {
-        query_structuring: query_structuring_output.token_usage.clone(),
-        llm_structured_generation: llm_structured_generation_output.token_usage.clone(),
-        total: combine_token_usage(
-            &query_structuring_output.token_usage,
-            &llm_structured_generation_output.token_usage,
-        ),
-        input_cost_per_million_tokens: input_cost,
-        output_cost_per_million_tokens: output_cost,
+    let runtime_token_usage = if iteration_kind == IterationProfile::Continuation {
+        let empty_usage = ModelTokenUsage {
+            prompt_tokens: None,
+            completion_tokens: None,
+            total_tokens: None,
+        };
+        RuntimeTokenUsageSummary {
+            query_structuring: empty_usage,
+            llm_structured_generation: llm_structured_generation_output.token_usage.clone(),
+            total: llm_structured_generation_output.token_usage.clone(),
+            input_cost_per_million_tokens: input_cost,
+            output_cost_per_million_tokens: output_cost,
+        }
+    } else {
+        RuntimeTokenUsageSummary {
+            query_structuring: query_structuring_output.token_usage.clone(),
+            llm_structured_generation: llm_structured_generation_output.token_usage.clone(),
+            total: combine_token_usage(
+                &query_structuring_output.token_usage,
+                &llm_structured_generation_output.token_usage,
+            ),
+            input_cost_per_million_tokens: input_cost,
+            output_cost_per_million_tokens: output_cost,
+        }
     };
 
     Ok(DiagnosticEvalIterationSnapshot {
         runtime_run_id: run_state.run_id,
         iteration_id: iteration.iteration_id,
+        iteration_kind,
         run_created_at: run_state.created_at,
         run_updated_at: run_state.updated_at,
         golden_question: user_request.golden_question.clone(),
@@ -122,8 +178,50 @@ pub fn build_snapshot(
         prompt_context_assembly_output,
         llm_structured_generation_output,
         response_validation_and_normalization_output,
+        observation_extraction_output,
+        previous_snapshot,
         runtime_token_usage,
     })
+}
+
+fn detect_iteration_kind(iteration: &RunIteration) -> IterationProfile {
+    let has_obr = iteration.step_records.iter().any(|record| {
+        matches!(
+            record,
+            StepRecord::Finished(FinishedStepRecord {
+                step: StepKind::ObservationBoundaryResolver,
+                ..
+            })
+        )
+    });
+    if has_obr {
+        IterationProfile::Continuation
+    } else {
+        IterationProfile::Initial
+    }
+}
+
+fn find_previous_completed_iteration<'a>(
+    run_state: &'a RunState,
+    current: &RunIteration,
+) -> Result<&'a RunIteration, SnapshotBuildError> {
+    let current_pos = run_state
+        .iterations
+        .iter()
+        .position(|i| i.iteration_id == current.iteration_id)
+        .ok_or(SnapshotBuildError::IterationNotFound {
+            run_id: run_state.run_id,
+            iteration_id: current.iteration_id,
+        })?;
+
+    run_state.iterations[..current_pos]
+        .iter()
+        .rev()
+        .find(|i| has_successful_final_output(i))
+        .ok_or(SnapshotBuildError::NoPreviousCompletedIteration {
+            run_id: run_state.run_id,
+            iteration_id: current.iteration_id,
+        })
 }
 
 fn select_iteration<'a>(
@@ -259,6 +357,18 @@ fn expect_prompt_context_assembly(
     }
 }
 
+fn expect_diagnostic_update_prompt_context_assembly(
+    iteration: &RunIteration,
+) -> Result<PromptContextAssemblyOutput, SnapshotBuildError> {
+    match expect_step_payload(iteration, StepKind::DiagnosticUpdatePromptContextAssembly)? {
+        StepResultEnvelope::DiagnosticUpdatePromptContextAssembly(output) => Ok(output.clone()),
+        _ => Err(SnapshotBuildError::UnexpectedStepPayload {
+            iteration_id: iteration.iteration_id,
+            step: StepKind::DiagnosticUpdatePromptContextAssembly,
+        }),
+    }
+}
+
 fn expect_llm_structured_generation(
     iteration: &RunIteration,
 ) -> Result<LlmStructuredGenerationOutput, SnapshotBuildError> {
@@ -279,6 +389,18 @@ fn expect_response_validation_and_normalization(
         _ => Err(SnapshotBuildError::UnexpectedStepPayload {
             iteration_id: iteration.iteration_id,
             step: StepKind::ResponseValidationAndNormalization,
+        }),
+    }
+}
+
+fn expect_observation_extraction(
+    iteration: &RunIteration,
+) -> Result<ObservationExtractionOutput, SnapshotBuildError> {
+    match expect_step_payload(iteration, StepKind::ObservationExtraction)? {
+        StepResultEnvelope::ObservationExtraction(output) => Ok(output.clone()),
+        _ => Err(SnapshotBuildError::UnexpectedStepPayload {
+            iteration_id: iteration.iteration_id,
+            step: StepKind::ObservationExtraction,
         }),
     }
 }
@@ -342,15 +464,16 @@ fn sum_optional_usize(values: [Option<usize>; 2]) -> Option<usize> {
 mod tests {
     use chrono::Utc;
     use distributed_diagnostics::orchestrator::run_state::model::{
-        FinishedStepRecord, RunId, RunIteration, RunIterationId, RunState, RunStatus, StepError,
+        FinishedStepRecord, RunId, RunIteration, RunIterationId, RunIterationStatus, RunState, RunStatus, StepError,
         StepKind, StepRecord, StepRecordId, StepResultEnvelope,
     };
     use distributed_diagnostics::shared_types::{
-        Confidence, DiagnosticResponse, DiagnosticResultInterpretation, Hypothesis,
-        HypothesisEvidenceSource, HypothesisId, HypothesisStatus, IncidentEvidenceRetrievalOutput,
-        LlmStructuredGenerationOutput, ModelTokenUsage, NormalizedUserRequest,
+        Confidence, DiagnosticResponse, DiagnosticResultInterpretation, ExtractedObservation,
+        Hypothesis, HypothesisEvidenceSource, HypothesisId, HypothesisStatus,
+        IncidentEvidenceRetrievalOutput, IterationProfile, LlmStructuredGenerationOutput,
+        ModelTokenUsage, NormalizedUserRequest, ObservationExtractionOutput, ObservationPolarity,
         PromptContextAssemblyOutput, QueryStructuringOutput, ResponseValidationAndNormalizationOutput,
-        StructuredUserQuery, StructuredUserQueryConfidence, UserRequest,
+        ResolvedObservation, StructuredUserQuery, StructuredUserQueryConfidence, UserRequest,
     };
     use serde_json::json;
     use uuid::Uuid;
@@ -388,6 +511,7 @@ mod tests {
         RunIteration {
             iteration_id,
             config_snapshot: None,
+            status: RunIterationStatus::Active,
             step_records: vec![
                 step_record(
                     StepKind::UserInputReceived,
@@ -433,6 +557,7 @@ mod tests {
                     StepKind::CandidateCardRetrieval,
                     StepResultEnvelope::CandidateCardRetrieval(
                         distributed_diagnostics::shared_types::CandidateCardRetrievalOutput {
+                            ranked_candidates: vec![],
                             primary: None,
                             alternatives: vec![],
                             metrics: None,
@@ -491,28 +616,167 @@ mod tests {
                 step_record(
                     StepKind::ResponseValidationAndNormalization,
                     StepResultEnvelope::ResponseValidationAndNormalization(
-                        ResponseValidationAndNormalizationOutput {
-                            response: DiagnosticResponse {
-                                problem_understanding: "foo".to_string(),
-                                similar_practical_context: "bar".to_string(),
-                                hypotheses: vec![
-                                    Hypothesis {
-                                        id: HypothesisId(Uuid::from_u128(0xABCD)),
-                                        text: "leader election instability".to_string(),
-                                        status: HypothesisStatus::Active,
-                                        source: HypothesisEvidenceSource::PrimaryIncident,
-                                        confidence: Confidence::Medium,
-                                    },
-                                ],
-                                first_check: "check raft logs".to_string(),
-                                result_interpretation: DiagnosticResultInterpretation {
-                                    supports_primary_if: "if leader churn spikes".to_string(),
-                                    supports_competing_if: "if logs are clean".to_string(),
-                                    inconclusive_if: Some("if logs are missing".to_string()),
+                        minimal_response_validation_output(),
+                    ),
+                ),
+            ],
+        }
+    }
+
+    fn minimal_response_validation_output() -> ResponseValidationAndNormalizationOutput {
+        ResponseValidationAndNormalizationOutput {
+            response: DiagnosticResponse {
+                problem_understanding: "foo".to_string(),
+                similar_practical_context: "bar".to_string(),
+                hypotheses: vec![
+                    Hypothesis {
+                        id: HypothesisId(Uuid::from_u128(0xABCD)),
+                        text: "leader election instability".to_string(),
+                        status: HypothesisStatus::Active,
+                        source: HypothesisEvidenceSource::PrimaryIncident,
+                        confidence: Confidence::Medium,
+                    },
+                ],
+                first_check: "check raft logs".to_string(),
+                result_interpretation: DiagnosticResultInterpretation {
+                    supports_primary_if: "if leader churn spikes".to_string(),
+                    supports_competing_if: "if logs are clean".to_string(),
+                    inconclusive_if: Some("if logs are missing".to_string()),
+                },
+                competing_interpretation: None,
+            },
+        }
+    }
+
+    fn minimal_continuation_iteration(
+        iteration_id: RunIterationId,
+        resolved_text: &str,
+    ) -> RunIteration {
+        RunIteration {
+            iteration_id,
+            config_snapshot: None,
+            status: RunIterationStatus::Active,
+            step_records: vec![
+                step_record(
+                    StepKind::UserInputReceived,
+                    StepResultEnvelope::UserInputReceived(UserRequest {
+                        query: "I ran the check: memory is stable".to_string(),
+                        golden_question: None,
+                    }),
+                ),
+                step_record(
+                    StepKind::InputNormalization,
+                    StepResultEnvelope::InputNormalization(NormalizedUserRequest {
+                        query: "memory is stable".to_string(),
+                        input_token_count: 3,
+                    }),
+                ),
+                step_record(
+                    StepKind::ObservationBoundaryResolver,
+                    StepResultEnvelope::ObservationBoundaryResolver(
+                        distributed_diagnostics::shared_types::ObservationBoundaryResolverOutput {
+                            normalized_user_input: "memory is stable".to_string(),
+                            confidence: Confidence::High,
+                            reason: "new observation".to_string(),
+                            resolution: distributed_diagnostics::shared_types::ObservationBoundaryResolution::Supported(
+                                distributed_diagnostics::shared_types::ResolvedObservation {
+                                    text: resolved_text.to_string(),
                                 },
-                                competing_interpretation: None,
-                            },
+                            ),
                         },
+                    ),
+                ),
+                step_record(
+                    StepKind::ObservationExtraction,
+                    StepResultEnvelope::ObservationExtraction(ObservationExtractionOutput {
+                        normalized_user_input: "memory is stable".to_string(),
+                        resolved_observation: ResolvedObservation {
+                            text: resolved_text.to_string(),
+                        },
+                        confidence: Confidence::High,
+                        observations: vec![ExtractedObservation {
+                            statement: "memory usage is stable".to_string(),
+                            confidence: Confidence::High,
+                            condition: None,
+                            polarity: ObservationPolarity::Present,
+                            time_relation: None,
+                            source_span: resolved_text.to_string(),
+                        }],
+                        needs_more_context: false,
+                        missing_context_questions: vec![],
+                        token_usage: ModelTokenUsage {
+                            prompt_tokens: Some(50),
+                            completion_tokens: Some(30),
+                            total_tokens: Some(80),
+                        },
+                    }),
+                ),
+                step_record(
+                    StepKind::CandidateCardRetrieval,
+                    StepResultEnvelope::CandidateCardRetrieval(
+                        distributed_diagnostics::shared_types::CandidateCardRetrievalOutput {
+                            ranked_candidates: vec![],
+                            primary: None,
+                            alternatives: vec![],
+                            metrics: None,
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::CardHydration,
+                    StepResultEnvelope::CardHydration(
+                        distributed_diagnostics::shared_types::CardHydrationOutput {
+                            primary: None,
+                            alternatives: vec![],
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::IncidentEvidenceRetrieval,
+                    StepResultEnvelope::IncidentEvidenceRetrieval(
+                        IncidentEvidenceRetrievalOutput {
+                            primary_chunks: vec![],
+                            alternative_chunks: vec![],
+                            metrics: None,
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::TheoryEvidenceRetrieval,
+                    StepResultEnvelope::TheoryEvidenceRetrieval(
+                        distributed_diagnostics::shared_types::TheoryEvidenceRetrievalOutput {
+                            chunks: vec![],
+                            metrics: None,
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::DiagnosticUpdatePromptContextAssembly,
+                    StepResultEnvelope::DiagnosticUpdatePromptContextAssembly(
+                        PromptContextAssemblyOutput {
+                            prompt: "update prompt".to_string(),
+                            response_schema: json!({"type": "object"}),
+                            evidence_topology: Default::default(),
+                            incident_evidence_chunks: vec![],
+                            theory_chunks: vec![],
+                        },
+                    ),
+                ),
+                step_record(
+                    StepKind::LlmStructuredGeneration,
+                    StepResultEnvelope::LlmStructuredGeneration(LlmStructuredGenerationOutput {
+                        response_json: json!({"problem_understanding": "updated"}),
+                        token_usage: ModelTokenUsage {
+                            prompt_tokens: Some(150),
+                            completion_tokens: Some(80),
+                            total_tokens: Some(230),
+                        },
+                    }),
+                ),
+                step_record(
+                    StepKind::ResponseValidationAndNormalization,
+                    StepResultEnvelope::ResponseValidationAndNormalization(
+                        minimal_response_validation_output(),
                     ),
                 ),
             ],
@@ -547,6 +811,9 @@ mod tests {
         assert_eq!(snapshot.runtime_token_usage.total.prompt_tokens, Some(300));
         assert_eq!(snapshot.runtime_token_usage.total.completion_tokens, Some(150));
         assert_eq!(snapshot.runtime_token_usage.total.total_tokens, Some(450));
+        assert_eq!(snapshot.iteration_kind, IterationProfile::Initial);
+        assert!(snapshot.observation_extraction_output.is_none());
+        assert!(snapshot.previous_snapshot.is_none());
     }
 
     #[test]
@@ -555,6 +822,7 @@ mod tests {
         let incomplete = RunIteration {
             iteration_id: RunIterationId(Uuid::new_v4()),
             config_snapshot: None,
+            status: RunIterationStatus::Active,
             step_records: vec![step_record(
                 StepKind::UserInputReceived,
                 StepResultEnvelope::UserInputReceived(UserRequest {
@@ -587,6 +855,63 @@ mod tests {
         .expect("snapshot should build for exact iteration");
 
         assert_snapshot_iteration(&snapshot, older.iteration_id);
+    }
+
+    #[test]
+    fn builds_continuation_snapshot_with_previous_snapshot_and_oe_output() {
+        let initial = minimal_iteration(RunIterationId(Uuid::new_v4()));
+        let resolved = "memory is stable on all nodes";
+        let continuation = minimal_continuation_iteration(RunIterationId(Uuid::new_v4()), resolved);
+        let state = minimal_run_state(vec![initial.clone(), continuation.clone()]);
+
+        let snapshot = build_snapshot(
+            &state,
+            SnapshotIterationSelector::ExactIteration(continuation.iteration_id),
+        )
+        .expect("continuation snapshot should build");
+
+        assert_eq!(snapshot.iteration_kind, IterationProfile::Continuation);
+        assert_eq!(snapshot.iteration_id, continuation.iteration_id);
+
+        let oe = snapshot.observation_extraction_output.as_ref().expect("oe must be present");
+        assert_eq!(oe.resolved_observation.text, resolved);
+        assert_eq!(oe.observations.len(), 1);
+
+        let prev = snapshot.previous_snapshot.as_ref().expect("previous snapshot must be present");
+        assert_eq!(prev.iteration_id, initial.iteration_id);
+        assert_eq!(prev.iteration_kind, IterationProfile::Initial);
+        assert!(prev.previous_snapshot.is_none());
+
+        // query_structuring_output is inherited from the previous iteration
+        assert_eq!(
+            snapshot.query_structuring_output.structured_query.intent,
+            "diagnose"
+        );
+
+        // prompt_context_assembly_output comes from DiagnosticUpdatePromptContextAssembly
+        assert_eq!(snapshot.prompt_context_assembly_output.prompt, "update prompt");
+
+        // token usage reflects only the current iteration's LLM call
+        assert_eq!(snapshot.runtime_token_usage.query_structuring.prompt_tokens, None);
+        assert_eq!(snapshot.runtime_token_usage.llm_structured_generation.prompt_tokens, Some(150));
+    }
+
+    #[test]
+    fn continuation_snapshot_fails_when_no_previous_completed_iteration() {
+        let resolved = "something happened";
+        let continuation = minimal_continuation_iteration(RunIterationId(Uuid::new_v4()), resolved);
+        let state = minimal_run_state(vec![continuation.clone()]);
+
+        let err = build_snapshot(
+            &state,
+            SnapshotIterationSelector::ExactIteration(continuation.iteration_id),
+        )
+        .expect_err("must fail without a previous iteration");
+
+        assert!(matches!(
+            err,
+            SnapshotBuildError::NoPreviousCompletedIteration { .. }
+        ));
     }
 
     #[test]

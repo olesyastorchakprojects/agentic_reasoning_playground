@@ -55,6 +55,13 @@ fn print_finished_result(result: &distributed_diagnostics::shared_types::Respons
     }
 }
 
+fn print_waiting_for_user(case_label: &str, follow_up_questions: &[String]) {
+    println!("{case_label} requested more user input; no assistant result produced.");
+    for q in follow_up_questions {
+        println!("  ? {q}");
+    }
+}
+
 fn read_line(stdin: &io::Stdin, prompt: &str) -> Option<String> {
     let stdout = io::stdout();
     {
@@ -116,11 +123,12 @@ async fn main() -> Result<(), RuntimeError> {
 
     match golden_mode {
         Some((cases_file, schema_file)) => {
-            let requests =
+            let cases =
                 golden_eval_input::load_golden_eval_requests(&cases_file, &schema_file)?;
 
-            for request in requests {
-                let case_id = request
+            for case in cases {
+                let case_id = case
+                    .initial_request
                     .golden_question
                     .as_ref()
                     .map(|q| q.case_id.as_str())
@@ -129,19 +137,43 @@ async fn main() -> Result<(), RuntimeError> {
 
                 println!("[{case_id}]");
 
-                match orchestrator.run(request).await {
-                    Ok(RunOutcome::Finished { result, .. }) => print_finished_result(&result),
-                    Ok(RunOutcome::WaitingForUser { follow_up_questions, .. }) => {
-                        eprintln!("[{case_id}] waiting for user — not supported in batch mode");
-                        for q in &follow_up_questions {
-                            eprintln!("  ? {q}");
-                        }
+                let run_id = match orchestrator.run(case.initial_request).await {
+                    Ok(RunOutcome::Finished { run_id, result }) => {
+                        print_finished_result(&result);
+                        run_id
+                    }
+                    Ok(RunOutcome::WaitingForUser { run_id, follow_up_questions }) => {
+                        print_waiting_for_user(&format!("[{case_id}]"), &follow_up_questions);
+                        run_id
                     }
                     Ok(RunOutcome::Failed { error, .. }) => {
                         eprintln!("[{case_id}] run failed: {error}");
+                        println!();
+                        continue;
                     }
                     Err(e) => {
                         eprintln!("[{case_id}] orchestrator error: {e}");
+                        println!();
+                        continue;
+                    }
+                };
+
+                for (i, obs_request) in case.observation_requests.into_iter().enumerate() {
+                    println!("[{case_id}] obs {}", i + 1);
+                    match orchestrator.resume_with_input(run_id, obs_request).await {
+                        Ok(RunOutcome::Finished { result, .. }) => print_finished_result(&result),
+                        Ok(RunOutcome::WaitingForUser { follow_up_questions, .. }) => {
+                            print_waiting_for_user(
+                                &format!("[{case_id}] obs {}", i + 1),
+                                &follow_up_questions,
+                            );
+                        }
+                        Ok(RunOutcome::Failed { error, .. }) => {
+                            eprintln!("[{case_id}] obs {} failed: {error}", i + 1);
+                        }
+                        Err(e) => {
+                            eprintln!("[{case_id}] orchestrator error: {e}");
+                        }
                     }
                 }
 

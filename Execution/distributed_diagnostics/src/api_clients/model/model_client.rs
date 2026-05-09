@@ -12,6 +12,8 @@ pub enum ModelClientError {
     UnexpectedStatus(u16),
     #[error("invalid response: {0}")]
     InvalidResponse(String),
+    #[error("invalid response: model output truncated (finish_reason='length'); max_output_tokens={max_output_tokens}")]
+    InvalidResponseWithLimit { max_output_tokens: u32 },
 }
 
 #[async_trait]

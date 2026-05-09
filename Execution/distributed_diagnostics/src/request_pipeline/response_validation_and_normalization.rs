@@ -169,7 +169,7 @@ impl ResponseValidationAndNormalization {
             e
         })?;
 
-        let raw = serde_json::from_value::<RawDiagnosticResponse>(input.response_json.clone())
+        let mut raw = serde_json::from_value::<RawDiagnosticResponse>(input.response_json.clone())
             .map_err(|_| {
                 let err_msg = "response JSON does not match expected shape";
                 span.record("status", "error");
@@ -183,6 +183,9 @@ impl ResponseValidationAndNormalization {
                 );
                 ResponseValidationAndNormalizationError::InvalidResponseShape(err_msg.to_string())
             })?;
+
+        repair_invalid_hypothesis_ids(&mut raw);
+        repair_non_rejected_rejection_reasons(&mut raw);
 
         let hyp_count = filtered_hypotheses_count(&raw);
         let hyp_valid = hyp_count >= 2 && hyp_count <= 3;
@@ -694,6 +697,22 @@ fn filtered_hypotheses_count(raw: &RawDiagnosticResponse) -> usize {
     raw.hypotheses.iter().filter(|h| !h.text.trim().is_empty()).count()
 }
 
+fn repair_invalid_hypothesis_ids(raw: &mut RawDiagnosticResponse) {
+    for hypothesis in &mut raw.hypotheses {
+        if Uuid::parse_str(&hypothesis.id).is_err() {
+            hypothesis.id = Uuid::new_v4().to_string();
+        }
+    }
+}
+
+fn repair_non_rejected_rejection_reasons(raw: &mut RawDiagnosticResponse) {
+    for hypothesis in &mut raw.hypotheses {
+        if hypothesis.status != "rejected" && hypothesis.rejection_reason.is_some() {
+            hypothesis.rejection_reason = None;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -817,14 +836,11 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn invalid_hypothesis_id_fails_business_rule() {
+    fn invalid_hypothesis_id_is_auto_repaired() {
         let mut json = valid_json();
         json["hypotheses"][0]["id"] = json!("not-a-uuid");
-        let result = make().validate_and_normalize(&make_input(json));
-        assert!(matches!(
-            result,
-            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
-        ));
+        let out = make().validate_and_normalize(&make_input(json)).unwrap();
+        assert_ne!(out.response.hypotheses[0].id.0.to_string(), "not-a-uuid");
     }
 
     #[test]
@@ -851,14 +867,14 @@ mod tests {
     }
 
     #[test]
-    fn non_rejected_status_with_reason_fails_business_rule() {
+    fn non_rejected_status_with_reason_is_auto_repaired() {
         let mut json = valid_json();
         json["hypotheses"][0]["status"] = json!("active");
         json["hypotheses"][0]["rejection_reason"] = json!("some reason");
-        let result = make().validate_and_normalize(&make_input(json));
+        let out = make().validate_and_normalize(&make_input(json)).unwrap();
         assert!(matches!(
-            result,
-            Err(ResponseValidationAndNormalizationError::BusinessRuleViolation(_))
+            out.response.hypotheses[0].status,
+            HypothesisStatus::Active
         ));
     }
 

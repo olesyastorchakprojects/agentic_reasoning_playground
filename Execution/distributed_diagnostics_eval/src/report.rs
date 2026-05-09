@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use crate::manifest::EvalRunManifest;
 use crate::storage::{EvalIterationSummaryRow, EvalRunSummaryRow, JudgeLlmCallRow};
-use crate::suites::JudgeSuiteCatalog;
+use crate::suites::{JudgeSuiteCatalog, SuiteApplicability};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReportError {
@@ -38,6 +38,10 @@ const SUITE_CODES: &[(&str, &str)] = &[
     ("FA3", "final_hypothesis_source_alignment"),
     ("FA4", "final_alternative_context_handling"),
     ("FA5", "final_result_interpretation_usefulness"),
+    ("CU1", "continuation_hypothesis_update_discipline"),
+    ("CU2", "continuation_problem_understanding_update"),
+    ("CU3", "continuation_next_check_progression"),
+    ("CU4", "continuation_observation_resolution_context_recovery"),
 ];
 
 fn suite_code(name: &str) -> &'static str {
@@ -47,7 +51,8 @@ fn suite_code(name: &str) -> &'static str {
 fn code_legend() -> String {
     "> QS1 = query_structuring_field_boundary_correctness ; QS2 = query_structuring_grounding_conservatism\n\
      > EP1 = evidence_pack_role_fit ; EP2 = evidence_pack_sufficiency\n\
-     > FA1 = final_no_root_cause_claim ; FA2 = final_first_check_discriminates ; FA3 = final_hypothesis_source_alignment ; FA4 = final_alternative_context_handling ; FA5 = final_result_interpretation_usefulness\n".to_string()
+     > FA1 = final_no_root_cause_claim ; FA2 = final_first_check_discriminates ; FA3 = final_hypothesis_source_alignment ; FA4 = final_alternative_context_handling ; FA5 = final_result_interpretation_usefulness\n\
+     > CU1 = continuation_hypothesis_update_discipline ; CU2 = continuation_problem_understanding_update ; CU3 = continuation_next_check_progression ; CU4 = continuation_observation_resolution_context_recovery\n".to_string()
 }
 
 fn suite_score_for_name(r: &EvalIterationSummaryRow, name: &str) -> i16 {
@@ -76,6 +81,41 @@ fn render_quality_loss_section(
     let n = iteration_rows.len();
     let denom = if n > 0 { n as f64 } else { 1.0 };
     let unusable = iteration_rows.iter().filter(|r| !r.usable_first_response).count();
+
+    let cont_rows: Vec<&EvalIterationSummaryRow> = iteration_rows.iter()
+        .filter(|r| r.iteration_kind == "continuation")
+        .collect();
+    let has_cont = !cont_rows.is_empty();
+
+    // Continuation aggregate signals
+    let cont_usable_rate = iter_opt_frac(&cont_rows, |r| r.usable_continuation_response);
+    let cont_update_judge = {
+        let vals: Vec<f64> = cont_rows.iter().filter_map(|r| {
+            r.continuation_hypothesis_update_discipline_score
+                .zip(r.continuation_problem_understanding_update_score)
+                .zip(r.continuation_next_check_progression_score)
+                .map(|((c1, c2), c3)| (c1 as f64 + c2 as f64 + c3 as f64) / 3.0)
+        }).collect();
+        if vals.is_empty() { None } else { Some(vals.iter().sum::<f64>() / vals.len() as f64) }
+    };
+    let cont_input_judge = iter_opt_score(&cont_rows, |r| r.continuation_observation_resolution_context_recovery_score);
+    let cont_no_hard_fail = iter_opt_frac(&cont_rows, |r| r.continuation_update_no_hard_fail);
+    let cont_update_strict = {
+        let applicable: Vec<bool> = cont_rows.iter().filter_map(|r| {
+            r.continuation_hypothesis_update_discipline_score
+                .zip(r.continuation_problem_understanding_update_score)
+                .zip(r.continuation_next_check_progression_score)
+                .map(|((c1, c2), c3)| c1 == 2 && c2 == 2 && c3 == 2)
+        }).collect();
+        if applicable.is_empty() { None }
+        else { Some(applicable.iter().filter(|&&v| v).count() as f64 / applicable.len() as f64) }
+    };
+
+    let cont_status = match (cont_usable_rate, cont_update_judge) {
+        (Some(ucr), Some(cujs)) if ucr >= 1.0 && cujs >= 1.5 => "strong",
+        (Some(ucr), _) if ucr >= 0.5 && cont_no_hard_fail.unwrap_or(0.0) >= 0.5 => "mixed",
+        _ => "weak",
+    };
 
     // Composite scores (0-1)
     let qs_score = (run_summary.query_structuring_judge_score / 2.0
@@ -109,8 +149,13 @@ fn render_quality_loss_section(
         if run_summary.runtime_qs_core_success_rate < 0.8 {
             parts.push(format!("runtime core success {:.0}%", run_summary.runtime_qs_core_success_rate * 100.0));
         }
-        if parts.is_empty() { "structured queries are well-formed and grounded".to_string() }
-        else { parts.join("; ") }
+        if parts.is_empty() {
+            "structured queries are well-formed and grounded".to_string()
+        } else if gate_fails > 0 && run_summary.runtime_qs_core_success_rate == 0.0 {
+            format!("query structuring was the earliest semantic failure point: field-boundary gate failed in {} run(s) and runtime core success was 0%", gate_fails)
+        } else {
+            parts.join("; ")
+        }
     };
     out.push_str(&format!(
         "| query structuring | judge {:.2}, no-hard-fail {:.0}%, runtime core {:.0}% | {} | {} |\n",
@@ -123,11 +168,18 @@ fn render_quality_loss_section(
     // Retrieval
     let rt_interp = if rt_score >= 0.9 {
         "expected evidence found in all runs across all targets".to_string()
+    } else if run_summary.runtime_retrieval_all_strict_recall_success_rate == 0.0
+           && run_summary.runtime_retrieval_all_soft_recall_success_rate == 0.0 {
+        format!("both recall and ranking were weak (nDCG {:.2})",
+            run_summary.runtime_retrieval_mean_ndcg)
     } else if run_summary.runtime_retrieval_zero_hit_rate > 0.0 {
         format!("zero-hit rate {:.0}% — some retrieval calls returned nothing",
             run_summary.runtime_retrieval_zero_hit_rate * 100.0)
+    } else if run_summary.runtime_retrieval_all_strict_recall_success_rate > 0.0 {
+        format!("recall was present, but ranking quality remained weak (nDCG {:.2})",
+            run_summary.runtime_retrieval_mean_ndcg)
     } else {
-        format!("recall strong but ranking quality below threshold (nDCG {:.2})",
+        format!("both recall and ranking were weak (nDCG {:.2})",
             run_summary.runtime_retrieval_mean_ndcg)
     };
     out.push_str(&format!(
@@ -156,7 +208,7 @@ fn render_quality_loss_section(
         quality_status(ep_score), ep_interp
     ));
 
-    // Final answer
+    // Final answer (must come before continuation stage in table but we build interp first)
     let fa_interp = {
         let fa1_fails = iteration_rows.iter().filter(|r| r.final_no_root_cause_claim_score == 0).count();
         let fa2_fails = iteration_rows.iter().filter(|r| r.final_first_check_discriminates_score == 0).count();
@@ -173,12 +225,48 @@ fn render_quality_loss_section(
         } else { parts.join("; ") }
     };
     out.push_str(&format!(
-        "| final answer | usable {:.0}%, judge {:.2}, no-hard-fail {:.0}% | {} | {} |\n\n",
+        "| final answer | usable {:.0}%, judge {:.2}, no-hard-fail {:.0}% | {} | {} |\n",
         run_summary.usable_first_response_rate * 100.0,
         run_summary.final_answer_judge_score,
         run_summary.final_answer_no_hard_fail_rate * 100.0,
         quality_status(fa_score), fa_interp
     ));
+
+    if has_cont {
+        let cont_interp = match cont_status {
+            "strong" => "continuation preserved diagnostic quality after the new observation".to_string(),
+            "mixed" => {
+                let mut parts = vec![];
+                if cont_usable_rate.unwrap_or(0.0) < 1.0 {
+                    parts.push(format!("usable rate {:.0}%", cont_usable_rate.unwrap_or(0.0) * 100.0));
+                }
+                if cont_no_hard_fail.unwrap_or(0.0) < 1.0 {
+                    parts.push(format!("no-hard-fail {:.0}%", cont_no_hard_fail.unwrap_or(0.0) * 100.0));
+                }
+                if parts.is_empty() { "some continuation iterations had quality issues".to_string() }
+                else { format!("partial degradation: {}", parts.join(", ")) }
+            }
+            _ => {
+                let cu4_fails = cont_rows.iter().filter(|r| r.continuation_observation_resolution_context_recovery_score == Some(0)).count();
+                let cu1_fails = cont_rows.iter().filter(|r| r.continuation_hypothesis_update_discipline_score == Some(0)).count();
+                if cu4_fails > 0 { format!("{} hard fail(s) on input reconstruction (CU4=0)", cu4_fails) }
+                else if cu1_fails > 0 { format!("{} hard fail(s) on hypothesis update discipline (CU1=0)", cu1_fails) }
+                else { "continuation quality was weak".to_string() }
+            }
+        };
+        let cont_signals = format!(
+            "usable cont {:.0}%, update score {}, input score {}, no-hard-fail {:.0}%",
+            cont_usable_rate.unwrap_or(0.0) * 100.0,
+            fmt_opt(cont_update_judge, 2),
+            fmt_opt(cont_input_judge, 2),
+            cont_no_hard_fail.unwrap_or(0.0) * 100.0,
+        );
+        out.push_str(&format!(
+            "| continuation | {} | {} | {} |\n",
+            cont_signals, cont_status, cont_interp
+        ));
+    }
+    out.push('\n');
 
     // ── Failure Path ──────────────────────────────────────────────────────────
     out.push_str("### Failure Path\n\n");
@@ -229,6 +317,42 @@ fn render_quality_loss_section(
             if fa5_f > 0 { out.push_str(&format!("  - {} × FA5=0: result interpretation missing or unusable\n", fa5_f)); }
         }
     }
+    if has_cont {
+        out.push('\n');
+        let initial_usable = run_summary.usable_first_response_rate;
+        let cont_usable = cont_usable_rate.unwrap_or(0.0);
+        let trajectory = if cont_usable < initial_usable - 0.001 { "degraded" } else { "remained stable" };
+
+        match cont_status {
+            "strong" => {
+                out.push_str("Continuation behavior was stable:\n\n");
+                out.push_str(&format!("- usable continuation rate: {:.0}%\n", cont_usable * 100.0));
+                out.push_str(&format!("- continuation update strict pass rate: {:.0}%\n", cont_update_strict.unwrap_or(0.0) * 100.0));
+                out.push_str(&format!("- continuation input strict pass rate: {:.0}%\n", {
+                    let s: Vec<bool> = cont_rows.iter().filter_map(|r| r.continuation_observation_resolution_context_recovery_score.map(|s| s == 2)).collect();
+                    if s.is_empty() { 0.0 } else { s.iter().filter(|&&v| v).count() as f64 / s.len() as f64 * 100.0 }
+                }));
+                out.push_str(&format!("\nNo degradation was observed between initial and continuation iterations.\n"));
+            }
+            _ => {
+                out.push_str("Continuation was the main observed degradation point:\n\n");
+                let cu4_fails = cont_rows.iter().filter(|r| r.continuation_observation_resolution_context_recovery_score == Some(0)).count();
+                let cu1_fails = cont_rows.iter().filter(|r| r.continuation_hypothesis_update_discipline_score == Some(0)).count();
+                let cu2_fails = cont_rows.iter().filter(|r| r.continuation_problem_understanding_update_score == Some(0)).count();
+                let cu3_fails = cont_rows.iter().filter(|r| r.continuation_next_check_progression_score == Some(0)).count();
+                if cu4_fails > 0 { out.push_str(&format!("- {} continuation input reconstruction hard fail(s) (CU4=0)\n", cu4_fails)); }
+                if cu1_fails > 0 { out.push_str(&format!("- {} hypothesis update discipline hard fail(s) (CU1=0)\n", cu1_fails)); }
+                if cu2_fails > 0 { out.push_str(&format!("- {} problem understanding update hard fail(s) (CU2=0)\n", cu2_fails)); }
+                if cu3_fails > 0 { out.push_str(&format!("- {} next check progression hard fail(s) (CU3=0)\n", cu3_fails)); }
+                let closing = if trajectory == "degraded" {
+                    "Quality degraded between initial and continuation iterations."
+                } else {
+                    "Quality remained stable between initial and continuation iterations."
+                };
+                out.push_str(&format!("\n{}\n", closing));
+            }
+        }
+    }
     out.push('\n');
 
     // ── Conclusion ────────────────────────────────────────────────────────────
@@ -246,8 +370,10 @@ fn render_quality_loss_section(
             .collect();
         let others = if other_strong.is_empty() {
             String::new()
+        } else if other_strong.len() == 1 {
+            format!(" {} quality was strong.", other_strong[0])
         } else {
-            format!(" {} were strong.", other_strong.join(", "))
+            format!(" {} quality was strong.", other_strong.join(" and "))
         };
         format!("Main observed weakness: **{}** (composite {:.2}).{}",
             name, score, others)
@@ -264,6 +390,20 @@ fn score_dist(rows: &[EvalIterationSummaryRow], get: impl Fn(&EvalIterationSumma
     let s1 = rows.iter().filter(|r| get(r) == 1).count();
     let s2 = rows.iter().filter(|r| get(r) == 2).count();
     (s0, s1, s2)
+}
+
+fn score_dist_opt(rows: &[EvalIterationSummaryRow], get: impl Fn(&EvalIterationSummaryRow) -> Option<i16>) -> (usize, usize, usize) {
+    let s0 = rows.iter().filter(|r| get(r) == Some(0)).count();
+    let s1 = rows.iter().filter(|r| get(r) == Some(1)).count();
+    let s2 = rows.iter().filter(|r| get(r) == Some(2)).count();
+    (s0, s1, s2)
+}
+
+fn gate_fail_opt(rows: &[EvalIterationSummaryRow], get: impl Fn(&EvalIterationSummaryRow) -> Option<i16>) -> (usize, f64) {
+    let applicable: Vec<i16> = rows.iter().filter_map(|r| get(r)).collect();
+    let fail = applicable.iter().filter(|&&s| s == 0).count();
+    let rate = if applicable.is_empty() { 0.0 } else { fail as f64 / applicable.len() as f64 };
+    (fail, rate)
 }
 
 fn gate_fail(rows: &[EvalIterationSummaryRow], get: impl Fn(&EvalIterationSummaryRow) -> bool) -> (usize, f64) {
@@ -308,6 +448,435 @@ fn avg_qs_non_vocab(rows: &[EvalIterationSummaryRow], metric: &str) -> Option<f6
     if vals.is_empty() { None } else { Some(vals.iter().sum::<f64>() / vals.len() as f64) }
 }
 
+fn iter_frac<F: Fn(&EvalIterationSummaryRow) -> bool>(
+    rows: &[&EvalIterationSummaryRow], f: F,
+) -> Option<f64> {
+    if rows.is_empty() { return None; }
+    Some(rows.iter().filter(|r| f(r)).count() as f64 / rows.len() as f64)
+}
+
+fn iter_mean<F: Fn(&EvalIterationSummaryRow) -> f64>(
+    rows: &[&EvalIterationSummaryRow], f: F,
+) -> Option<f64> {
+    if rows.is_empty() { return None; }
+    Some(rows.iter().map(|r| f(r)).sum::<f64>() / rows.len() as f64)
+}
+
+fn iter_opt_score<F: Fn(&EvalIterationSummaryRow) -> Option<i16>>(
+    rows: &[&EvalIterationSummaryRow], f: F,
+) -> Option<f64> {
+    let vals: Vec<f64> = rows.iter().filter_map(|r| f(r).map(|s| s as f64)).collect();
+    if vals.is_empty() { None } else { Some(vals.iter().sum::<f64>() / vals.len() as f64) }
+}
+
+fn iter_opt_frac<F: Fn(&EvalIterationSummaryRow) -> Option<bool>>(
+    rows: &[&EvalIterationSummaryRow], f: F,
+) -> Option<f64> {
+    let applicable: Vec<bool> = rows.iter().filter_map(|r| f(r)).collect();
+    if applicable.is_empty() { None }
+    else { Some(applicable.iter().filter(|&&v| v).count() as f64 / applicable.len() as f64) }
+}
+
+fn judge_metrics_table(initial: &[&EvalIterationSummaryRow], cont: &[&EvalIterationSummaryRow]) -> String {
+    let all: Vec<&EvalIterationSummaryRow> = initial.iter().chain(cont.iter()).copied().collect();
+    let mut out = String::new();
+
+    out.push_str("| metric | initial iter-s | continuation iter-s | total | formula |\n|---|---:|---:|---:|---|\n");
+
+    // Initial-only: usable_first_response is a first-response metric, not meaningful for continuations
+    out.push_str(&format!("| usable_first_response_rate | {} | n/a | {} | frac(FA1≥1 ∧ FA2≥1 ∧ FA5≥1) |\n",
+        fmt_opt(iter_frac(initial, |r| r.usable_first_response), 4),
+        fmt_opt(iter_frac(initial, |r| r.usable_first_response), 4)));
+
+    // Initial-only
+    out.push_str(&format!("| query_structuring_judge_score | {} | n/a | {} | mean of avg(QS1, QS2) over initial iter-s |\n",
+        fmt_opt(iter_mean(initial, |r| r.query_structuring_judge_score), 4),
+        fmt_opt(iter_mean(initial, |r| r.query_structuring_judge_score), 4)));
+
+    // Initial-only
+    out.push_str(&format!("| evidence_pack_judge_score | {} | n/a | {} | mean of avg(EP1, EP2) over initial iter-s |\n",
+        fmt_opt(iter_mean(initial, |r| r.evidence_pack_judge_score), 4),
+        fmt_opt(iter_mean(initial, |r| r.evidence_pack_judge_score), 4)));
+
+    // Shared
+    out.push_str(&format!("| final_answer_judge_score | {} | {} | {} | mean of avg(FA1, FA2, FA3, FA4, FA5) |\n",
+        fmt_opt(iter_mean(initial, |r| r.final_answer_judge_score), 4),
+        fmt_opt(iter_mean(cont, |r| r.final_answer_judge_score), 4),
+        fmt_opt(iter_mean(&all, |r| r.final_answer_judge_score), 4)));
+
+    // Initial-only
+    out.push_str(&format!("| query_structuring_no_hard_fail_rate | {} | n/a | {} | frac(QS1>0 ∧ QS2>0) |\n",
+        fmt_opt(iter_frac(initial, |r| r.query_structuring_no_hard_fail), 4),
+        fmt_opt(iter_frac(initial, |r| r.query_structuring_no_hard_fail), 4)));
+
+    // Initial-only
+    out.push_str(&format!("| evidence_pack_no_hard_fail_rate | {} | n/a | {} | frac(EP1>0 ∧ EP2>0) |\n",
+        fmt_opt(iter_frac(initial, |r| r.evidence_pack_no_hard_fail), 4),
+        fmt_opt(iter_frac(initial, |r| r.evidence_pack_no_hard_fail), 4)));
+
+    // Shared
+    out.push_str(&format!("| final_answer_no_hard_fail_rate | {} | {} | {} | frac(FA1>0 ∧ FA2>0 ∧ FA4>0 ∧ FA5>0) |\n",
+        fmt_opt(iter_frac(initial, |r| r.final_answer_no_hard_fail), 4),
+        fmt_opt(iter_frac(cont, |r| r.final_answer_no_hard_fail), 4),
+        fmt_opt(iter_frac(&all, |r| r.final_answer_no_hard_fail), 4)));
+
+    // Shared
+    out.push_str(&format!("| diagnostic_move_hard_fail_rate | {} | {} | {} | 1 − final_answer_no_hard_fail_rate |\n",
+        fmt_opt(iter_frac(initial, |r| !r.final_answer_no_hard_fail), 4),
+        fmt_opt(iter_frac(cont, |r| !r.final_answer_no_hard_fail), 4),
+        fmt_opt(iter_frac(&all, |r| !r.final_answer_no_hard_fail), 4)));
+
+    // Initial-only
+    out.push_str(&format!("| query_structuring_strict_pass_rate | {} | n/a | {} | frac(QS1=2 ∧ QS2=2) |\n",
+        fmt_opt(iter_frac(initial, |r| {
+            r.query_structuring_field_boundary_correctness_score == 2
+            && r.query_structuring_grounding_conservatism_score == 2
+        }), 4),
+        fmt_opt(iter_frac(initial, |r| {
+            r.query_structuring_field_boundary_correctness_score == 2
+            && r.query_structuring_grounding_conservatism_score == 2
+        }), 4)));
+
+    // Initial-only
+    out.push_str(&format!("| evidence_pack_strict_pass_rate | {} | n/a | {} | frac(EP1=2 ∧ EP2=2) |\n",
+        fmt_opt(iter_frac(initial, |r| {
+            r.evidence_pack_role_fit_score == 2 && r.evidence_pack_sufficiency_score == 2
+        }), 4),
+        fmt_opt(iter_frac(initial, |r| {
+            r.evidence_pack_role_fit_score == 2 && r.evidence_pack_sufficiency_score == 2
+        }), 4)));
+
+    let fa_strict = |r: &EvalIterationSummaryRow| {
+        r.final_no_root_cause_claim_score == 2
+        && r.final_first_check_discriminates_score == 2
+        && r.final_hypothesis_source_alignment_score == 2
+        && r.final_alternative_context_handling_score == 2
+        && r.final_result_interpretation_usefulness_score == 2
+    };
+    // Shared
+    out.push_str(&format!("| final_answer_strict_pass_rate | {} | {} | {} | frac(FA1=2 ∧ FA2=2 ∧ FA3=2 ∧ FA4=2 ∧ FA5=2) |\n",
+        fmt_opt(iter_frac(initial, fa_strict), 4),
+        fmt_opt(iter_frac(cont, fa_strict), 4),
+        fmt_opt(iter_frac(&all, fa_strict), 4)));
+
+    // Continuation-only
+    out.push_str(&format!("| continuation_hypothesis_update_discipline_score | n/a | {} | {} | mean(CU1) over continuation iter-s |\n",
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_hypothesis_update_discipline_score), 4),
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_hypothesis_update_discipline_score), 4)));
+
+    out.push_str(&format!("| continuation_problem_understanding_update_score | n/a | {} | {} | mean(CU2) over continuation iter-s |\n",
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_problem_understanding_update_score), 4),
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_problem_understanding_update_score), 4)));
+
+    out.push_str(&format!("| continuation_next_check_progression_score | n/a | {} | {} | mean(CU3) over continuation iter-s |\n",
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_next_check_progression_score), 4),
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_next_check_progression_score), 4)));
+
+    out.push_str(&format!("| continuation_observation_resolution_context_recovery_score | n/a | {} | {} | mean(CU4) over continuation iter-s |\n",
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_observation_resolution_context_recovery_score), 4),
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_observation_resolution_context_recovery_score), 4)));
+
+    out.push_str(&format!("| usable_continuation_response_rate | n/a | {} | {} | frac(CU1≥1 ∧ CU2≥1 ∧ CU3≥1 ∧ FA1≥1 ∧ FA2≥1 ∧ FA5≥1) |\n",
+        fmt_opt(iter_opt_frac(cont, |r| r.usable_continuation_response), 4),
+        fmt_opt(iter_opt_frac(cont, |r| r.usable_continuation_response), 4)));
+
+    let cu_update_judge = |rows: &[&EvalIterationSummaryRow]| -> Option<f64> {
+        let vals: Vec<f64> = rows.iter().filter_map(|r| {
+            r.continuation_hypothesis_update_discipline_score
+                .zip(r.continuation_problem_understanding_update_score)
+                .zip(r.continuation_next_check_progression_score)
+                .map(|((c1, c2), c3)| (c1 as f64 + c2 as f64 + c3 as f64) / 3.0)
+        }).collect();
+        if vals.is_empty() { None } else { Some(vals.iter().sum::<f64>() / vals.len() as f64) }
+    };
+    out.push_str(&format!("| continuation_update_judge_score | n/a | {} | {} | mean of avg(CU1, CU2, CU3) over continuation iter-s |\n",
+        fmt_opt(cu_update_judge(cont), 4),
+        fmt_opt(cu_update_judge(cont), 4)));
+
+    out.push_str(&format!("| continuation_update_no_hard_fail_rate | n/a | {} | {} | frac(CU1>0 ∧ CU2>0 ∧ CU3>0) |\n",
+        fmt_opt(iter_opt_frac(cont, |r| r.continuation_update_no_hard_fail), 4),
+        fmt_opt(iter_opt_frac(cont, |r| r.continuation_update_no_hard_fail), 4)));
+
+    let cu_update_strict_pass = |rows: &[&EvalIterationSummaryRow]| -> Option<f64> {
+        let applicable: Vec<bool> = rows.iter().filter_map(|r| {
+            r.continuation_hypothesis_update_discipline_score
+                .zip(r.continuation_problem_understanding_update_score)
+                .zip(r.continuation_next_check_progression_score)
+                .map(|((c1, c2), c3)| c1 == 2 && c2 == 2 && c3 == 2)
+        }).collect();
+        if applicable.is_empty() { None }
+        else { Some(applicable.iter().filter(|&&v| v).count() as f64 / applicable.len() as f64) }
+    };
+    out.push_str(&format!("| continuation_update_strict_pass_rate | n/a | {} | {} | frac(CU1=2 ∧ CU2=2 ∧ CU3=2) |\n",
+        fmt_opt(cu_update_strict_pass(cont), 4),
+        fmt_opt(cu_update_strict_pass(cont), 4)));
+
+    out.push_str(&format!("| continuation_input_judge_score | n/a | {} | {} | mean(CU4) over continuation iter-s |\n",
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_observation_resolution_context_recovery_score), 4),
+        fmt_opt(iter_opt_score(cont, |r| r.continuation_observation_resolution_context_recovery_score), 4)));
+
+    out.push_str(&format!("| continuation_input_no_hard_fail_rate | n/a | {} | {} | frac(CU4>0) |\n",
+        fmt_opt(iter_opt_frac(cont, |r| r.continuation_input_no_hard_fail), 4),
+        fmt_opt(iter_opt_frac(cont, |r| r.continuation_input_no_hard_fail), 4)));
+
+    let cu_input_strict_pass = |rows: &[&EvalIterationSummaryRow]| -> Option<f64> {
+        let applicable: Vec<bool> = rows.iter()
+            .filter_map(|r| r.continuation_observation_resolution_context_recovery_score.map(|s| s == 2))
+            .collect();
+        if applicable.is_empty() { None }
+        else { Some(applicable.iter().filter(|&&v| v).count() as f64 / applicable.len() as f64) }
+    };
+    out.push_str(&format!("| continuation_input_strict_pass_rate | n/a | {} | {} | frac(CU4=2) |\n",
+        fmt_opt(cu_input_strict_pass(cont), 4),
+        fmt_opt(cu_input_strict_pass(cont), 4)));
+
+    out
+}
+
+fn render_judge_aggregated_metrics(
+    iteration_rows: &[EvalIterationSummaryRow],
+) -> String {
+    let initial: Vec<&EvalIterationSummaryRow> = iteration_rows.iter()
+        .filter(|r| r.iteration_kind == "initial")
+        .collect();
+    let cont: Vec<&EvalIterationSummaryRow> = iteration_rows.iter()
+        .filter(|r| r.iteration_kind == "continuation")
+        .collect();
+
+    let mut out = String::new();
+    out.push_str("## Judge-Based Aggregated Metrics\n\n");
+    out.push_str("> initial iter-s = all initial iterations across runs; continuation iter-s = all continuation iterations across runs; total ignores n/a\n\n");
+    out.push_str(&judge_metrics_table(&initial, &cont));
+    out.push('\n');
+    out.push_str(&code_legend());
+    out.push('\n');
+    out
+}
+
+fn render_judge_per_run_appendix(
+    iteration_rows: &[EvalIterationSummaryRow],
+    appendix_label: &str,
+) -> String {
+    let mut by_run: BTreeMap<String, Vec<&EvalIterationSummaryRow>> = BTreeMap::new();
+    for row in iteration_rows {
+        by_run.entry(row.key.runtime_run_id.to_string()).or_default().push(row);
+    }
+
+    let mut out = String::new();
+    out.push_str(&format!("## {}: Judge Metrics Per Run\n\n", appendix_label));
+
+    for (run_id, rows) in &by_run {
+        // Sort: initial first, then continuations by iteration_id for stable order
+        let mut iters: Vec<&EvalIterationSummaryRow> = rows.to_vec();
+        iters.sort_by(|a, b| {
+            let ak = if a.iteration_kind == "initial" { 0i32 } else { 1 };
+            let bk = if b.iteration_kind == "initial" { 0i32 } else { 1 };
+            ak.cmp(&bk).then(a.key.iteration_id.cmp(&b.key.iteration_id))
+        });
+
+        let initial: Vec<&EvalIterationSummaryRow> = iters.iter().filter(|r| r.iteration_kind == "initial").copied().collect();
+        let cont: Vec<&EvalIterationSummaryRow> = iters.iter().filter(|r| r.iteration_kind == "continuation").copied().collect();
+        let all: Vec<&EvalIterationSummaryRow> = iters.iter().copied().collect();
+
+        out.push_str(&format!("### Run `{}`\n\n", run_id));
+
+        // Header: one column per iteration (1-based) + total + formula
+        let mut header = "| metric".to_string();
+        let mut sep = "|---".to_string();
+        for i in 1..=iters.len() {
+            header.push_str(&format!(" | iter_{}", i));
+            sep.push_str(" |---:");
+        }
+        header.push_str(" | total | formula |");
+        sep.push_str(" |---:|---|");
+        out.push_str(&header);
+        out.push_str("\n");
+        out.push_str(&sep);
+        out.push_str("\n");
+
+        let ic = |r: &&EvalIterationSummaryRow| r.iteration_kind == "continuation";
+        let b = |v: bool| if v { "1".to_string() } else { "0".to_string() };
+        let oi16 = |v: Option<i16>| v.map(|s| s.to_string()).unwrap_or_else(|| "n/a".to_string());
+        let obool = |v: Option<bool>| match v { Some(true) => "1".to_string(), Some(false) => "0".to_string(), None => "n/a".to_string() };
+
+        macro_rules! mrow {
+            ($name:expr, $cells:expr, $total:expr, $formula:expr) => {{
+                let mut line = format!("| {}", $name);
+                for c in $cells { line.push_str(&format!(" | {}", c)); }
+                line.push_str(&format!(" | {} | {} |\n", $total, $formula));
+                out.push_str(&line);
+            }};
+        }
+
+        // Shared
+        mrow!("usable_first_response_rate",
+            iters.iter().map(|r| b(r.usable_first_response)).collect::<Vec<_>>(),
+            fmt_opt(iter_frac(&all, |r| r.usable_first_response), 4),
+            "frac(FA1≥1 ∧ FA2≥1 ∧ FA5≥1)");
+        // Initial-only
+        mrow!("query_structuring_judge_score",
+            iters.iter().map(|r| if ic(&r) { "n/a".to_string() } else { format!("{:.4}", r.query_structuring_judge_score) }).collect::<Vec<_>>(),
+            fmt_opt(iter_mean(&initial, |r| r.query_structuring_judge_score), 4),
+            "mean of avg(QS1, QS2) over initial iter-s");
+        mrow!("evidence_pack_judge_score",
+            iters.iter().map(|r| if ic(&r) { "n/a".to_string() } else { format!("{:.4}", r.evidence_pack_judge_score) }).collect::<Vec<_>>(),
+            fmt_opt(iter_mean(&initial, |r| r.evidence_pack_judge_score), 4),
+            "mean of avg(EP1, EP2) over initial iter-s");
+        // Shared
+        mrow!("final_answer_judge_score",
+            iters.iter().map(|r| format!("{:.4}", r.final_answer_judge_score)).collect::<Vec<_>>(),
+            fmt_opt(iter_mean(&all, |r| r.final_answer_judge_score), 4),
+            "mean of avg(FA1, FA2, FA3, FA4, FA5)");
+        // Initial-only
+        mrow!("query_structuring_no_hard_fail_rate",
+            iters.iter().map(|r| if ic(&r) { "n/a".to_string() } else { b(r.query_structuring_no_hard_fail) }).collect::<Vec<_>>(),
+            fmt_opt(iter_frac(&initial, |r| r.query_structuring_no_hard_fail), 4),
+            "frac(QS1>0 ∧ QS2>0)");
+        mrow!("evidence_pack_no_hard_fail_rate",
+            iters.iter().map(|r| if ic(&r) { "n/a".to_string() } else { b(r.evidence_pack_no_hard_fail) }).collect::<Vec<_>>(),
+            fmt_opt(iter_frac(&initial, |r| r.evidence_pack_no_hard_fail), 4),
+            "frac(EP1>0 ∧ EP2>0)");
+        // Shared
+        mrow!("final_answer_no_hard_fail_rate",
+            iters.iter().map(|r| b(r.final_answer_no_hard_fail)).collect::<Vec<_>>(),
+            fmt_opt(iter_frac(&all, |r| r.final_answer_no_hard_fail), 4),
+            "frac(FA1>0 ∧ FA2>0 ∧ FA4>0 ∧ FA5>0)");
+        mrow!("diagnostic_move_hard_fail_rate",
+            iters.iter().map(|r| b(!r.final_answer_no_hard_fail)).collect::<Vec<_>>(),
+            fmt_opt(iter_frac(&all, |r| !r.final_answer_no_hard_fail), 4),
+            "1 − final_answer_no_hard_fail_rate");
+        // Initial-only
+        mrow!("query_structuring_strict_pass_rate",
+            iters.iter().map(|r| if ic(&r) { "n/a".to_string() } else {
+                b(r.query_structuring_field_boundary_correctness_score == 2
+                  && r.query_structuring_grounding_conservatism_score == 2)
+            }).collect::<Vec<_>>(),
+            fmt_opt(iter_frac(&initial, |r| {
+                r.query_structuring_field_boundary_correctness_score == 2
+                && r.query_structuring_grounding_conservatism_score == 2
+            }), 4),
+            "frac(QS1=2 ∧ QS2=2)");
+        mrow!("evidence_pack_strict_pass_rate",
+            iters.iter().map(|r| if ic(&r) { "n/a".to_string() } else {
+                b(r.evidence_pack_role_fit_score == 2 && r.evidence_pack_sufficiency_score == 2)
+            }).collect::<Vec<_>>(),
+            fmt_opt(iter_frac(&initial, |r| {
+                r.evidence_pack_role_fit_score == 2 && r.evidence_pack_sufficiency_score == 2
+            }), 4),
+            "frac(EP1=2 ∧ EP2=2)");
+        // Shared
+        let fa_sp = |r: &EvalIterationSummaryRow| {
+            r.final_no_root_cause_claim_score == 2
+            && r.final_first_check_discriminates_score == 2
+            && r.final_hypothesis_source_alignment_score == 2
+            && r.final_alternative_context_handling_score == 2
+            && r.final_result_interpretation_usefulness_score == 2
+        };
+        mrow!("final_answer_strict_pass_rate",
+            iters.iter().map(|r| b(fa_sp(r))).collect::<Vec<_>>(),
+            fmt_opt(iter_frac(&all, fa_sp), 4),
+            "frac(FA1=2 ∧ FA2=2 ∧ FA3=2 ∧ FA4=2 ∧ FA5=2)");
+        // Continuation-only
+        mrow!("continuation_hypothesis_update_discipline_score",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else { oi16(r.continuation_hypothesis_update_discipline_score) }).collect::<Vec<_>>(),
+            fmt_opt(iter_opt_score(&cont, |r| r.continuation_hypothesis_update_discipline_score), 4),
+            "mean(CU1) over continuation iter-s");
+        mrow!("continuation_problem_understanding_update_score",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else { oi16(r.continuation_problem_understanding_update_score) }).collect::<Vec<_>>(),
+            fmt_opt(iter_opt_score(&cont, |r| r.continuation_problem_understanding_update_score), 4),
+            "mean(CU2) over continuation iter-s");
+        mrow!("continuation_next_check_progression_score",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else { oi16(r.continuation_next_check_progression_score) }).collect::<Vec<_>>(),
+            fmt_opt(iter_opt_score(&cont, |r| r.continuation_next_check_progression_score), 4),
+            "mean(CU3) over continuation iter-s");
+        mrow!("continuation_observation_resolution_context_recovery_score",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else { oi16(r.continuation_observation_resolution_context_recovery_score) }).collect::<Vec<_>>(),
+            fmt_opt(iter_opt_score(&cont, |r| r.continuation_observation_resolution_context_recovery_score), 4),
+            "mean(CU4) over continuation iter-s");
+        mrow!("usable_continuation_response_rate",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else { obool(r.usable_continuation_response) }).collect::<Vec<_>>(),
+            fmt_opt(iter_opt_frac(&cont, |r| r.usable_continuation_response), 4),
+            "frac(CU1≥1 ∧ CU2≥1 ∧ CU3≥1 ∧ FA1≥1 ∧ FA2≥1 ∧ FA5≥1)");
+        let cu_upd_judge = |rows: &[&EvalIterationSummaryRow]| -> Option<f64> {
+            let vals: Vec<f64> = rows.iter().filter_map(|r| {
+                r.continuation_hypothesis_update_discipline_score
+                    .zip(r.continuation_problem_understanding_update_score)
+                    .zip(r.continuation_next_check_progression_score)
+                    .map(|((c1, c2), c3)| (c1 as f64 + c2 as f64 + c3 as f64) / 3.0)
+            }).collect();
+            if vals.is_empty() { None } else { Some(vals.iter().sum::<f64>() / vals.len() as f64) }
+        };
+        mrow!("continuation_update_judge_score",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else {
+                match r.continuation_hypothesis_update_discipline_score
+                    .zip(r.continuation_problem_understanding_update_score)
+                    .zip(r.continuation_next_check_progression_score)
+                {
+                    Some(((c1, c2), c3)) => format!("{:.4}", (c1 as f64 + c2 as f64 + c3 as f64) / 3.0),
+                    None => "n/a".to_string(),
+                }
+            }).collect::<Vec<_>>(),
+            fmt_opt(cu_upd_judge(&cont), 4),
+            "mean of avg(CU1, CU2, CU3) over continuation iter-s");
+        mrow!("continuation_update_no_hard_fail_rate",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else { obool(r.continuation_update_no_hard_fail) }).collect::<Vec<_>>(),
+            fmt_opt(iter_opt_frac(&cont, |r| r.continuation_update_no_hard_fail), 4),
+            "frac(CU1>0 ∧ CU2>0 ∧ CU3>0)");
+        let cu_upd_sp = |rows: &[&EvalIterationSummaryRow]| -> Option<f64> {
+            let applicable: Vec<bool> = rows.iter().filter_map(|r| {
+                r.continuation_hypothesis_update_discipline_score
+                    .zip(r.continuation_problem_understanding_update_score)
+                    .zip(r.continuation_next_check_progression_score)
+                    .map(|((c1, c2), c3)| c1 == 2 && c2 == 2 && c3 == 2)
+            }).collect();
+            if applicable.is_empty() { None }
+            else { Some(applicable.iter().filter(|&&v| v).count() as f64 / applicable.len() as f64) }
+        };
+        mrow!("continuation_update_strict_pass_rate",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else {
+                match r.continuation_hypothesis_update_discipline_score
+                    .zip(r.continuation_problem_understanding_update_score)
+                    .zip(r.continuation_next_check_progression_score)
+                {
+                    Some(((c1, c2), c3)) => b(c1 == 2 && c2 == 2 && c3 == 2),
+                    None => "n/a".to_string(),
+                }
+            }).collect::<Vec<_>>(),
+            fmt_opt(cu_upd_sp(&cont), 4),
+            "frac(CU1=2 ∧ CU2=2 ∧ CU3=2)");
+        mrow!("continuation_input_judge_score",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else { oi16(r.continuation_observation_resolution_context_recovery_score) }).collect::<Vec<_>>(),
+            fmt_opt(iter_opt_score(&cont, |r| r.continuation_observation_resolution_context_recovery_score), 4),
+            "mean(CU4) over continuation iter-s");
+        mrow!("continuation_input_no_hard_fail_rate",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else { obool(r.continuation_input_no_hard_fail) }).collect::<Vec<_>>(),
+            fmt_opt(iter_opt_frac(&cont, |r| r.continuation_input_no_hard_fail), 4),
+            "frac(CU4>0)");
+        let cu_inp_sp = |rows: &[&EvalIterationSummaryRow]| -> Option<f64> {
+            let applicable: Vec<bool> = rows.iter()
+                .filter_map(|r| r.continuation_observation_resolution_context_recovery_score.map(|s| s == 2))
+                .collect();
+            if applicable.is_empty() { None }
+            else { Some(applicable.iter().filter(|&&v| v).count() as f64 / applicable.len() as f64) }
+        };
+        mrow!("continuation_input_strict_pass_rate",
+            iters.iter().map(|r| if !ic(&r) { "n/a".to_string() } else {
+                match r.continuation_observation_resolution_context_recovery_score {
+                    Some(s) => b(s == 2),
+                    None => "n/a".to_string(),
+                }
+            }).collect::<Vec<_>>(),
+            fmt_opt(cu_inp_sp(&cont), 4),
+            "frac(CU4=2)");
+
+        out.push('\n');
+    }
+
+    out.push_str(&code_legend());
+    out.push('\n');
+    out
+}
+
 fn avg_rt_target(rows: &[EvalIterationSummaryRow], get_metrics: fn(&EvalIterationSummaryRow) -> Option<&serde_json::Value>, metric: &str) -> Option<f64> {
     let vals: Vec<f64> = rows.iter()
         .filter_map(|r| get_metrics(r)?.get(metric)?.as_f64())
@@ -323,6 +892,11 @@ fn render_run_report(
     catalog: &JudgeSuiteCatalog,
     enabled_suites: &[String],
 ) -> String {
+    let has_cont = iteration_rows.iter().any(|r| r.iteration_kind == "continuation");
+    let cont_rows: Vec<&EvalIterationSummaryRow> = iteration_rows.iter()
+        .filter(|r| r.iteration_kind == "continuation")
+        .collect();
+
     let mut worst_cases: Vec<&EvalIterationSummaryRow> = iteration_rows.iter().collect();
     worst_cases.sort_by(|a, b| {
         a.final_answer_judge_score
@@ -352,11 +926,17 @@ fn render_run_report(
     for suite_name in enabled_suites {
         if let Some(def) = catalog.get(suite_name) {
             let code = suite_code(suite_name);
+            let applies_to = match def.applies_to {
+                SuiteApplicability::Shared => "shared",
+                SuiteApplicability::InitialOnly => "initial only",
+                SuiteApplicability::ContinuationOnly => "continuation only",
+            };
             out.push_str(&format!("### {}\n\n", suite_name));
-            out.push_str("| code | checks | why | inputs | score |\n|---|---|---|---|---:|\n");
+            out.push_str("| code | applies to | checks | why | inputs | score |\n|---|---|---|---|---|---:|\n");
             out.push_str(&format!(
-                "| {} | {} | {} | {} | 0/1/2 |\n\n",
+                "| {} | {} | {} | {} | {} | 0/1/2 |\n\n",
                 code,
+                applies_to,
                 def.what_it_checks,
                 def.why_it_matters,
                 def.inputs_to_judge.join(", "),
@@ -381,24 +961,17 @@ fn render_run_report(
     out.push_str(&format!("| runtime_retrieval_mean_ndcg | {:.4} | Average ranking quality across retrieval targets and runs |\n", run_summary.runtime_retrieval_mean_ndcg));
     out.push_str(&format!("| runtime_retrieval_all_strict_recall_success_rate | {:.4} | Average per-run share of retrieval targets where strict expected evidence was found |\n", run_summary.runtime_retrieval_all_strict_recall_success_rate));
     out.push_str(&format!("| evidence_pack_judge_score | {:.4} | Judge-based quality of selected evidence pack |\n", run_summary.evidence_pack_judge_score));
-    out.push_str(&format!("| final_answer_judge_score | {:.4} | Judge-based quality of final diagnostic response |\n\n", run_summary.final_answer_judge_score));
+    out.push_str(&format!("| final_answer_judge_score | {:.4} | Judge-based quality of final diagnostic response |\n", run_summary.final_answer_judge_score));
+    if has_cont {
+        out.push_str(&format!("| usable_continuation_response_rate | {} | Share of continuation iterations with usable update behavior |\n", fmt_opt(run_summary.usable_continuation_response_rate, 4)));
+        out.push_str(&format!("| continuation_update_judge_score | {} | Judge-based quality of updating the diagnostic frame |\n", fmt_opt(run_summary.continuation_update_judge_score, 4)));
+        out.push_str(&format!("| continuation_input_judge_score | {} | Judge-based quality of reconstructing the new observation from context |\n", fmt_opt(run_summary.continuation_input_judge_score, 4)));
+        out.push_str(&format!("| continuation_update_strict_pass_rate | {} | Share of continuation iterations where CU1, CU2, CU3 all scored 2 |\n", fmt_opt(run_summary.continuation_update_strict_pass_rate, 4)));
+    }
+    out.push('\n');
 
     // ── Judge-Based Aggregated Metrics ────────────────────────────────────────
-    out.push_str("## Judge-Based Aggregated Metrics\n\n");
-    out.push_str("| metric | value | formula |\n|---|---:|---|\n");
-    out.push_str(&format!("| usable_first_response_rate | {:.4} | frac(FA1≥1 ∧ FA2≥1 ∧ FA5≥1) |\n", run_summary.usable_first_response_rate));
-    out.push_str(&format!("| query_structuring_judge_score | {:.4} | mean over runs of avg(QS1, QS2) |\n", run_summary.query_structuring_judge_score));
-    out.push_str(&format!("| evidence_pack_judge_score | {:.4} | mean over runs of avg(EP1, EP2) |\n", run_summary.evidence_pack_judge_score));
-    out.push_str(&format!("| final_answer_judge_score | {:.4} | mean over runs of avg(FA1, FA2, FA3, FA4, FA5) |\n", run_summary.final_answer_judge_score));
-    out.push_str(&format!("| query_structuring_no_hard_fail_rate | {:.4} | frac(QS1>0 ∧ QS2>0) |\n", run_summary.query_structuring_no_hard_fail_rate));
-    out.push_str(&format!("| evidence_pack_no_hard_fail_rate | {:.4} | frac(EP1>0 ∧ EP2>0) |\n", run_summary.evidence_pack_no_hard_fail_rate));
-    out.push_str(&format!("| final_answer_no_hard_fail_rate | {:.4} | frac(FA1>0 ∧ FA2>0 ∧ FA4>0 ∧ FA5>0) |\n", run_summary.final_answer_no_hard_fail_rate));
-    out.push_str(&format!("| diagnostic_move_hard_fail_rate | {:.4} | 1 − final_answer_no_hard_fail_rate |\n", run_summary.diagnostic_move_hard_fail_rate));
-    out.push_str(&format!("| query_structuring_strict_pass_rate | {:.4} | frac(QS1=2 ∧ QS2=2) |\n", run_summary.query_structuring_strict_pass_rate));
-    out.push_str(&format!("| evidence_pack_strict_pass_rate | {:.4} | frac(EP1=2 ∧ EP2=2) |\n", run_summary.evidence_pack_strict_pass_rate));
-    out.push_str(&format!("| final_answer_strict_pass_rate | {:.4} | frac(FA1=2 ∧ FA2=2 ∧ FA3=2 ∧ FA4=2 ∧ FA5=2) |\n\n", run_summary.final_answer_strict_pass_rate));
-    out.push_str(&code_legend());
-    out.push('\n');
+    out.push_str(&render_judge_aggregated_metrics(iteration_rows));
 
     // ── Runtime Gold Metrics ──────────────────────────────────────────────────
     out.push_str("## Runtime Gold Metrics\n\n");
@@ -507,6 +1080,19 @@ fn render_run_report(
             out.push_str(&format!("| {} | {} | {} | {} |\n", name, s0, s1, s2));
         }
     }
+    if has_cont {
+        for (name, getter) in &[
+            ("continuation_hypothesis_update_discipline",                 &(|r: &EvalIterationSummaryRow| r.continuation_hypothesis_update_discipline_score)                as &dyn Fn(&EvalIterationSummaryRow) -> Option<i16>),
+            ("continuation_problem_understanding_update",                 &(|r: &EvalIterationSummaryRow| r.continuation_problem_understanding_update_score)                as &dyn Fn(&EvalIterationSummaryRow) -> Option<i16>),
+            ("continuation_next_check_progression",                      &(|r: &EvalIterationSummaryRow| r.continuation_next_check_progression_score)                     as &dyn Fn(&EvalIterationSummaryRow) -> Option<i16>),
+            ("continuation_observation_resolution_context_recovery",     &(|r: &EvalIterationSummaryRow| r.continuation_observation_resolution_context_recovery_score)    as &dyn Fn(&EvalIterationSummaryRow) -> Option<i16>),
+        ] {
+            let (s0, s1, s2) = score_dist_opt(iteration_rows, getter);
+            if s0 + s1 + s2 > 0 {
+                out.push_str(&format!("| {} | {} | {} | {} |\n", name, s0, s1, s2));
+            }
+        }
+    }
     out.push('\n');
 
     out.push_str("## Gate Breakdown\n\n");
@@ -521,14 +1107,87 @@ fn render_run_report(
         let (fail, rate) = gate_fail(iteration_rows, getter);
         out.push_str(&format!("| {} | {} | {:.4} |\n", suite_name, fail, rate));
     }
-    out.push_str("\n> Gate fails when suite score = 0. Pass threshold: score ≥ 1.\n\n");
+    if has_cont {
+        for (suite_name, getter) in &[
+            ("continuation_hypothesis_update_discipline",              &(|r: &EvalIterationSummaryRow| r.continuation_hypothesis_update_discipline_score)             as &dyn Fn(&EvalIterationSummaryRow) -> Option<i16>),
+            ("continuation_problem_understanding_update",              &(|r: &EvalIterationSummaryRow| r.continuation_problem_understanding_update_score)             as &dyn Fn(&EvalIterationSummaryRow) -> Option<i16>),
+            ("continuation_next_check_progression",                   &(|r: &EvalIterationSummaryRow| r.continuation_next_check_progression_score)                  as &dyn Fn(&EvalIterationSummaryRow) -> Option<i16>),
+            ("continuation_observation_resolution_context_recovery",  &(|r: &EvalIterationSummaryRow| r.continuation_observation_resolution_context_recovery_score) as &dyn Fn(&EvalIterationSummaryRow) -> Option<i16>),
+        ] {
+            let (fail, rate) = gate_fail_opt(iteration_rows, getter);
+            out.push_str(&format!("| {} | {} | {:.4} |\n", suite_name, fail, rate));
+        }
+    }
+    out.push_str("\n> Gate fails when suite score = 0. Pass threshold: score ≥ 1.\n");
+    out.push_str("> Note: `Gate Breakdown` reflects critical standalone gates and may differ from composite no-hard-fail formulas (e.g., `final_hypothesis_source_alignment` is gated individually but excluded from `final_answer_no_hard_fail_rate`).\n\n");
 
     out.push_str("## Failure Attribution\n\n");
+
+    out.push_str("### Initial / First-Response Attribution\n\n");
     out.push_str("| metric | value | formula |\n|---|---:|---|\n");
     out.push_str(&format!("| bad_final_due_to_query_rate | {:.4} | frac(!usable ∧ (QS1=0 ∨ QS2=0)) |\n", run_summary.bad_final_due_to_query_rate));
     out.push_str(&format!("| bad_final_due_to_evidence_rate | {:.4} | frac(!usable ∧ (EP1=0 ∨ EP2=0)) |\n", run_summary.bad_final_due_to_evidence_rate));
     out.push_str(&format!("| bad_final_with_good_query_and_evidence_rate | {:.4} | frac(!usable ∧ QS1>0 ∧ QS2>0 ∧ EP1>0 ∧ EP2>0) |\n\n", run_summary.bad_final_with_good_query_and_evidence_rate));
     out.push_str("> usable = FA1≥1 ∧ FA2≥1 ∧ FA5≥1\n\n");
+
+    if has_cont {
+        out.push_str("### Continuation Attribution\n\n");
+        out.push_str("> `frac(condition)` uses only continuation iterations where all fields referenced by that formula are present; missing values are excluded from both numerator and denominator.\n\n");
+        out.push_str("| metric | value | formula |\n|---|---:|---|\n");
+
+        // Eligibility-filtered fractions over continuation rows
+        let cont_attr_frac = |cond: &dyn Fn(&EvalIterationSummaryRow) -> Option<bool>| -> Option<f64> {
+            let eligible: Vec<bool> = cont_rows.iter().filter_map(|r| cond(r)).collect();
+            if eligible.is_empty() { None }
+            else { Some(eligible.iter().filter(|&&v| v).count() as f64 / eligible.len() as f64) }
+        };
+
+        // bad_continuation_due_to_input_resolution_rate
+        // eligible: usable_continuation_response is Some AND CU4 is Some
+        // condition: !usable AND CU4 = 0
+        let bad_input = cont_attr_frac(&|r| {
+            let usable = r.usable_continuation_response?;
+            let cu4 = r.continuation_observation_resolution_context_recovery_score?;
+            Some(!usable && cu4 == 0)
+        });
+
+        // bad_continuation_due_to_update_logic_rate
+        // eligible: usable, CU4, CU1, CU2, CU3 all Some
+        // condition: !usable AND CU4 > 0 AND (CU1=0 OR CU2=0 OR CU3=0)
+        let bad_update = cont_attr_frac(&|r| {
+            let usable = r.usable_continuation_response?;
+            let cu4 = r.continuation_observation_resolution_context_recovery_score?;
+            let cu1 = r.continuation_hypothesis_update_discipline_score?;
+            let cu2 = r.continuation_problem_understanding_update_score?;
+            let cu3 = r.continuation_next_check_progression_score?;
+            Some(!usable && cu4 > 0 && (cu1 == 0 || cu2 == 0 || cu3 == 0))
+        });
+
+        // bad_continuation_despite_good_input_rate
+        // eligible: usable and CU4 both Some
+        // condition: !usable AND CU4 = 2
+        let bad_despite_good = cont_attr_frac(&|r| {
+            let usable = r.usable_continuation_response?;
+            let cu4 = r.continuation_observation_resolution_context_recovery_score?;
+            Some(!usable && cu4 == 2)
+        });
+
+        // good_continuation_despite_input_issue_rate
+        // eligible: usable and CU4 both Some
+        // condition: usable AND CU4 < 2
+        let good_despite_issue = cont_attr_frac(&|r| {
+            let usable = r.usable_continuation_response?;
+            let cu4 = r.continuation_observation_resolution_context_recovery_score?;
+            Some(usable && cu4 < 2)
+        });
+
+        out.push_str(&format!("| bad_continuation_due_to_input_resolution_rate | {} | frac(!usable_continuation ∧ CU4=0) |\n", fmt_opt(bad_input, 4)));
+        out.push_str(&format!("| bad_continuation_due_to_update_logic_rate | {} | frac(!usable_continuation ∧ CU4>0 ∧ (CU1=0 ∨ CU2=0 ∨ CU3=0)) |\n", fmt_opt(bad_update, 4)));
+        out.push_str(&format!("| bad_continuation_despite_good_input_rate | {} | frac(!usable_continuation ∧ CU4=2) |\n", fmt_opt(bad_despite_good, 4)));
+        out.push_str(&format!("| good_continuation_despite_input_issue_rate | {} | frac(usable_continuation ∧ CU4<2) |\n\n", fmt_opt(good_despite_issue, 4)));
+        out.push_str("> usable_continuation = CU1≥1 ∧ CU2≥1 ∧ CU3≥1 ∧ FA1≥1 ∧ FA2≥1 ∧ FA5≥1\n\n");
+    }
+
     out.push_str(&code_legend());
     out.push('\n');
 
@@ -707,6 +1366,9 @@ fn render_run_report(
             fmt_opt(avg_rt_target(iteration_rows, *get_fn, "min_score"), 4)));
     }
     out.push('\n');
+
+    // ── Appendix C: Judge Metrics Per Run ─────────────────────────────────────
+    out.push_str(&render_judge_per_run_appendix(iteration_rows, "Appendix C"));
 
     out
 }

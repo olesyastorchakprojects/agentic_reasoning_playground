@@ -31,6 +31,15 @@ The snapshot subject is:
 For the current MVP, the default target is the last iteration in the runtime
 run.
 
+The snapshot must also classify the selected iteration as:
+
+- `initial`
+- `continuation`
+
+For a continuation iteration, the snapshot subject additionally includes the
+immediately prior completed iteration context required to judge whether the new
+response is a good diagnostic update.
+
 ## 3) Source Records
 
 The snapshot must be derived only from:
@@ -50,6 +59,7 @@ The snapshot must expose at least:
 
 - `runtime_run_id`
 - `iteration_id`
+- `iteration_kind`
 - `run_created_at`
 - `run_updated_at`
 - `user_request`
@@ -69,6 +79,17 @@ The snapshot may additionally expose convenience summaries derived from those
 typed outputs, but these convenience summaries must remain faithful to the
 underlying runtime payloads.
 
+For continuation iterations, the snapshot must additionally expose at least:
+
+- `previous_iteration_id`
+- `previous_response_validation_and_normalization_output`
+- `previous_active_hypotheses`
+- `previous_first_check`
+- `observation_boundary_resolver_output`
+- `observation_extraction_output`
+- `card_branch_reranking_output`
+- `diagnostic_update_prompt_context_output`
+
 ## 5) Field Mapping Rules
 
 ### 5.1) `runtime_run_id`
@@ -78,6 +99,12 @@ underlying runtime payloads.
 ### 5.2) `iteration_id`
 
 - comes from the selected `RunIteration.iteration_id`
+
+### 5.2a) `iteration_kind`
+
+- `initial` when the selected iteration is the first completed iteration in the
+  runtime run
+- `continuation` when the selected iteration is a later completed iteration
 
 ### 5.3) `user_request`
 
@@ -152,8 +179,32 @@ For the current MVP:
   - completion tokens
   - total tokens
   - prompt cost usd
-  - completion cost usd
-  - total cost usd
+- completion cost usd
+- total cost usd
+
+### 5.15) Continuation-only fields
+
+When `iteration_kind = continuation`, the snapshot must additionally project:
+
+- `previous_iteration_id`
+  - from the immediately prior completed iteration in the same `RunState`
+- `previous_response_validation_and_normalization_output`
+  - from the prior iteration successful
+    `StepKind::ResponseValidationAndNormalization`
+- `previous_active_hypotheses`
+  - from the normalized prior response
+- `previous_first_check`
+  - from the normalized prior response
+- `observation_boundary_resolver_output`
+  - from the current iteration successful
+    `StepKind::ObservationBoundaryResolver`
+- `observation_extraction_output`
+  - from the current iteration successful `StepKind::ObservationExtraction`
+- `card_branch_reranking_output`
+  - from the current iteration successful `StepKind::CardBranchReranking`
+- `diagnostic_update_prompt_context_output`
+  - from the current iteration successful
+    `StepKind::DiagnosticUpdatePromptContextAssembly`
 
 ## 6) Missing Data Rule
 
@@ -165,6 +216,13 @@ Examples:
 - missing final validated answer;
 - missing query structuring output;
 - missing prompt context output for final-answer suites.
+
+For continuation iterations, this failure rule also applies to required
+continuation-specific steps such as:
+
+- missing observation extraction output;
+- missing diagnostic update prompt context output;
+- missing prior completed iteration context.
 
 The eval engine must not silently fabricate partial snapshots for required
 suites.
@@ -224,6 +282,23 @@ view that combines:
 The worker stage owns building this compact context deterministically from the
 snapshot.
 
+For continuation suites, additional bindings may include:
+
+- `previous_response`
+  - from the prior iteration normalized response
+- `previous_active_hypotheses`
+  - from the prior iteration normalized response
+- `previous_first_check`
+  - from the prior iteration normalized response
+- `resolved_observation`
+  - from the current continuation observation boundary output
+- `observations`
+  - from the current continuation observation extraction output
+- `update_context`
+  - from `diagnostic_update_prompt_context_output`
+- `current_response`
+  - from the current iteration normalized response
+
 ## 9) Forward Compatibility Fields
 
 To support future multi-iteration loops, the snapshot design must reserve room
@@ -233,6 +308,9 @@ for optional history fields such as:
 - `prior_iteration_ids`
 - `prior_iteration_summary`
 - `latest_prior_user_observation`
+- `previous_iteration_id`
+- `previous_response_validation_and_normalization_output`
+- `observation_extraction_output`
 
 For the current MVP these fields may be absent or empty.
 

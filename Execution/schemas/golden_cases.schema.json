@@ -15,6 +15,22 @@
       "type": "string",
       "minLength": 1
     },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observation_id",
+        "raw"
+      ],
+      "properties": {
+        "observation_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "raw": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    },
     "string_array": {
       "type": "array",
       "items": {
@@ -227,6 +243,12 @@
       "properties": {
         "raw": {
           "$ref": "#/$defs/non_empty_string"
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
         }
       }
     },

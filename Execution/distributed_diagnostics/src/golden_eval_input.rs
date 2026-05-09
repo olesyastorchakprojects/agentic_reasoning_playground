@@ -4,6 +4,12 @@ use thiserror::Error;
 
 use crate::shared_types::{GoldenQuestion, UserRequest};
 
+#[derive(Debug)]
+pub struct GoldenEvalCase {
+    pub initial_request: UserRequest,
+    pub observation_requests: Vec<UserRequest>,
+}
+
 #[derive(Debug, Error)]
 pub enum GoldenEvalInputError {
     #[error("failed to read golden cases file '{path}': {message}")]
@@ -25,7 +31,7 @@ pub enum GoldenEvalInputError {
 pub fn load_golden_eval_requests(
     golden_cases_file: &Path,
     golden_cases_schema: &Path,
-) -> Result<Vec<UserRequest>, GoldenEvalInputError> {
+) -> Result<Vec<GoldenEvalCase>, GoldenEvalInputError> {
     let schema_text = std::fs::read_to_string(golden_cases_schema).map_err(|e| {
         GoldenEvalInputError::GoldenCasesSchemaRead {
             path: golden_cases_schema.to_string_lossy().into_owned(),
@@ -75,15 +81,27 @@ pub fn load_golden_eval_requests(
             }
         })?;
 
-    let requests = golden_questions
+    let cases = golden_questions
         .into_iter()
-        .map(|q| UserRequest {
-            query: q.query.raw.clone(),
-            golden_question: Some(q),
+        .map(|q| {
+            let initial_request = UserRequest {
+                query: q.query.raw.clone(),
+                golden_question: Some(q.clone()),
+            };
+            let observation_requests = q
+                .query
+                .observations
+                .iter()
+                .map(|obs| UserRequest {
+                    query: obs.raw.clone(),
+                    golden_question: Some(q.clone()),
+                })
+                .collect();
+            GoldenEvalCase { initial_request, observation_requests }
         })
         .collect();
 
-    Ok(requests)
+    Ok(cases)
 }
 
 #[cfg(test)]
@@ -130,7 +148,7 @@ mod tests {
 
     const VALID_MINIMAL_CASE_STR: &str = r#"[{
         "case_id": "test-001",
-        "query": { "raw": "what should I check first?" },
+        "query": { "raw": "what should I check first?", "observations": [] },
         "expected_query_structuring": {
             "symptoms": {
                 "strict_vocabulary_terms": [],
@@ -266,24 +284,51 @@ mod tests {
         );
     }
 
+    const VALID_CASE_WITH_OBSERVATIONS_STR: &str = r#"[{
+        "case_id": "test-obs-001",
+        "query": {
+            "raw": "what should I check first?",
+            "observations": [
+                {"observation_id": "obs_1", "raw": "first observation text"},
+                {"observation_id": "obs_2", "raw": "second observation text"}
+            ]
+        },
+        "expected_query_structuring": {
+            "symptoms": { "strict_vocabulary_terms": [], "soft_vocabulary_terms": [], "graded_relevance": [] },
+            "affected_subsystems": { "strict_vocabulary_terms": [], "soft_vocabulary_terms": [], "graded_relevance": [] },
+            "failure_modes": { "strict_vocabulary_terms": [], "soft_vocabulary_terms": [], "graded_relevance": [] },
+            "system_properties": { "strict_vocabulary_terms": [], "soft_vocabulary_terms": [], "graded_relevance": [] }
+        },
+        "expected_candidate_cards": {
+            "retrieval_relevant_cards": { "strict_card_ids": [], "soft_card_ids": [], "graded_relevance": [] }
+        },
+        "expected_incident_evidence": {
+            "primary_card_evidence_query": { "retrieval_call_id": "primary", "relevance_judgments": { "strict_chunk_ids": [], "soft_chunk_ids": [], "graded_relevance": [] } },
+            "alternative_cards_evidence_query": { "retrieval_call_id": "alternatives", "relevance_judgments": { "strict_chunk_ids": [], "soft_chunk_ids": [], "graded_relevance": [] } }
+        },
+        "expected_theory_evidence": {
+            "mechanism_explanation": { "strict_chunk_ids": [], "soft_chunk_ids": [], "graded_relevance": [] }
+        }
+    }]"#;
+
     #[test]
-    fn successful_load_returns_one_request_per_case() {
+    fn successful_load_returns_one_case_per_golden_case() {
         let dir = TempDir::new().unwrap();
         let schema_path = write_temp_file(&dir, "schema.json", VALID_SCHEMA_STR);
         let cases_path = write_temp_file(&dir, "cases.json", VALID_MINIMAL_CASE_STR);
 
-        let requests = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
-        assert_eq!(requests.len(), 1);
+        let cases = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
+        assert_eq!(cases.len(), 1);
     }
 
     #[test]
-    fn successful_load_query_copied_from_golden_case_query_raw() {
+    fn successful_load_initial_request_query_matches_query_raw() {
         let dir = TempDir::new().unwrap();
         let schema_path = write_temp_file(&dir, "schema.json", VALID_SCHEMA_STR);
         let cases_path = write_temp_file(&dir, "cases.json", VALID_MINIMAL_CASE_STR);
 
-        let requests = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
-        assert_eq!(requests[0].query, "what should I check first?");
+        let cases = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
+        assert_eq!(cases[0].initial_request.query, "what should I check first?");
     }
 
     #[test]
@@ -292,8 +337,9 @@ mod tests {
         let schema_path = write_temp_file(&dir, "schema.json", VALID_SCHEMA_STR);
         let cases_path = write_temp_file(&dir, "cases.json", VALID_MINIMAL_CASE_STR);
 
-        let requests = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
-        let gq = requests[0]
+        let cases = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
+        let gq = cases[0]
+            .initial_request
             .golden_question
             .as_ref()
             .expect("golden_question must be Some in batch mode");
@@ -314,5 +360,55 @@ mod tests {
             "alternatives"
         );
         assert!(gq.expected_theory_evidence.mechanism_explanation.strict_chunk_ids.is_empty());
+    }
+
+    #[test]
+    fn case_without_observations_has_empty_observation_requests() {
+        let dir = TempDir::new().unwrap();
+        let schema_path = write_temp_file(&dir, "schema.json", VALID_SCHEMA_STR);
+        let cases_path = write_temp_file(&dir, "cases.json", VALID_MINIMAL_CASE_STR);
+
+        let cases = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
+        assert!(cases[0].observation_requests.is_empty());
+    }
+
+    #[test]
+    fn observations_produce_one_observation_request_each() {
+        let dir = TempDir::new().unwrap();
+        let schema_path = write_temp_file(&dir, "schema.json", VALID_SCHEMA_STR);
+        let cases_path =
+            write_temp_file(&dir, "cases.json", VALID_CASE_WITH_OBSERVATIONS_STR);
+
+        let cases = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
+        assert_eq!(cases[0].observation_requests.len(), 2);
+    }
+
+    #[test]
+    fn observation_request_query_matches_observation_raw() {
+        let dir = TempDir::new().unwrap();
+        let schema_path = write_temp_file(&dir, "schema.json", VALID_SCHEMA_STR);
+        let cases_path =
+            write_temp_file(&dir, "cases.json", VALID_CASE_WITH_OBSERVATIONS_STR);
+
+        let cases = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
+        assert_eq!(cases[0].observation_requests[0].query, "first observation text");
+        assert_eq!(cases[0].observation_requests[1].query, "second observation text");
+    }
+
+    #[test]
+    fn observation_requests_carry_golden_question() {
+        let dir = TempDir::new().unwrap();
+        let schema_path = write_temp_file(&dir, "schema.json", VALID_SCHEMA_STR);
+        let cases_path =
+            write_temp_file(&dir, "cases.json", VALID_CASE_WITH_OBSERVATIONS_STR);
+
+        let cases = load_golden_eval_requests(&cases_path, &schema_path).unwrap();
+        for obs_req in &cases[0].observation_requests {
+            let gq = obs_req
+                .golden_question
+                .as_ref()
+                .expect("observation_request must carry golden_question");
+            assert_eq!(gq.case_id, "test-obs-001");
+        }
     }
 }

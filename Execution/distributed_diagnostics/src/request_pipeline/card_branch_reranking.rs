@@ -21,8 +21,6 @@ pub enum CardBranchRerankingError {
     #[error("fresh primary card does not match ranked_candidates[0]")]
     FreshPrimaryMismatch,
 
-    #[error("fresh candidate window is too shallow for reranking policy")]
-    InsufficientFreshCandidateWindow,
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -31,7 +29,6 @@ const TENTATIVE_RETENTION_WINDOW: usize = 2;
 const STICKY_RETENTION_WINDOW: usize = 4;
 const ALTERNATIVE_ELIGIBILITY_WINDOW: usize = 5;
 const MAX_ALTERNATIVES: usize = 2;
-const MIN_FRESH_WINDOW: usize = 5;
 
 // ─── Public struct ────────────────────────────────────────────────────────────
 
@@ -76,16 +73,12 @@ impl CardBranchReranking {
             }
         }
 
-        // 5. InsufficientFreshCandidateWindow
-        if fresh_candidates.ranked_candidates.len() < MIN_FRESH_WINDOW {
-            return Err(CardBranchRerankingError::InsufficientFreshCandidateWindow);
-        }
-
         let fresh_ids: Vec<&str> = fresh_candidates
             .ranked_candidates
             .iter()
             .map(|c| c.case_id.as_str())
             .collect();
+        let fresh_window_len = fresh_ids.len();
 
         let last = card_selection_context.history.last().unwrap();
         let previous_primary = &last.primary_card_id;
@@ -100,7 +93,8 @@ impl CardBranchReranking {
         let retention_window = match previous_status {
             PrimaryCardStatus::Tentative => TENTATIVE_RETENTION_WINDOW,
             PrimaryCardStatus::Sticky => STICKY_RETENTION_WINDOW,
-        };
+        }
+        .min(fresh_window_len);
 
         let (new_primary_id, new_primary_status) =
             match previous_fresh_rank {
@@ -112,6 +106,8 @@ impl CardBranchReranking {
 
         // ── Alternative selection ─────────────────────────────────────────────
 
+        let alternative_eligibility_window = ALTERNATIVE_ELIGIBILITY_WINDOW.min(fresh_window_len);
+
         // Step 1: preserve historical alternatives within top-5 window
         let mut alternatives: Vec<String> = last
             .alternative_card_ids
@@ -121,7 +117,7 @@ impl CardBranchReranking {
                     .iter()
                     .position(|id| *id == alt_id.as_str())
                     .map(|i| i + 1);
-                matches!(rank, Some(r) if r <= ALTERNATIVE_ELIGIBILITY_WINDOW)
+                matches!(rank, Some(r) if r <= alternative_eligibility_window)
                     && **alt_id != new_primary_id
             })
             .cloned()
@@ -270,11 +266,30 @@ mod tests {
     }
 
     #[test]
-    fn fewer_than_five_ranked_candidates_fail() {
+    fn fewer_than_five_ranked_candidates_are_allowed() {
         let ctx = history_one("p1", PrimaryCardStatus::Tentative, vec![]);
         let f = fresh(vec![card("p1"), card("a"), card("b"), card("c")]);
-        let err = reranker().rerank(&f, &ctx).unwrap_err();
-        assert!(matches!(err, CardBranchRerankingError::InsufficientFreshCandidateWindow));
+        let out = reranker().rerank(&f, &ctx).unwrap();
+        assert_eq!(out.primary_card_id, "p1");
+        assert_eq!(out.primary_card_status, PrimaryCardStatus::Sticky);
+        assert_eq!(out.alternative_card_ids, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn sticky_primary_uses_available_window_when_fresh_list_is_short() {
+        let ctx = history_one("p1", PrimaryCardStatus::Sticky, vec!["a"]);
+        let f = fresh(vec![card("x"), card("y"), card("p1")]);
+        let out = reranker().rerank(&f, &ctx).unwrap();
+        assert_eq!(out.primary_card_id, "p1");
+        assert_eq!(out.primary_card_status, PrimaryCardStatus::Sticky);
+    }
+
+    #[test]
+    fn historical_alternatives_are_preserved_within_short_fresh_window() {
+        let ctx = history_one("p1", PrimaryCardStatus::Sticky, vec!["b", "a"]);
+        let f = fresh(vec![card("p1"), card("a"), card("b")]);
+        let out = reranker().rerank(&f, &ctx).unwrap();
+        assert_eq!(out.alternative_card_ids, vec!["b", "a"]);
     }
 
     // ─── Primary selection — Tentative ────────────────────────────────────────
