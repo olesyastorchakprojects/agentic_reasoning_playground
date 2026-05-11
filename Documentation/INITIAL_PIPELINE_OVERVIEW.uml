@@ -1,0 +1,84 @@
+@startuml
+title Initial Pipeline Overview
+
+skinparam shadowing false
+skinparam defaultTextAlignment center
+
+|Step Modules|
+start
+:Input Normalization;
+:Query Structuring;
+
+|API Clients|
+:Model Client;
+
+|External Systems|
+:Model Provider;
+
+|Step Modules|
+:Information Adequacy Initial;
+
+if (Sufficient?) then (yes)
+  :Candidate Card Retrieval;
+
+  |API Clients|
+  :Cards Collection Client;
+
+  |External Systems|
+  :Qdrant Cards Collection;
+
+  |Step Modules|
+  :Card Hydration;
+
+  |API Clients|
+  :Incident Card Store Client;
+
+  |External Systems|
+  :Postgres Incident Cards;
+
+  |Step Modules|
+  :Incident Evidence Retrieval;
+
+  |API Clients|
+  :Practice Chunks Collection Client;
+
+  |External Systems|
+  :Qdrant Practice Chunks Collection;
+
+  |Step Modules|
+  :Theory Evidence Retrieval;
+
+  |API Clients|
+  :Theory Chunks Collection Client;
+
+  |External Systems|
+  :Qdrant Theory Chunks Collection;
+
+  |Step Modules|
+  :Prompt Context Assembly;
+  note right
+    Builds the bounded prompt context
+    from the selected cards and evidence.
+  end note
+
+  :LLM Structured Generation;
+
+  |API Clients|
+  :Model Client;
+
+  |External Systems|
+  :Model Provider;
+
+  |Step Modules|
+  :Response Validation And Normalization;
+  stop
+else (no)
+  :Wait For User Input;
+  note right
+    This is the only branching point
+    in the initial policy.
+  end note
+  stop
+endif
+
+@enduml
