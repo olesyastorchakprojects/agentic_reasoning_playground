@@ -1,0 +1,78 @@
+@startuml
+title Runtime Architecture Overview
+
+left to right direction
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam componentStyle rectangle
+skinparam defaultTextAlignment center
+
+actor User
+
+package "Runtime Core" {
+  component "Orchestrator" as Orchestrator
+  component "Transition Policy" as TransitionPolicy
+  component "Step Executor" as StepExecutor
+  component "Run Repository" as RunRepository
+
+  package "Step Modules" {
+    component "Retrieval Steps" as RetrievalSteps
+    component "Card Hydration" as CardHydration
+    component "Generation And Update Steps" as GenerationSteps
+  }
+
+  package "API Clients" {
+    component "Qdrant Clients" as QdrantClients
+    component "Postgres Clients" as PostgresClients
+    component "Model Clients" as ModelClients
+  }
+}
+
+package "External Systems" {
+  database "Qdrant" as Qdrant
+  database "Postgres" as Postgres
+  component "Model Provider" as ModelProvider
+}
+
+User --> Orchestrator : user input
+
+Orchestrator --> TransitionPolicy : ask next step
+TransitionPolicy --> Orchestrator : next step / wait for user /\nfinish w error / finish w success
+
+Orchestrator --> StepExecutor : execute selected step
+StepExecutor --> RetrievalSteps : dispatch retrieval step
+StepExecutor --> CardHydration : dispatch hydration step
+StepExecutor --> GenerationSteps : dispatch generation step
+
+RetrievalSteps --> QdrantClients
+CardHydration --> PostgresClients
+GenerationSteps --> ModelClients
+
+QdrantClients --> Qdrant : search cards / incident chunks /\ntheory collections
+PostgresClients --> Postgres : load cards / store run state
+ModelClients --> ModelProvider : structuring / observation /\ngeneration calls
+
+StepExecutor --> RunRepository : persist step result
+Orchestrator --> RunRepository : load / save run state
+RunRepository --> PostgresClients : persist run state
+
+RunRepository --> Orchestrator : current run state
+StepExecutor --> Orchestrator : step outcome
+
+note bottom of TransitionPolicy
+Determines which step can run next
+for the current iteration.
+end note
+
+note bottom of RunRepository
+Each executed step is recorded
+in durable run state.
+end note
+
+note bottom of RetrievalSteps
+Some modules read different
+Qdrant collections depending
+on the selected step.
+end note
+
+@enduml
