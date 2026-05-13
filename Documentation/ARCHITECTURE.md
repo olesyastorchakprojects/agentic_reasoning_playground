@@ -24,7 +24,7 @@ The runtime models that lifecycle explicitly as `run -> iteration -> step`. A ru
 
 This split matters because the assistant is not a single-pass call. It needs durable run history, explicit iteration boundaries, and a controlled way to continue diagnosis when the user adds a new observation later. The runtime therefore treats a diagnostic session as an evolving stateful process rather than as one isolated prompt.
 
-For the product-level framing of the diagnostic state itself, see [OVERVIEW.md](/home/olesia/code/dist_sys_assistant/Documentation/OVERVIEW.md) and [DIAGNOSTIC_MODEL.md](/home/olesia/code/dist_sys_assistant/Documentation/DIAGNOSTIC_MODEL.md).
+For the product-level framing of the diagnostic state itself, see [OVERVIEW.md](./OVERVIEW.md) and [DIAGNOSTIC_MODEL.md](./DIAGNOSTIC_MODEL.md).
 
 ## Main Components
 
@@ -78,7 +78,7 @@ Instead of restarting from scratch, the runtime appends a new iteration to the e
 
 This is one of the most important architectural choices in the project: follow-up input is treated as part of an ongoing investigation, not merely as another chat turn.
 
-For deeper details on prompt construction, see [PROMPT_CONTEXT_ASSEMBLY.md](/home/olesia/code/dist_sys_assistant/Documentation/PROMPT_CONTEXT_ASSEMBLY.md).
+For deeper details on prompt construction, see [PROMPT_CONTEXT_ASSEMBLY.md](./PROMPT_CONTEXT_ASSEMBLY.md).
 
 ## Orchestration And Run State
 
@@ -140,8 +140,8 @@ The fifth is durable orchestration. Execution state is explicit and persisted, w
 
 This document is meant to work alongside a few narrower documents:
 
-- [OVERVIEW.md](/home/olesia/code/dist_sys_assistant/Documentation/OVERVIEW.md) explains the product idea and the user-visible reasoning shape.
-- [DIAGNOSTIC_MODEL.md](/home/olesia/code/dist_sys_assistant/Documentation/DIAGNOSTIC_MODEL.md) describes the structure of the diagnostic state itself.
-- [PROMPT_CONTEXT_ASSEMBLY.md](/home/olesia/code/dist_sys_assistant/Documentation/PROMPT_CONTEXT_ASSEMBLY.md) explains what enters the model context and how the packed context is formed.
+- [OVERVIEW.md](./OVERVIEW.md) explains the product idea and the user-visible reasoning shape.
+- [DIAGNOSTIC_MODEL.md](./DIAGNOSTIC_MODEL.md) describes the structure of the diagnostic state itself.
+- [PROMPT_CONTEXT_ASSEMBLY.md](./PROMPT_CONTEXT_ASSEMBLY.md) explains what enters the model context and how the packed context is formed.
 
 Together, these documents describe the system from complementary angles: product framing, diagnostic reasoning model, prompt-context construction, and overall runtime architecture.

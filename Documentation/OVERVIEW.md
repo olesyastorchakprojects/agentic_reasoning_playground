@@ -205,9 +205,9 @@ Case studies show how the system behaves end-to-end:
 
 This is the best way to show the system is conducting an investigation rather than generating polished text.
 
-TODO:
-- add links to case study documents when they are available
-- likely home: `Documentation/CASE_STUDIES/`
+Current example:
+
+- [CASE_STUDY_AMAZON_RDS_READER_STALE_READS.md](./CASE_STUDY_AMAZON_RDS_READER_STALE_READS.md)
 
 ### 2. Quantitative Evidence
 
@@ -222,9 +222,9 @@ Important dimensions include:
 - truncation and step-failure rates;
 - cost and latency.
 
-TODO:
-- add links to evaluation summary documents
-- likely home: `Documentation/EVALUATION.md`
+The current evaluation framing and outputs are described in:
+
+- [EVALUATION_STORY.md](./EVALUATION_STORY.md)
 
 ### 3. Comparative Evidence
 
@@ -237,9 +237,9 @@ Comparisons show what improves the system:
 
 This is critical because the project’s quality depends not only on prompt wording, but also on model capability and available precedent coverage.
 
-TODO:
-- add links to experiment summaries and dashboard docs
-- likely homes: `Documentation/EXPERIMENTS.md` and `Documentation/DASHBOARDS.md`
+The current observability and comparison surfaces are described in:
+
+- [OBSERVABILITY_STORY.md](./OBSERVABILITY_STORY.md)
 
 ## Current Practical Lessons
 
@@ -255,16 +255,17 @@ A few lessons have already become clear from iteration and eval work:
 
 Recommended reading order:
 
-1. This file: [OVERVIEW.md](/home/olesia/code/dist_sys_assistant/Documentation/OVERVIEW.md)
-2. `DIAGNOSTIC_MODEL.md`:
+1. [OVERVIEW.md](./OVERVIEW.md):
+   product framing and the central diagnostic idea
+2. [DIAGNOSTIC_MODEL.md](./DIAGNOSTIC_MODEL.md):
    the reasoning model in more detail
-3. one case study:
-   a concrete end-to-end investigation walk-through
-4. `EVALUATION.md`:
-   how quality is measured
-5. `DASHBOARDS.md`:
-   how run-level quality, cost, and failures are monitored
-6. `ARCHITECTURE.md`:
+3. [CASE_STUDY_AMAZON_RDS_READER_STALE_READS.md](./CASE_STUDY_AMAZON_RDS_READER_STALE_READS.md):
+   a concrete three-iteration investigation walk-through
+4. [EVALUATION_STORY.md](./EVALUATION_STORY.md):
+   how quality is measured and reported
+5. [OBSERVABILITY_STORY.md](./OBSERVABILITY_STORY.md):
+   how runtime and evaluation behavior are inspected in traces, reports, and dashboards
+6. [ARCHITECTURE.md](./ARCHITECTURE.md):
    how the runtime pipeline implements the reasoning model
 
 Existing detailed prompt and design notes remain useful, but they should be read as supporting documents rather than the main project narrative.
