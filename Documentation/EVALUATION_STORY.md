@@ -1,8 +1,10 @@
-# Evaluation Protocol
+# Evaluation Story
 
-The evaluation layer exists to answer one practical question: what is the current quality level of the application, and where is that quality being lost?
+The evaluation layer exists to answer one practical question: what is the current quality level of the application, where is that quality being lost, and how can we inspect that loss without guessing?
 
-For this project, quality is not only a property of the final response text. The assistant depends on structured query interpretation, precedent retrieval, evidence packing, and continuation updates over prior diagnostic state. A useful evaluation protocol therefore needs to produce a current quality slice of the whole application, not only of the last answer-generation step.
+For this project, quality is not only a property of the final response text. The assistant depends on structured query interpretation, precedent retrieval, evidence packing, and continuation updates over prior diagnostic state. A useful evaluation story therefore needs to explain the quality of the whole application, not only of the last answer-generation step.
+
+That is the role of the eval layer. It turns runtime history into a stable quality slice of the system, then exposes that slice through reports, dashboards, and traces so that prompt, retrieval, and orchestration changes can be judged against the same frame.
 
 ## What An Eval Run Measures
 
@@ -14,7 +16,7 @@ The main evaluation subject is one iteration inside one runtime run. That choice
 
 ## Initial And Continuation
 
-The protocol distinguishes two iteration kinds:
+The eval layer distinguishes two iteration kinds:
 
 - `initial`
 - `continuation`
@@ -27,7 +29,7 @@ A continuation iteration is judged as a state update:
 - one new observation or check result;
 - updated diagnostic response.
 
-This distinction matters because continuation quality is not the same as first-response quality. A continuation can fail even when the final response still sounds reasonable, for example if it misreads the new observation, fails to update the problem framing, or repeats the previous next check without making progress. The evaluation protocol therefore keeps continuation-specific suites and continuation-specific summary signals rather than folding everything into one generic final-answer score.
+This distinction matters because continuation quality is not the same as first-response quality. A continuation can fail even when the final response still sounds reasonable, for example if it misreads the new observation, fails to update the problem framing, or repeats the previous next check without making progress. The eval layer therefore keeps continuation-specific suites and continuation-specific summary signals rather than folding everything into one generic final-answer score.
 
 ## Eval Inputs
 
@@ -56,7 +58,7 @@ At a high level, the current eval flow looks like this:
 7. compute eval-run summaries and aggregates;
 8. materialize the final eval report.
 
-The evaluation protocol is therefore not just a batch of judge prompts. It is a pipeline that turns runtime history into a stable, interpretable quality slice of the application.
+The eval layer is therefore not just a batch of judge prompts. It is a pipeline that turns runtime history into a stable, interpretable quality slice of the application.
 
 ## Metric Layers
 
@@ -68,11 +70,13 @@ Runtime gold metrics evaluate whether runtime outputs match the expected labels 
 
 Runtime diagnostics provide lower-level supporting signals such as hit counts, retrieval traces, and configuration-sensitive behavior. These are not the main quality verdicts, but they help explain why a quality metric moved.
 
-Together, these layers let the report answer not only “how good is the system?” but also “where in the chain did it break?”
+The eval report also keeps evaluation cost visible. Runtime usage, judge usage, and combined totals are surfaced as part of the same quality slice so that quality improvements can be read together with their operational cost.
+
+Together, these layers let the report answer not only “how good is the system?” but also “where in the chain did it break?” and “what did it cost to measure that?”
 
 ## What Gets Judged
 
-At the judge layer, the protocol is organized around a small number of categories rather than one undifferentiated score.
+At the judge layer, the eval layer is organized around a small number of categories rather than one undifferentiated score.
 
 The main current categories are:
 
@@ -83,9 +87,11 @@ The main current categories are:
 
 Within those categories, suites are intentionally narrow. For example, one suite may check field-boundary discipline in structured queries, another may check whether the packed evidence is sufficient for a useful first move, and another may check whether the first diagnostic check actually discriminates between explanations. Continuation suites likewise focus on specific update behaviors such as hypothesis-update discipline, problem-understanding update quality, next-check progression, and observation-resolution quality.
 
-This design keeps failure attribution visible. A weak application result should not collapse immediately into “the model did badly.” The protocol tries to show whether the weakness comes from upstream structuring, insufficient evidence support, final answer behavior, or continuation update logic.
+This design keeps failure attribution visible. A weak application result should not collapse immediately into “the model did badly.” The eval layer tries to show whether the weakness comes from upstream structuring, insufficient evidence support, final answer behavior, or continuation update logic.
 
-The current suite set can be seen in the latest eval report: [run_report.md](../Evidence/evals/runs/2026-05-09T12-29-57.245141346+00-00_6889ebdc-2d44-4ef9-b01a-ce05194940e8/run_report.md).
+That attribution view is one of the most important parts of the project. The evaluation layer is designed to separate failures in query interpretation, retrieval quality, evidence packing, first-response construction, and later continuation updates rather than flattening them into one generic score.
+
+The current suite set can be seen in the latest eval report: [run_report.md](../Evidence/evals/runs/2026-05-13T12-55-23.083192284+00-00_42a1f939-caea-4d1c-ba4e-fa62900d6cbe/run_report.md).
 
 | Suite | Applies To | What It Checks |
 |---|---|---|
@@ -105,7 +111,7 @@ The current suite set can be seen in the latest eval report: [run_report.md](../
 
 ## Summary Signals
 
-The protocol is designed to produce summary signals that are easy to interpret at both iteration level and eval-run level.
+The eval layer is designed to produce summary signals that are easy to interpret at both iteration level and eval-run level.
 
 At iteration level, the system stores compact summary rows with:
 
@@ -136,7 +142,7 @@ These aggregates are meant to answer concrete questions such as:
 
 ## The Role Of Gates
 
-The protocol uses a small set of critical gates because some failures matter more than others.
+The eval layer uses a small set of critical gates because some failures matter more than others.
 
 A system can have a respectable average score while still violating a product-critical rule, such as claiming a final root cause too early or proposing a non-discriminating next check. Gate-oriented metrics make those failures visible instead of letting them disappear inside an average.
 
@@ -151,9 +157,9 @@ One completed eval run produces several outputs:
 - iteration-level summary rows;
 - eval-run-level summary rows and aggregates;
 - a run manifest that records the frozen scope and run metadata;
-- a human-readable `run_report.md`.
+- a readable `run_report.md`.
 
-The report is the main human-facing artifact. It is meant to show:
+The report is the main report artifact. It is meant to show:
 
 - what batch was evaluated;
 - which suites were active;
@@ -162,13 +168,54 @@ The report is the main human-facing artifact. It is meant to show:
 - the worst-case examples worth inspecting next;
 - the runtime and judge cost of the evaluation.
 
+In practice, `run_report.md` is more than a final score sheet. It is the main report artifact of the evaluation layer: a compact overview of stage quality, initial-versus-continuation behavior, weakest cases, and the cost of running the analysis.
+
+A recent full report example can be opened here: [run_report.md](../Evidence/evals/runs/2026-05-13T12-55-23.083192284+00-00_42a1f939-caea-4d1c-ba4e-fa62900d6cbe/run_report.md).
+
+The eval layer also exposes operational and comparison views outside the report:
+
+- `DSA Eval Usage Overview`, which shows the list of eval runs in a time window and aggregates token usage / cost across the selected run set;
+- `DSA Eval Runs Compare`, which compares two specific eval runs side by side;
+- Phoenix traces rooted at `eval.run`, which show the internal execution shape of the eval pipeline itself.
+
+Together, these artifacts answer different questions. The report explains one run in narrative form. The dashboards show how runs compare or accumulate over time. The Phoenix trace shows how the eval pipeline actually executed, including which subjects and judge suites were invoked and how much latency, token usage, and cost each suite consumed.
+
+## Observability Views
+
+The current evaluation layer is designed to be read through more than one surface.
+
+`run_report.md` is the curated report artifact. It is the best starting point when the goal is to understand the quality slice of one eval run in a structured narrative: executive summary, failure attribution, token usage, appendices, and weakest cases.
+
+`DSA Eval Usage Overview` is the operational overview. It is useful when the question is not “how good was this one run?” but “what eval activity happened in this time range, and what did the selected set of runs cost?”
+
+![DSA Eval Usage Overview](images/Screenshot%202026-05-13%20171445.png)
+
+This dashboard shows all eval runs in the selected time window and aggregates runtime, judge, and total token/cost usage over the selected run set. It is the best operational view for monitoring eval spend and throughput over time.
+
+`DSA Eval Runs Compare` is the baseline-versus-candidate view. It is useful when the goal is to compare two concrete eval runs and quickly inspect deltas in executive summary metrics, judge-based aggregates, failure attribution, and total usage/cost.
+
+![DSA Eval Runs Compare](images/Screenshot%202026-05-13%20171412.png)
+
+This dashboard is the fastest way to answer questions like:
+
+- did the candidate improve usable first-response rate?
+- did retrieval quality move?
+- did quality improve at the cost of much higher judge or runtime spend?
+
+Phoenix traces rooted at `eval.run` are the execution-debugging view of the eval system itself. They are not the main quality-summary surface, but they are extremely useful when the question becomes “what did the eval pipeline actually do?”
+
+![Phoenix Eval Run Trace](images/Screenshot%202026-05-13%20173014.png)
+
+The Phoenix trace shows the eval execution hierarchy, including `eval.run`, `eval.judge_request_suites.subject`, and `eval.judge_request_suites.suite`. This makes it possible to inspect which subjects were evaluated, which suite calls dominated latency or cost, and how the total eval bill was built up from individual judge invocations.
+
 ## How To Read The Current Quality Slice
 
 The most useful reading order is:
 
-1. look at the eval report's executive and aggregate sections to see the current overall quality level;
-2. inspect category-level and suite-level results to see where quality is being lost;
-3. inspect gate breakdowns and failure-attribution sections to understand whether the dominant problems are upstream, evidence-related, final-answer-related, or continuation-related;
-4. drill into the weakest iteration subjects when concrete debugging is needed.
+1. open `DSA Eval Usage Overview` to see which eval runs exist in the selected time range and what the selected run set cost in total;
+2. open `DSA Eval Runs Compare` when a baseline-versus-candidate question is being asked;
+3. open the eval report's executive, aggregate, and failure-attribution sections to understand one run as a coherent quality slice;
+4. inspect category-level and suite-level results to see where quality is being lost across query structuring, retrieval support, evidence packing, final answer behavior, and continuation updates;
+5. open the Phoenix `eval.run` trace when concrete execution debugging is needed, especially for slow, expensive, or unexpectedly broad judge activity.
 
-Used this way, the protocol is not just a reporting layer. It is the mechanism that turns runtime behavior into a stable and explainable current quality slice of the application, so that prompt, retrieval, and orchestration changes can be judged against the same frame.
+Used this way, the eval layer is not just a reporting layer. It is the mechanism that turns runtime behavior into a stable and explainable current quality slice of the application, so that prompt, retrieval, and orchestration changes can be judged against the same frame. It also highlights one of the central ideas of the project: the assistant is evaluated not only on its first response, but on whether it can continue a diagnosis responsibly as new observations arrive.
