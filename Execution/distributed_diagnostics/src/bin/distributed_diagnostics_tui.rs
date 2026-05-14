@@ -620,7 +620,7 @@ fn render_details(frame: &mut Frame<'_>, app: &App, area: Rect) {
             Line::from("- raw user input"),
             Line::from("- resolved with prior context"),
             Line::from("- signal quality, reason, follow-up questions"),
-            Line::from("- alternative interpretation"),
+            Line::from("- competing interpretation"),
             Line::from("- hypotheses with source, check, and result interpretation"),
         ])
     };
@@ -867,7 +867,7 @@ fn append_iteration_lines(
         if let Some(alternative) = response.competing_interpretation.as_deref() {
             push_wrapped_labeled_field(
                 lines,
-                "  Alternative interpretation",
+                "  Competing interpretation",
                 alternative,
                 width,
                 2,
@@ -915,7 +915,7 @@ fn append_iteration_lines(
         );
         push_wrapped_plain_subfield(
             lines,
-            "    Supports alternative if",
+            "    Supports competing if",
             &response.result_interpretation.supports_competing_if,
             width,
             4,

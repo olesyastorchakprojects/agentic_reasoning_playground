@@ -241,17 +241,118 @@ pub fn build_iteration_summary_row(
     let judge_total_cost_usd: f64 = judge_calls.iter().map(|row| row.total_cost_usd).sum();
 
     let runtime_prompt_tokens =
-        snapshot.runtime_token_usage.total.prompt_tokens.unwrap_or(0) as i64;
+        snapshot.runtime_token_usage.total.token_usage.prompt_tokens.unwrap_or(0) as i64;
     let runtime_completion_tokens =
-        snapshot.runtime_token_usage.total.completion_tokens.unwrap_or(0) as i64;
+        snapshot.runtime_token_usage.total.token_usage.completion_tokens.unwrap_or(0) as i64;
     let runtime_total_tokens =
-        snapshot.runtime_token_usage.total.total_tokens.unwrap_or(0) as i64;
-
-    let input_cost = snapshot.runtime_token_usage.input_cost_per_million_tokens;
-    let output_cost = snapshot.runtime_token_usage.output_cost_per_million_tokens;
-    let runtime_total_cost_usd =
-        runtime_prompt_tokens as f64 * input_cost / 1_000_000.0
-        + runtime_completion_tokens as f64 * output_cost / 1_000_000.0;
+        snapshot.runtime_token_usage.total.token_usage.total_tokens.unwrap_or(0) as i64;
+    let runtime_total_cost_usd = snapshot.runtime_token_usage.total.total_cost_usd;
+    let runtime_query_structuring_tokens =
+        snapshot.runtime_token_usage.query_structuring.token_usage.total_tokens.unwrap_or(0) as i64;
+    let runtime_query_structuring_prompt_tokens =
+        snapshot.runtime_token_usage.query_structuring.token_usage.prompt_tokens.unwrap_or(0) as i64;
+    let runtime_query_structuring_completion_tokens =
+        snapshot.runtime_token_usage.query_structuring.token_usage.completion_tokens.unwrap_or(0) as i64;
+    let runtime_query_structuring_cost_usd =
+        snapshot.runtime_token_usage.query_structuring.total_cost_usd;
+    let runtime_query_structuring_input_cost_per_million_tokens =
+        snapshot.runtime_token_usage.query_structuring.input_cost_per_million_tokens;
+    let runtime_query_structuring_output_cost_per_million_tokens =
+        snapshot.runtime_token_usage.query_structuring.output_cost_per_million_tokens;
+    let runtime_observation_boundary_resolver_tokens = snapshot
+        .runtime_token_usage
+        .observation_boundary_resolver
+        .token_usage
+        .total_tokens
+        .unwrap_or(0) as i64;
+    let runtime_observation_boundary_resolver_prompt_tokens = snapshot
+        .runtime_token_usage
+        .observation_boundary_resolver
+        .token_usage
+        .prompt_tokens
+        .unwrap_or(0) as i64;
+    let runtime_observation_boundary_resolver_completion_tokens = snapshot
+        .runtime_token_usage
+        .observation_boundary_resolver
+        .token_usage
+        .completion_tokens
+        .unwrap_or(0) as i64;
+    let runtime_observation_boundary_resolver_cost_usd = snapshot
+        .runtime_token_usage
+        .observation_boundary_resolver
+        .total_cost_usd;
+    let runtime_observation_boundary_resolver_input_cost_per_million_tokens = snapshot
+        .runtime_token_usage
+        .observation_boundary_resolver
+        .input_cost_per_million_tokens;
+    let runtime_observation_boundary_resolver_output_cost_per_million_tokens = snapshot
+        .runtime_token_usage
+        .observation_boundary_resolver
+        .output_cost_per_million_tokens;
+    let runtime_observation_extraction_tokens = snapshot
+        .runtime_token_usage
+        .observation_extraction
+        .token_usage
+        .total_tokens
+        .unwrap_or(0) as i64;
+    let runtime_observation_extraction_prompt_tokens = snapshot
+        .runtime_token_usage
+        .observation_extraction
+        .token_usage
+        .prompt_tokens
+        .unwrap_or(0) as i64;
+    let runtime_observation_extraction_completion_tokens = snapshot
+        .runtime_token_usage
+        .observation_extraction
+        .token_usage
+        .completion_tokens
+        .unwrap_or(0) as i64;
+    let runtime_observation_extraction_cost_usd = snapshot
+        .runtime_token_usage
+        .observation_extraction
+        .total_cost_usd;
+    let runtime_observation_extraction_input_cost_per_million_tokens = snapshot
+        .runtime_token_usage
+        .observation_extraction
+        .input_cost_per_million_tokens;
+    let runtime_observation_extraction_output_cost_per_million_tokens = snapshot
+        .runtime_token_usage
+        .observation_extraction
+        .output_cost_per_million_tokens;
+    let runtime_llm_structured_generation_tokens = snapshot
+        .runtime_token_usage
+        .llm_structured_generation
+        .token_usage
+        .total_tokens
+        .unwrap_or(0) as i64;
+    let runtime_llm_structured_generation_prompt_tokens = snapshot
+        .runtime_token_usage
+        .llm_structured_generation
+        .token_usage
+        .prompt_tokens
+        .unwrap_or(0) as i64;
+    let runtime_llm_structured_generation_completion_tokens = snapshot
+        .runtime_token_usage
+        .llm_structured_generation
+        .token_usage
+        .completion_tokens
+        .unwrap_or(0) as i64;
+    let runtime_llm_structured_generation_cost_usd = snapshot
+        .runtime_token_usage
+        .llm_structured_generation
+        .total_cost_usd;
+    let runtime_llm_structured_generation_input_cost_per_million_tokens = snapshot
+        .runtime_token_usage
+        .llm_structured_generation
+        .input_cost_per_million_tokens;
+    let runtime_llm_structured_generation_output_cost_per_million_tokens = snapshot
+        .runtime_token_usage
+        .llm_structured_generation
+        .output_cost_per_million_tokens;
+    let config_snapshot = snapshot
+        .config_snapshot
+        .as_ref()
+        .expect("eval snapshot must carry runtime config snapshot");
 
     Ok(EvalIterationSummaryRow {
         key,
@@ -289,6 +390,61 @@ pub fn build_iteration_summary_row(
         runtime_incident_primary_metrics,
         runtime_incident_alternatives_metrics,
         runtime_theory_evidence_metrics,
+        runtime_query_structuring_model: snapshot.runtime_token_usage.query_structuring.model_name.clone(),
+        runtime_observation_boundary_resolver_model: snapshot
+            .runtime_token_usage
+            .observation_boundary_resolver
+            .model_name
+            .clone(),
+        runtime_observation_extraction_model: snapshot
+            .runtime_token_usage
+            .observation_extraction
+            .model_name
+            .clone(),
+        runtime_llm_structured_generation_model: snapshot
+            .runtime_token_usage
+            .llm_structured_generation
+            .model_name
+            .clone(),
+        runtime_query_structuring_prompt_tokens,
+        runtime_query_structuring_completion_tokens,
+        runtime_query_structuring_input_cost_per_million_tokens,
+        runtime_query_structuring_output_cost_per_million_tokens,
+        runtime_observation_boundary_resolver_prompt_tokens,
+        runtime_observation_boundary_resolver_completion_tokens,
+        runtime_observation_boundary_resolver_input_cost_per_million_tokens,
+        runtime_observation_boundary_resolver_output_cost_per_million_tokens,
+        runtime_observation_extraction_prompt_tokens,
+        runtime_observation_extraction_completion_tokens,
+        runtime_observation_extraction_input_cost_per_million_tokens,
+        runtime_observation_extraction_output_cost_per_million_tokens,
+        runtime_llm_structured_generation_prompt_tokens,
+        runtime_llm_structured_generation_completion_tokens,
+        runtime_llm_structured_generation_input_cost_per_million_tokens,
+        runtime_llm_structured_generation_output_cost_per_million_tokens,
+        runtime_query_structuring_prompt_version: config_snapshot
+            .query_structuring_prompt_version
+            .clone(),
+        runtime_observation_boundary_resolver_prompt_version: config_snapshot
+            .observation_boundary_resolver_prompt_version
+            .clone(),
+        runtime_observation_extraction_prompt_version: config_snapshot
+            .observation_extraction_prompt_version
+            .clone(),
+        runtime_prompt_context_prompt_version: config_snapshot
+            .prompt_context_prompt_version
+            .clone(),
+        runtime_diagnostic_update_prompt_context_prompt_version: config_snapshot
+            .diagnostic_update_prompt_context_prompt_version
+            .clone(),
+        runtime_query_structuring_tokens,
+        runtime_query_structuring_cost_usd,
+        runtime_observation_boundary_resolver_tokens,
+        runtime_observation_boundary_resolver_cost_usd,
+        runtime_observation_extraction_tokens,
+        runtime_observation_extraction_cost_usd,
+        runtime_llm_structured_generation_tokens,
+        runtime_llm_structured_generation_cost_usd,
         runtime_prompt_tokens,
         runtime_completion_tokens,
         runtime_total_tokens,
@@ -638,6 +794,39 @@ pub fn build_run_summary_row(
         .iter()
         .map(|row| row.runtime_total_cost_usd)
         .sum();
+    let runtime_query_structuring_tokens: i64 = iteration_rows
+        .iter()
+        .map(|row| row.runtime_query_structuring_tokens)
+        .sum();
+    let runtime_query_structuring_cost_usd: f64 = iteration_rows
+        .iter()
+        .map(|row| row.runtime_query_structuring_cost_usd)
+        .sum();
+    let runtime_observation_boundary_resolver_tokens: i64 = iteration_rows
+        .iter()
+        .map(|row| row.runtime_observation_boundary_resolver_tokens)
+        .sum();
+    let runtime_observation_boundary_resolver_cost_usd: f64 = iteration_rows
+        .iter()
+        .map(|row| row.runtime_observation_boundary_resolver_cost_usd)
+        .sum();
+    let runtime_observation_extraction_tokens: i64 = iteration_rows
+        .iter()
+        .map(|row| row.runtime_observation_extraction_tokens)
+        .sum();
+    let runtime_observation_extraction_cost_usd: f64 = iteration_rows
+        .iter()
+        .map(|row| row.runtime_observation_extraction_cost_usd)
+        .sum();
+    let runtime_llm_structured_generation_tokens: i64 = iteration_rows
+        .iter()
+        .map(|row| row.runtime_llm_structured_generation_tokens)
+        .sum();
+    let runtime_llm_structured_generation_cost_usd: f64 = iteration_rows
+        .iter()
+        .map(|row| row.runtime_llm_structured_generation_cost_usd)
+        .sum();
+    let first_row = iteration_rows.first();
     let judge_prompt_tokens: i64 =
         iteration_rows.iter().map(|row| row.judge_prompt_tokens).sum();
     let judge_completion_tokens: i64 = iteration_rows
@@ -659,6 +848,33 @@ pub fn build_run_summary_row(
         iterations_evaluated_count: iteration_rows.len() as i64,
         judge_provider: settings.judge.provider.clone(),
         judge_model: settings.judge.model_name.clone(),
+        runtime_query_structuring_model: first_row
+            .map(|row| row.runtime_query_structuring_model.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        runtime_observation_boundary_resolver_model: first_row
+            .map(|row| row.runtime_observation_boundary_resolver_model.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        runtime_observation_extraction_model: first_row
+            .map(|row| row.runtime_observation_extraction_model.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        runtime_llm_structured_generation_model: first_row
+            .map(|row| row.runtime_llm_structured_generation_model.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        runtime_query_structuring_prompt_version: first_row
+            .map(|row| row.runtime_query_structuring_prompt_version.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        runtime_observation_boundary_resolver_prompt_version: first_row
+            .map(|row| row.runtime_observation_boundary_resolver_prompt_version.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        runtime_observation_extraction_prompt_version: first_row
+            .map(|row| row.runtime_observation_extraction_prompt_version.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        runtime_prompt_context_prompt_version: first_row
+            .map(|row| row.runtime_prompt_context_prompt_version.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        runtime_diagnostic_update_prompt_context_prompt_version: first_row
+            .map(|row| row.runtime_diagnostic_update_prompt_context_prompt_version.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
         suite_versions: serde_json::to_value(&manifest.suite_versions)
             .expect("suite_versions must serialize"),
         usable_first_response_rate,
@@ -689,6 +905,14 @@ pub fn build_run_summary_row(
         bad_final_due_to_query_rate,
         bad_final_due_to_evidence_rate,
         bad_final_with_good_query_and_evidence_rate: bad_final_with_good_query_and_evidence_rate,
+        runtime_query_structuring_tokens,
+        runtime_query_structuring_cost_usd,
+        runtime_observation_boundary_resolver_tokens,
+        runtime_observation_boundary_resolver_cost_usd,
+        runtime_observation_extraction_tokens,
+        runtime_observation_extraction_cost_usd,
+        runtime_llm_structured_generation_tokens,
+        runtime_llm_structured_generation_cost_usd,
         usable_continuation_response_rate,
         continuation_update_judge_score,
         continuation_input_judge_score,

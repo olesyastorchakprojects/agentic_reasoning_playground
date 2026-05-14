@@ -517,6 +517,11 @@ mod tests {
             confidence: Confidence::High,
             reason: String::new(),
             resolution: ObservationBoundaryResolution::Unsupported,
+            token_usage: ModelTokenUsage {
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+            },
         }
     }
 
@@ -1363,6 +1368,11 @@ mod tests {
             resolution: ObservationBoundaryResolution::Supported(ResolvedObservation {
                 text: "some obs".to_string(),
             }),
+            token_usage: ModelTokenUsage {
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+            },
         };
         let err = analyzer().analyze_unsupported_observation(&b).unwrap_err();
         assert!(matches!(err, InformationAdequacyAnalyzerError::InvalidObservationExtractionOutput(_)));

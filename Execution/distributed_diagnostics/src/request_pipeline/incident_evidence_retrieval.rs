@@ -155,6 +155,7 @@ impl IncidentEvidenceRetrieval {
             context,
         )
             .instrument(span)
+            .instrument(context.open_inference.root_span.clone())
             .await
     }
 
@@ -243,6 +244,7 @@ impl IncidentEvidenceRetrieval {
                     }
                 }
                 .instrument(primary_span)
+                .instrument(oi_primary_span.clone())
                 .await
             };
 
@@ -372,6 +374,7 @@ impl IncidentEvidenceRetrieval {
                     }
                 }
                 .instrument(alternative_span)
+                .instrument(oi_alternatives_span.clone())
                 .await
             };
 

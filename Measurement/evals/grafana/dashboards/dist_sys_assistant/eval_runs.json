@@ -1,0 +1,217 @@
+{
+  "title": "DSA Eval Runs Compare",
+  "uid": "dsa-eval-runs-compare",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "baseline_eval_run_id",
+        "label": "Baseline Eval Run",
+        "type": "query",
+        "datasource": {
+          "type": "postgres",
+          "uid": "postgres-agentic-reasoning"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 0,
+        "query": "SELECT eval_run_id::text AS __value, to_char(started_at, 'YYYY-MM-DD HH24:MI') || '  ' || eval_run_id::text AS __text FROM diagnostics.eval_run_summaries WHERE $__timeFilter(started_at) ORDER BY started_at DESC",
+        "current": {}
+      },
+      {
+        "name": "candidate_eval_run_id",
+        "label": "Candidate Eval Run",
+        "type": "query",
+        "datasource": {
+          "type": "postgres",
+          "uid": "postgres-agentic-reasoning"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 0,
+        "query": "SELECT eval_run_id::text AS __value, to_char(started_at, 'YYYY-MM-DD HH24:MI') || '  ' || eval_run_id::text AS __text FROM diagnostics.eval_run_summaries WHERE $__timeFilter(started_at) ORDER BY started_at DESC",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Compare: Run Metadata",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-agentic-reasoning"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "WITH b AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${baseline_eval_run_id}'::uuid), c AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${candidate_eval_run_id}'::uuid) SELECT field, baseline, candidate FROM (VALUES (1, 'eval_run_id', (SELECT eval_run_id::text FROM b), (SELECT eval_run_id::text FROM c)), (2, 'run_type', (SELECT run_type FROM b), (SELECT run_type FROM c)), (3, 'started_at', (SELECT started_at::text FROM b), (SELECT started_at::text FROM c)), (4, 'iterations_evaluated_count', (SELECT iterations_evaluated_count::text FROM b), (SELECT iterations_evaluated_count::text FROM c)), (5, 'judge_model', (SELECT judge_model FROM b), (SELECT judge_model FROM c)), (6, 'query_structuring_model', (SELECT runtime_query_structuring_model FROM b), (SELECT runtime_query_structuring_model FROM c)), (7, 'observation_boundary_resolver_model', (SELECT runtime_observation_boundary_resolver_model FROM b), (SELECT runtime_observation_boundary_resolver_model FROM c)), (8, 'observation_extraction_model', (SELECT runtime_observation_extraction_model FROM b), (SELECT runtime_observation_extraction_model FROM c)), (9, 'llm_structured_generation_model', (SELECT runtime_llm_structured_generation_model FROM b), (SELECT runtime_llm_structured_generation_model FROM c))) AS t(ord, field, baseline, candidate) ORDER BY ord",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Compare: Executive Summary",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-agentic-reasoning"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "WITH b AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${baseline_eval_run_id}'::uuid), c AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${candidate_eval_run_id}'::uuid), rows AS (SELECT * FROM (VALUES (1, 'usable_first_response_rate', (SELECT usable_first_response_rate::numeric FROM b), (SELECT usable_first_response_rate::numeric FROM c)), (2, 'usable_continuation_response_rate', (SELECT usable_continuation_response_rate::numeric FROM b), (SELECT usable_continuation_response_rate::numeric FROM c)), (3, 'gate_pass_rate', (SELECT gate_pass_rate::numeric FROM b), (SELECT gate_pass_rate::numeric FROM c)), (4, 'query_structuring_judge_score', (SELECT query_structuring_judge_score::numeric FROM b), (SELECT query_structuring_judge_score::numeric FROM c)), (5, 'runtime_query_structuring_core_success_rate', (SELECT runtime_qs_core_success_rate::numeric FROM b), (SELECT runtime_qs_core_success_rate::numeric FROM c)), (6, 'runtime_retrieval_mean_ndcg', (SELECT runtime_retrieval_mean_ndcg::numeric FROM b), (SELECT runtime_retrieval_mean_ndcg::numeric FROM c)), (7, 'runtime_retrieval_all_strict_recall_success_rate', (SELECT runtime_retrieval_all_strict_recall_success_rate::numeric FROM b), (SELECT runtime_retrieval_all_strict_recall_success_rate::numeric FROM c)), (8, 'evidence_pack_judge_score', (SELECT evidence_pack_judge_score::numeric FROM b), (SELECT evidence_pack_judge_score::numeric FROM c)), (9, 'final_answer_judge_score', (SELECT final_answer_judge_score::numeric FROM b), (SELECT final_answer_judge_score::numeric FROM c)), (10, 'continuation_update_judge_score', (SELECT continuation_update_judge_score::numeric FROM b), (SELECT continuation_update_judge_score::numeric FROM c)), (11, 'continuation_input_judge_score', (SELECT continuation_input_judge_score::numeric FROM b), (SELECT continuation_input_judge_score::numeric FROM c)), (12, 'continuation_update_strict_pass_rate', (SELECT continuation_update_strict_pass_rate::numeric FROM b), (SELECT continuation_update_strict_pass_rate::numeric FROM c)), (13, 'diagnostic_move_hard_fail_rate', (SELECT diagnostic_move_hard_fail_rate::numeric FROM b), (SELECT diagnostic_move_hard_fail_rate::numeric FROM c))) AS t(ord, metric, baseline, candidate)) SELECT metric, round(baseline, 4) AS baseline, round(candidate, 4) AS candidate, round(candidate - baseline, 4) AS delta FROM rows ORDER BY ord",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 24,
+        "h": 15
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Compare: Judge-Based Aggregated Metrics",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-agentic-reasoning"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "WITH b AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${baseline_eval_run_id}'::uuid), c AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${candidate_eval_run_id}'::uuid), rows AS (SELECT * FROM (VALUES (1, 'query_structuring_judge_score', (SELECT query_structuring_judge_score::numeric FROM b), (SELECT query_structuring_judge_score::numeric FROM c)), (2, 'evidence_pack_judge_score', (SELECT evidence_pack_judge_score::numeric FROM b), (SELECT evidence_pack_judge_score::numeric FROM c)), (3, 'final_answer_judge_score', (SELECT final_answer_judge_score::numeric FROM b), (SELECT final_answer_judge_score::numeric FROM c)), (4, 'query_structuring_no_hard_fail_rate', (SELECT query_structuring_no_hard_fail_rate::numeric FROM b), (SELECT query_structuring_no_hard_fail_rate::numeric FROM c)), (5, 'evidence_pack_no_hard_fail_rate', (SELECT evidence_pack_no_hard_fail_rate::numeric FROM b), (SELECT evidence_pack_no_hard_fail_rate::numeric FROM c)), (6, 'final_answer_no_hard_fail_rate', (SELECT final_answer_no_hard_fail_rate::numeric FROM b), (SELECT final_answer_no_hard_fail_rate::numeric FROM c)), (7, 'query_structuring_strict_pass_rate', (SELECT query_structuring_strict_pass_rate::numeric FROM b), (SELECT query_structuring_strict_pass_rate::numeric FROM c)), (8, 'evidence_pack_strict_pass_rate', (SELECT evidence_pack_strict_pass_rate::numeric FROM b), (SELECT evidence_pack_strict_pass_rate::numeric FROM c)), (9, 'final_answer_strict_pass_rate', (SELECT final_answer_strict_pass_rate::numeric FROM b), (SELECT final_answer_strict_pass_rate::numeric FROM c)), (10, 'usable_continuation_response_rate', (SELECT usable_continuation_response_rate::numeric FROM b), (SELECT usable_continuation_response_rate::numeric FROM c)), (11, 'continuation_update_judge_score', (SELECT continuation_update_judge_score::numeric FROM b), (SELECT continuation_update_judge_score::numeric FROM c)), (12, 'continuation_input_judge_score', (SELECT continuation_input_judge_score::numeric FROM b), (SELECT continuation_input_judge_score::numeric FROM c)), (13, 'continuation_update_no_hard_fail_rate', (SELECT continuation_update_no_hard_fail_rate::numeric FROM b), (SELECT continuation_update_no_hard_fail_rate::numeric FROM c)), (14, 'continuation_update_strict_pass_rate', (SELECT continuation_update_strict_pass_rate::numeric FROM b), (SELECT continuation_update_strict_pass_rate::numeric FROM c)), (15, 'continuation_input_no_hard_fail_rate', (SELECT continuation_input_no_hard_fail_rate::numeric FROM b), (SELECT continuation_input_no_hard_fail_rate::numeric FROM c)), (16, 'continuation_input_strict_pass_rate', (SELECT continuation_input_strict_pass_rate::numeric FROM b), (SELECT continuation_input_strict_pass_rate::numeric FROM c))) AS t(ord, metric, baseline, candidate)) SELECT metric, round(baseline, 4) AS baseline, round(candidate, 4) AS candidate, round(candidate - baseline, 4) AS delta FROM rows ORDER BY ord",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 24,
+        "h": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Compare: Failure Attribution",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-agentic-reasoning"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "WITH b AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${baseline_eval_run_id}'::uuid), c AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${candidate_eval_run_id}'::uuid), rows AS (SELECT * FROM (VALUES (1, 'bad_final_due_to_query_rate', (SELECT bad_final_due_to_query_rate::numeric FROM b), (SELECT bad_final_due_to_query_rate::numeric FROM c)), (2, 'bad_final_due_to_evidence_rate', (SELECT bad_final_due_to_evidence_rate::numeric FROM b), (SELECT bad_final_due_to_evidence_rate::numeric FROM c)), (3, 'bad_final_with_good_query_and_evidence_rate', (SELECT bad_final_with_good_query_and_evidence_rate::numeric FROM b), (SELECT bad_final_with_good_query_and_evidence_rate::numeric FROM c))) AS t(ord, metric, baseline, candidate)) SELECT metric, round(baseline, 4) AS baseline, round(candidate, 4) AS candidate, round(candidate - baseline, 4) AS delta FROM rows ORDER BY ord",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 10
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "title": "Compare: Usage And Cost",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-agentic-reasoning"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "WITH b AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${baseline_eval_run_id}'::uuid), c AS (SELECT * FROM diagnostics.eval_run_summaries WHERE eval_run_id = '${candidate_eval_run_id}'::uuid), rows AS (SELECT * FROM (VALUES (1, 'runtime_total_tokens', (SELECT runtime_total_tokens::numeric FROM b), (SELECT runtime_total_tokens::numeric FROM c)), (2, 'judge_total_tokens', (SELECT judge_total_tokens::numeric FROM b), (SELECT judge_total_tokens::numeric FROM c)), (3, 'run_total_tokens', (SELECT run_total_tokens::numeric FROM b), (SELECT run_total_tokens::numeric FROM c)), (4, 'runtime_total_cost_usd', (SELECT runtime_total_cost_usd::numeric FROM b), (SELECT runtime_total_cost_usd::numeric FROM c)), (5, 'judge_total_cost_usd', (SELECT judge_total_cost_usd::numeric FROM b), (SELECT judge_total_cost_usd::numeric FROM c)), (6, 'run_total_cost_usd', (SELECT run_total_cost_usd::numeric FROM b), (SELECT run_total_cost_usd::numeric FROM c))) AS t(ord, metric, baseline, candidate)) SELECT metric, baseline, candidate, candidate - baseline AS delta FROM rows ORDER BY ord",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 24,
+        "h": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "metric"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".*cost.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

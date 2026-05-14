@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -12,12 +13,13 @@ use super::{
     DenseCollectionSettings, DiagnosticUpdateChunkPackingSettings,
     DiagnosticUpdatePromptContextSettings, EmbeddingModelSettings, HybridCollectionSettings,
     IncidentEvidenceRetrievalProfiles, IncidentEvidenceRetrievalSettings,
-    IncidentEvidenceTagProfile, InputNormalizationSettings, LlmStructuredGenerationSettings,
-    ModelSettings, ModelTransportSettings, ObservabilitySettings,
+    IncidentEvidenceTagProfile, InputNormalizationSettings, ModelPricingSettings,
+    ModelSettings, ObservabilitySettings,
     ObservationBoundaryResolverRuntimeSettings, ObservationExtractionRuntimeSettings,
-    OllamaModelSettings, PostgresSettings, PromptContextSettings, QueryStructuringSettings,
-    RetrievalSettings, RuntimeSettings, Settings, SparsePreprocessingSettings, SparseSettings,
-    SparseStrategySettings, TogetherModelSettings, TokenizerSettings,
+    OllamaProviderSettings, PostgresSettings, PromptContextSettings,
+    QueryStructuringRuntimeSettings, RetrievalSettings, RuntimeSettings, Settings,
+    SparsePreprocessingSettings, SparseSettings, SparseStrategySettings,
+    TogetherProviderSettings, TokenizerSettings, LlmStructuredGenerationRuntimeSettings,
 };
 
 
@@ -101,6 +103,8 @@ struct RawDiagnosticUpdateChunkPacking {
 
 #[derive(Debug, Deserialize)]
 struct RawLlmStructuredGeneration {
+    provider: String,
+    model: String,
     max_output_tokens: u32,
 }
 
@@ -112,6 +116,8 @@ struct RawInputNormalization {
 
 #[derive(Debug, Deserialize)]
 struct RawQueryStructuring {
+    provider: String,
+    model: String,
     controlled_vocabulary_path: String,
     prompt_asset_path: String,
     max_output_tokens: u32,
@@ -146,30 +152,27 @@ struct RawRetryPolicy {
 
 #[derive(Debug, Deserialize)]
 struct RawModel {
-    transport_kind: String,
-    ollama: Option<RawOllamaModel>,
-    together: Option<RawTogetherModel>,
+    ollama: RawOllamaProvider,
+    together: RawTogetherProvider,
 }
 
 #[derive(Debug, Deserialize)]
-struct RawOllamaModel {
-    model_name: String,
+struct RawOllamaProvider {
     timeout_sec: u64,
     retry: RawRetryPolicy,
-    #[serde(default)]
-    input_cost_per_million_tokens: f64,
-    #[serde(default)]
-    output_cost_per_million_tokens: f64,
+    models: BTreeMap<String, RawModelPricing>,
 }
 
 #[derive(Debug, Deserialize)]
-struct RawTogetherModel {
-    model_name: String,
+struct RawTogetherProvider {
     timeout_sec: u64,
     retry: RawRetryPolicy,
-    #[serde(default)]
+    models: BTreeMap<String, RawModelPricing>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawModelPricing {
     input_cost_per_million_tokens: f64,
-    #[serde(default)]
     output_cost_per_million_tokens: f64,
 }
 
@@ -344,7 +347,31 @@ fn load_inner(
     let tracing_endpoint = require_env_fn(env_fn, "TRACING_ENDPOINT")?;
     let metrics_endpoint = require_env_fn(env_fn, "METRICS_ENDPOINT")?;
 
-    let model_transport = resolve_model_transport(&raw.model, &ollama_url, env_fn)?;
+    let model_settings = resolve_model_settings(&raw.model, &ollama_url, env_fn)?;
+    validate_stage_model_binding(
+        &model_settings,
+        "query_structuring",
+        &raw.query_structuring.provider,
+        &raw.query_structuring.model,
+    )?;
+    validate_stage_model_binding(
+        &model_settings,
+        "observation_boundary_resolver",
+        &raw.observation_boundary_resolver.provider,
+        &raw.observation_boundary_resolver.model,
+    )?;
+    validate_stage_model_binding(
+        &model_settings,
+        "observation_extraction",
+        &raw.observation_extraction.provider,
+        &raw.observation_extraction.model,
+    )?;
+    validate_stage_model_binding(
+        &model_settings,
+        "llm_structured_generation",
+        &raw.llm_structured_generation.provider,
+        &raw.llm_structured_generation.model,
+    )?;
 
     Ok(Settings {
         runtime: RuntimeSettings {
@@ -360,12 +387,16 @@ fn load_inner(
             max_input_tokens: raw.input_normalization.max_input_tokens,
             tokenizer_source: raw.input_normalization.tokenizer_source,
         },
-        query_structuring: QueryStructuringSettings {
+        query_structuring: QueryStructuringRuntimeSettings {
+            provider: raw.query_structuring.provider,
+            model: raw.query_structuring.model,
             controlled_vocabulary_path: raw.query_structuring.controlled_vocabulary_path,
             prompt_asset_path: raw.query_structuring.prompt_asset_path,
             max_output_tokens: raw.query_structuring.max_output_tokens,
         },
-        llm_structured_generation: LlmStructuredGenerationSettings {
+        llm_structured_generation: LlmStructuredGenerationRuntimeSettings {
+            provider: raw.llm_structured_generation.provider,
+            model: raw.llm_structured_generation.model,
             max_output_tokens: raw.llm_structured_generation.max_output_tokens,
         },
         observation_boundary_resolver: ObservationBoundaryResolverRuntimeSettings {
@@ -383,9 +414,7 @@ fn load_inner(
         incident_evidence_retrieval,
         prompt_context,
         diagnostic_update_prompt_context,
-        model: ModelSettings {
-            transport: model_transport,
-        },
+        model: model_settings,
         embedding_model: EmbeddingModelSettings {
             url: ollama_url,
             name: raw.embedding.model.name,
@@ -433,52 +462,93 @@ fn resolve_retry(raw: &RawRetryPolicy, field: &str) -> Result<RetryPolicyConfig,
     })
 }
 
-fn resolve_model_transport(
+fn resolve_model_settings(
     raw: &RawModel,
     ollama_url: &str,
     env_fn: &impl Fn(&str) -> Option<String>,
-) -> Result<ModelTransportSettings, ConfigError> {
-    match raw.transport_kind.as_str() {
-        "ollama" => {
-            let cfg = raw.ollama.as_ref().ok_or_else(|| {
-                ConfigError::Load(
-                    "model.transport_kind = \"ollama\" but [model.ollama] section is missing"
-                        .into(),
-                )
-            })?;
-            Ok(ModelTransportSettings::Ollama(OllamaModelSettings {
-                url: ollama_url.to_string(),
-                model_name: cfg.model_name.clone(),
-                timeout_sec: cfg.timeout_sec,
-                retry: resolve_retry(&cfg.retry, "model.ollama.retry")?,
-                input_cost_per_million_tokens: cfg.input_cost_per_million_tokens,
-                output_cost_per_million_tokens: cfg.output_cost_per_million_tokens,
-            }))
+) -> Result<ModelSettings, ConfigError> {
+    let together_url = require_env_fn(env_fn, "OPENAI_COMPATIBLE_URL")?;
+    let together_api_key = require_env_fn(env_fn, "TOGETHER_API_KEY")?;
+
+    Ok(ModelSettings {
+        ollama: OllamaProviderSettings {
+            url: ollama_url.to_string(),
+            timeout_sec: raw.ollama.timeout_sec,
+            retry: resolve_retry(&raw.ollama.retry, "model.ollama.retry")?,
+            models: resolve_model_catalog(&raw.ollama.models, "model.ollama.models")?,
+        },
+        together: TogetherProviderSettings {
+            url: together_url,
+            api_key: together_api_key,
+            timeout_sec: raw.together.timeout_sec,
+            retry: resolve_retry(&raw.together.retry, "model.together.retry")?,
+            models: resolve_model_catalog(&raw.together.models, "model.together.models")?,
+        },
+    })
+}
+
+fn resolve_model_catalog(
+    raw: &BTreeMap<String, RawModelPricing>,
+    field_prefix: &str,
+) -> Result<BTreeMap<String, ModelPricingSettings>, ConfigError> {
+    let mut resolved = BTreeMap::new();
+    for (model_name, pricing) in raw {
+        if model_name.trim().is_empty() {
+            return Err(ConfigError::InvalidValue {
+                field: field_prefix.to_string(),
+                reason: "model id must not be empty".to_string(),
+            });
         }
-        "together" => {
-            let cfg = raw.together.as_ref().ok_or_else(|| {
-                ConfigError::Load(
-                    "model.transport_kind = \"together\" but [model.together] section is missing"
-                        .into(),
-                )
-            })?;
-            let url = require_env_fn(env_fn, "OPENAI_COMPATIBLE_URL")?;
-            let api_key = require_env_fn(env_fn, "TOGETHER_API_KEY")?;
-            Ok(ModelTransportSettings::Together(TogetherModelSettings {
-                url,
-                api_key,
-                model_name: cfg.model_name.clone(),
-                timeout_sec: cfg.timeout_sec,
-                retry: resolve_retry(&cfg.retry, "model.together.retry")?,
-                input_cost_per_million_tokens: cfg.input_cost_per_million_tokens,
-                output_cost_per_million_tokens: cfg.output_cost_per_million_tokens,
-            }))
+        if pricing.input_cost_per_million_tokens < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: format!("{field_prefix}.{model_name}.input_cost_per_million_tokens"),
+                reason: "must be >= 0".to_string(),
+            });
         }
-        other => Err(ConfigError::InvalidValue {
-            field: "model.transport_kind".to_string(),
-            reason: format!("unknown transport kind '{other}'"),
-        }),
+        if pricing.output_cost_per_million_tokens < 0.0 {
+            return Err(ConfigError::InvalidValue {
+                field: format!("{field_prefix}.{model_name}.output_cost_per_million_tokens"),
+                reason: "must be >= 0".to_string(),
+            });
+        }
+        resolved.insert(
+            model_name.clone(),
+            ModelPricingSettings {
+                input_cost_per_million_tokens: pricing.input_cost_per_million_tokens,
+                output_cost_per_million_tokens: pricing.output_cost_per_million_tokens,
+            },
+        );
     }
+    Ok(resolved)
+}
+
+fn validate_stage_model_binding(
+    model_settings: &ModelSettings,
+    stage_name: &str,
+    provider: &str,
+    model_name: &str,
+) -> Result<(), ConfigError> {
+    if provider.trim().is_empty() {
+        return Err(ConfigError::InvalidValue {
+            field: format!("{stage_name}.provider"),
+            reason: "must not be empty".to_string(),
+        });
+    }
+    if model_name.trim().is_empty() {
+        return Err(ConfigError::InvalidValue {
+            field: format!("{stage_name}.model"),
+            reason: "must not be empty".to_string(),
+        });
+    }
+    if model_settings.resolve(provider, model_name).is_none() {
+        return Err(ConfigError::InvalidValue {
+            field: format!("{stage_name}.model"),
+            reason: format!(
+                "model '{model_name}' is not declared in provider catalog '{provider}'"
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn resolve_collection_retrieval(
@@ -772,6 +842,8 @@ mod tests {
     fn default_env() -> HashMap<&'static str, &'static str> {
         let mut m = HashMap::new();
         m.insert("OLLAMA_URL", "http://ollama-test:11434");
+        m.insert("OPENAI_COMPATIBLE_URL", "https://api.together.xyz/v1");
+        m.insert("TOGETHER_API_KEY", "test-key");
         m.insert("QDRANT_URL", "http://qdrant-test:6333");
         m.insert("POSTGRES_URL", "postgres://pg-test/db");
         m.insert("TRACING_ENDPOINT", "http://otel-test:4317");
@@ -800,11 +872,15 @@ max_input_tokens = 3000
 tokenizer_source = "Qwen/Qwen3-Embedding-0.6B"
 
 [query_structuring]
+provider = "ollama"
+model = "qwen2.5:1.5b-instruct"
 controlled_vocabulary_path = "Specification/runtime/request_pipeline/query_structuring_controlled_vocabulary.manual_test.json"
 prompt_asset_path = "Specification/runtime/request_pipeline/query_structuring_prompt_baseline_v2.manual_test.json"
 max_output_tokens = 2200
 
 [llm_structured_generation]
+provider = "ollama"
+model = "qwen2.5:1.5b-instruct"
 max_output_tokens = 1200
 
 [observation_boundary_resolver]
@@ -947,24 +1023,27 @@ backoff = "exponential"
 max_attempts = 3
 backoff = "exponential"
 
-[model]
-transport_kind = "ollama"
-
 [model.ollama]
-model_name = "qwen2.5:1.5b-instruct"
 timeout_sec = 120
 
 [model.ollama.retry]
 max_attempts = 3
 backoff = "exponential"
 
+[model.ollama.models."qwen2.5:1.5b-instruct"]
+input_cost_per_million_tokens = 0.0
+output_cost_per_million_tokens = 0.0
+
 [model.together]
-model_name = "openai/gpt-oss-20b"
 timeout_sec = 120
 
 [model.together.retry]
 max_attempts = 3
 backoff = "exponential"
+
+[model.together.models."openai/gpt-oss-20b"]
+input_cost_per_million_tokens = 0.05
+output_cost_per_million_tokens = 0.20
 
 [observability]
 tracing_enabled = true
@@ -1208,52 +1287,41 @@ vector_name = "dense"
     }
 
     #[test]
-    fn ollama_transport_kind_resolves_to_ollama_variant() {
+    fn query_structuring_binding_is_preserved() {
         let env = default_env();
-        let rt = write_temp(RUNTIME_TOML); // transport_kind = "ollama"
+        let rt = write_temp(RUNTIME_TOML);
         let ing = write_temp(INGEST_TOML_HYBRID);
 
         let s = load_test(&rt, &ing, &env).unwrap();
-        assert!(
-            matches!(s.model.transport, ModelTransportSettings::Ollama(_)),
-            "expected Ollama variant"
-        );
+        assert_eq!(s.query_structuring.provider, "ollama");
+        assert_eq!(s.query_structuring.model, "qwen2.5:1.5b-instruct");
     }
 
     #[test]
-    fn together_transport_kind_resolves_to_together_variant() {
-        let mut env = default_env();
-        env.insert("OPENAI_COMPATIBLE_URL", "https://api.together.xyz/v1");
-        env.insert("TOGETHER_API_KEY", "test-key");
-
-        let together_rt = RUNTIME_TOML.replace(
-            "transport_kind = \"ollama\"",
-            "transport_kind = \"together\"",
-        );
-        let rt = write_temp(&together_rt);
+    fn llm_structured_generation_binding_is_preserved() {
+        let env = default_env();
+        let rt = write_temp(RUNTIME_TOML);
         let ing = write_temp(INGEST_TOML_HYBRID);
 
         let s = load_test(&rt, &ing, &env).unwrap();
-        assert!(
-            matches!(s.model.transport, ModelTransportSettings::Together(_)),
-            "expected Together variant"
-        );
+        assert_eq!(s.llm_structured_generation.provider, "ollama");
+        assert_eq!(s.llm_structured_generation.model, "qwen2.5:1.5b-instruct");
     }
 
     #[test]
-    fn unknown_transport_kind_fails_with_invalid_value() {
+    fn unknown_provider_binding_fails_with_invalid_value() {
         let env = default_env();
         let bad_rt = RUNTIME_TOML.replace(
-            "transport_kind = \"ollama\"",
-            "transport_kind = \"unknown_transport\"",
+            "provider = \"ollama\"",
+            "provider = \"unknown_provider\"",
         );
         let rt = write_temp(&bad_rt);
         let ing = write_temp(INGEST_TOML_HYBRID);
 
         let err = load_test(&rt, &ing, &env).expect_err("should fail");
         assert!(
-            matches!(err, ConfigError::InvalidValue { ref field, .. } if field == "model.transport_kind"),
-            "expected InvalidValue for transport_kind, got: {err}"
+            matches!(err, ConfigError::InvalidValue { ref field, .. } if field == "query_structuring.model"),
+            "expected InvalidValue for provider/model binding, got: {err}"
         );
     }
 

@@ -55,6 +55,10 @@ fn code_legend() -> String {
      > CU1 = continuation_hypothesis_update_discipline ; CU2 = continuation_problem_understanding_update ; CU3 = continuation_next_check_progression ; CU4 = continuation_observation_resolution_context_recovery\n".to_string()
 }
 
+fn suite_overview_link_note() -> &'static str {
+    "\n\n> See [Appendix D: Suite Overview](#appendix-d-suite-overview) for the detailed suite description.\n"
+}
+
 fn suite_score_for_name(r: &EvalIterationSummaryRow, name: &str) -> i16 {
     match name {
         "final_no_root_cause_claim" => r.final_no_root_cause_claim_score,
@@ -649,6 +653,7 @@ fn render_judge_aggregated_metrics(
     out.push_str(&judge_metrics_table(&initial, &cont));
     out.push('\n');
     out.push_str(&code_legend());
+    out.push_str(suite_overview_link_note());
     out.push('\n');
     out
 }
@@ -873,6 +878,7 @@ fn render_judge_per_run_appendix(
     }
 
     out.push_str(&code_legend());
+    out.push_str(suite_overview_link_note());
     out.push('\n');
     out
 }
@@ -882,6 +888,61 @@ fn avg_rt_target(rows: &[EvalIterationSummaryRow], get_metrics: fn(&EvalIteratio
         .filter_map(|r| get_metrics(r)?.get(metric)?.as_f64())
         .collect();
     if vals.is_empty() { None } else { Some(vals.iter().sum::<f64>() / vals.len() as f64) }
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeStageReportRow {
+    scope: &'static str,
+    model: String,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    total_tokens: i64,
+    input_cost_per_million_tokens: f64,
+    output_cost_per_million_tokens: f64,
+    total_cost_usd: f64,
+}
+
+#[derive(Debug, Clone)]
+struct JudgeSuiteReportRow {
+    suite: String,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    total_tokens: i64,
+    input_cost_per_million_tokens: f64,
+    output_cost_per_million_tokens: f64,
+    prompt_cost_usd: f64,
+    completion_cost_usd: f64,
+    total_cost_usd: f64,
+}
+
+#[derive(Debug, Clone)]
+struct ModelCostReportRow {
+    model: String,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    input_cost_per_million_tokens: f64,
+    output_cost_per_million_tokens: f64,
+    prompt_cost_usd: f64,
+    completion_cost_usd: f64,
+    total_cost_usd: f64,
+}
+
+fn format_cost_cell(tokens: i64, cost_per_million: f64, total_cost_usd: f64) -> String {
+    format!(
+        "{} * ${}/1M = {:.6}",
+        tokens, format_price_per_million(cost_per_million), total_cost_usd
+    )
+}
+
+fn format_price_per_million(cost_per_million: f64) -> String {
+    let mut s = format!("{:.2}", cost_per_million);
+    while s.contains('.') && s.ends_with('0') {
+        s.pop();
+    }
+    if s.ends_with('.') {
+        s.push('0');
+    }
+    s
 }
 
 fn render_run_report(
@@ -904,9 +965,180 @@ fn render_run_report(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     let worst_cases: Vec<_> = worst_cases.into_iter().take(5).collect();
+    let first_iteration = iteration_rows.first();
+    let first_judge_call = judge_calls.first();
+
+    let runtime_stage_rows = vec![
+        RuntimeStageReportRow {
+            scope: "query_structuring",
+            model: run_summary.runtime_query_structuring_model.clone(),
+            prompt_tokens: iteration_rows.iter().map(|row| row.runtime_query_structuring_prompt_tokens).sum(),
+            completion_tokens: iteration_rows.iter().map(|row| row.runtime_query_structuring_completion_tokens).sum(),
+            total_tokens: iteration_rows.iter().map(|row| row.runtime_query_structuring_tokens).sum(),
+            input_cost_per_million_tokens: first_iteration
+                .map(|row| row.runtime_query_structuring_input_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            output_cost_per_million_tokens: first_iteration
+                .map(|row| row.runtime_query_structuring_output_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            total_cost_usd: iteration_rows.iter().map(|row| row.runtime_query_structuring_cost_usd).sum(),
+        },
+        RuntimeStageReportRow {
+            scope: "observation_boundary_resolver",
+            model: run_summary.runtime_observation_boundary_resolver_model.clone(),
+            prompt_tokens: iteration_rows
+                .iter()
+                .map(|row| row.runtime_observation_boundary_resolver_prompt_tokens)
+                .sum(),
+            completion_tokens: iteration_rows
+                .iter()
+                .map(|row| row.runtime_observation_boundary_resolver_completion_tokens)
+                .sum(),
+            total_tokens: iteration_rows
+                .iter()
+                .map(|row| row.runtime_observation_boundary_resolver_tokens)
+                .sum(),
+            input_cost_per_million_tokens: first_iteration
+                .map(|row| row.runtime_observation_boundary_resolver_input_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            output_cost_per_million_tokens: first_iteration
+                .map(|row| row.runtime_observation_boundary_resolver_output_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            total_cost_usd: iteration_rows
+                .iter()
+                .map(|row| row.runtime_observation_boundary_resolver_cost_usd)
+                .sum(),
+        },
+        RuntimeStageReportRow {
+            scope: "observation_extraction",
+            model: run_summary.runtime_observation_extraction_model.clone(),
+            prompt_tokens: iteration_rows
+                .iter()
+                .map(|row| row.runtime_observation_extraction_prompt_tokens)
+                .sum(),
+            completion_tokens: iteration_rows
+                .iter()
+                .map(|row| row.runtime_observation_extraction_completion_tokens)
+                .sum(),
+            total_tokens: iteration_rows
+                .iter()
+                .map(|row| row.runtime_observation_extraction_tokens)
+                .sum(),
+            input_cost_per_million_tokens: first_iteration
+                .map(|row| row.runtime_observation_extraction_input_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            output_cost_per_million_tokens: first_iteration
+                .map(|row| row.runtime_observation_extraction_output_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            total_cost_usd: iteration_rows
+                .iter()
+                .map(|row| row.runtime_observation_extraction_cost_usd)
+                .sum(),
+        },
+        RuntimeStageReportRow {
+            scope: "llm_structured_generation",
+            model: run_summary.runtime_llm_structured_generation_model.clone(),
+            prompt_tokens: iteration_rows
+                .iter()
+                .map(|row| row.runtime_llm_structured_generation_prompt_tokens)
+                .sum(),
+            completion_tokens: iteration_rows
+                .iter()
+                .map(|row| row.runtime_llm_structured_generation_completion_tokens)
+                .sum(),
+            total_tokens: iteration_rows
+                .iter()
+                .map(|row| row.runtime_llm_structured_generation_tokens)
+                .sum(),
+            input_cost_per_million_tokens: first_iteration
+                .map(|row| row.runtime_llm_structured_generation_input_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            output_cost_per_million_tokens: first_iteration
+                .map(|row| row.runtime_llm_structured_generation_output_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            total_cost_usd: iteration_rows
+                .iter()
+                .map(|row| row.runtime_llm_structured_generation_cost_usd)
+                .sum(),
+        },
+    ];
+    let runtime_total_prompt_cost_usd: f64 = runtime_stage_rows
+        .iter()
+        .map(|row| row.prompt_tokens as f64 * row.input_cost_per_million_tokens / 1_000_000.0)
+        .sum();
+    let runtime_total_completion_cost_usd: f64 = runtime_stage_rows
+        .iter()
+        .map(|row| row.completion_tokens as f64 * row.output_cost_per_million_tokens / 1_000_000.0)
+        .sum();
+    let runtime_total_stage_row = RuntimeStageReportRow {
+        scope: "runtime_total",
+        model: "—".to_string(),
+        prompt_tokens: runtime_stage_rows.iter().map(|row| row.prompt_tokens).sum(),
+        completion_tokens: runtime_stage_rows.iter().map(|row| row.completion_tokens).sum(),
+        total_tokens: runtime_stage_rows.iter().map(|row| row.total_tokens).sum(),
+        input_cost_per_million_tokens: 0.0,
+        output_cost_per_million_tokens: 0.0,
+        total_cost_usd: runtime_stage_rows.iter().map(|row| row.total_cost_usd).sum(),
+    };
+    let mut model_pricing: BTreeMap<String, (f64, f64)> = BTreeMap::new();
+    if let Some(call) = first_judge_call {
+        model_pricing.insert(
+            run_summary.judge_model.clone(),
+            (
+                call.input_cost_per_million_tokens,
+                call.output_cost_per_million_tokens,
+            ),
+        );
+    }
+    for row in &runtime_stage_rows {
+        model_pricing
+            .entry(row.model.clone())
+            .or_insert((row.input_cost_per_million_tokens, row.output_cost_per_million_tokens));
+    }
+    let mut runtime_model_costs: BTreeMap<String, ModelCostReportRow> = BTreeMap::new();
+    for row in &runtime_stage_rows {
+        let prompt_cost_usd =
+            row.prompt_tokens as f64 * row.input_cost_per_million_tokens / 1_000_000.0;
+        let completion_cost_usd =
+            row.completion_tokens as f64 * row.output_cost_per_million_tokens / 1_000_000.0;
+        let entry = runtime_model_costs
+            .entry(row.model.clone())
+            .or_insert_with(|| ModelCostReportRow {
+                model: row.model.clone(),
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                input_cost_per_million_tokens: row.input_cost_per_million_tokens,
+                output_cost_per_million_tokens: row.output_cost_per_million_tokens,
+                prompt_cost_usd: 0.0,
+                completion_cost_usd: 0.0,
+                total_cost_usd: 0.0,
+            });
+        entry.prompt_tokens += row.prompt_tokens;
+        entry.completion_tokens += row.completion_tokens;
+        entry.prompt_cost_usd += prompt_cost_usd;
+        entry.completion_cost_usd += completion_cost_usd;
+        entry.total_cost_usd += row.total_cost_usd;
+    }
 
     let mut out = String::new();
     out.push_str("# Eval Run Report\n\n");
+    out.push_str("## Contents\n\n");
+    out.push_str("- [Run Metadata](#run-metadata)\n");
+    out.push_str("- [Metric Layers](#metric-layers)\n");
+    out.push_str("- [Executive Summary](#executive-summary)\n");
+    out.push_str("- [Runtime Gold Metrics](#runtime-gold-metrics)\n");
+    out.push_str("- [Where Quality Was Lost](#where-quality-was-lost)\n");
+    out.push_str("- [Judge-Based Aggregated Metrics](#judge-based-aggregated-metrics)\n");
+    out.push_str("- [Suite Distributions](#suite-distributions)\n");
+    out.push_str("- [Gate Breakdown](#gate-breakdown)\n");
+    out.push_str("- [Failure Attribution](#failure-attribution)\n");
+    out.push_str("- [Runtime vs Judge Interpretation](#runtime-vs-judge-interpretation)\n");
+    out.push_str("- [Worst-Case Preview](#worst-case-preview)\n");
+    out.push_str("- [Token Usage](#token-usage)\n");
+    out.push_str("- [Appendix A: Full Query Structuring Diagnostics](#appendix-a-full-query-structuring-diagnostics)\n");
+    out.push_str("- [Appendix B: Full Retrieval Diagnostics](#appendix-b-full-retrieval-diagnostics)\n");
+    out.push_str("- [Appendix C: Judge Metrics Per Run](#appendix-c-judge-metrics-per-run)\n\n");
+    out.push_str("- [Appendix D: Suite Overview](#appendix-d-suite-overview)\n\n");
 
     out.push_str("## Run Metadata\n\n");
     out.push_str(&format!("- eval_run_id: `{}`\n", manifest.eval_run_id));
@@ -920,29 +1152,56 @@ fn render_run_report(
     out.push_str(&format!("- runtime_run_count: `{}`\n", run_summary.runtime_run_count));
     out.push_str(&format!("- iterations_evaluated_count: `{}`\n", run_summary.iterations_evaluated_count));
     out.push_str(&format!("- judge_model: `{}`\n", run_summary.judge_model));
+    out.push_str(&format!(
+        "- query_structuring_model: `{}`\n",
+        run_summary.runtime_query_structuring_model
+    ));
+    out.push_str(&format!(
+        "- observation_boundary_resolver_model: `{}`\n",
+        run_summary.runtime_observation_boundary_resolver_model
+    ));
+    out.push_str(&format!(
+        "- observation_extraction_model: `{}`\n",
+        run_summary.runtime_observation_extraction_model
+    ));
+    out.push_str(&format!(
+        "- llm_structured_generation_model: `{}`\n",
+        run_summary.runtime_llm_structured_generation_model
+    ));
+    out.push_str(&format!(
+        "- query_structuring_prompt_version: `{}`\n",
+        run_summary.runtime_query_structuring_prompt_version
+    ));
+    out.push_str(&format!(
+        "- observation_boundary_resolver_prompt_version: `{}`\n",
+        run_summary.runtime_observation_boundary_resolver_prompt_version
+    ));
+    out.push_str(&format!(
+        "- observation_extraction_prompt_version: `{}`\n",
+        run_summary.runtime_observation_extraction_prompt_version
+    ));
+    out.push_str(&format!(
+        "- prompt_context_prompt_version: `{}`\n",
+        run_summary.runtime_prompt_context_prompt_version
+    ));
+    out.push_str(&format!(
+        "- diagnostic_update_prompt_context_prompt_version: `{}`\n",
+        run_summary.runtime_diagnostic_update_prompt_context_prompt_version
+    ));
     out.push_str(&format!("- suite_count: `{}`\n\n", manifest.suite_versions.len()));
-
-    out.push_str("## Suite Overview\n\n");
-    for suite_name in enabled_suites {
-        if let Some(def) = catalog.get(suite_name) {
-            let code = suite_code(suite_name);
-            let applies_to = match def.applies_to {
-                SuiteApplicability::Shared => "shared",
-                SuiteApplicability::InitialOnly => "initial only",
-                SuiteApplicability::ContinuationOnly => "continuation only",
-            };
-            out.push_str(&format!("### {}\n\n", suite_name));
-            out.push_str("| code | applies to | checks | why | inputs | score |\n|---|---|---|---|---|---:|\n");
+    out.push_str("### Token Pricing\n\n");
+    if !model_pricing.is_empty() {
+        out.push_str("| model | input_price_per_1m | output_price_per_1m |\n|---|---:|---:|\n");
+        for (model, (input_price, output_price)) in &model_pricing {
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {} | 0/1/2 |\n\n",
-                code,
-                applies_to,
-                def.what_it_checks,
-                def.why_it_matters,
-                def.inputs_to_judge.join(", "),
+                "| {} | ${}/1M | ${}/1M |\n",
+                model,
+                format_price_per_million(*input_price),
+                format_price_per_million(*output_price),
             ));
         }
     }
+    out.push('\n');
 
     // ── Metric Layers ────────────────────────────────────────────────────────
     out.push_str("## Metric Layers\n\n");
@@ -968,6 +1227,9 @@ fn render_run_report(
         out.push_str(&format!("| continuation_input_judge_score | {} | Judge-based quality of reconstructing the new observation from context |\n", fmt_opt(run_summary.continuation_input_judge_score, 4)));
         out.push_str(&format!("| continuation_update_strict_pass_rate | {} | Share of continuation iterations where CU1, CU2, CU3 all scored 2 |\n", fmt_opt(run_summary.continuation_update_strict_pass_rate, 4)));
     }
+    out.push('\n');
+    out.push_str(&code_legend());
+    out.push_str(suite_overview_link_note());
     out.push('\n');
 
     // ── Judge-Based Aggregated Metrics ────────────────────────────────────────
@@ -1189,6 +1451,7 @@ fn render_run_report(
     }
 
     out.push_str(&code_legend());
+    out.push_str(suite_overview_link_note());
     out.push('\n');
 
     // ── Where Quality Was Lost ────────────────────────────────────────────────
@@ -1219,21 +1482,134 @@ fn render_run_report(
     out.push_str("## Token Usage\n\n");
 
     // Per-suite breakdown
-    let mut suite_totals: BTreeMap<String, (i64, i64, f64)> = BTreeMap::new();
+    let mut suite_totals: BTreeMap<String, JudgeSuiteReportRow> = BTreeMap::new();
     for call in judge_calls {
-        let e = suite_totals.entry(call.suite_name.clone()).or_insert((0, 0, 0.0));
-        e.0 += call.prompt_tokens;
-        e.1 += call.completion_tokens;
-        e.2 += call.total_cost_usd;
+        let entry = suite_totals
+            .entry(call.suite_name.clone())
+            .or_insert_with(|| JudgeSuiteReportRow {
+                suite: call.suite_name.clone(),
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+                input_cost_per_million_tokens: call.input_cost_per_million_tokens,
+                output_cost_per_million_tokens: call.output_cost_per_million_tokens,
+                prompt_cost_usd: 0.0,
+                completion_cost_usd: 0.0,
+                total_cost_usd: 0.0,
+            });
+        entry.prompt_tokens += call.prompt_tokens;
+        entry.completion_tokens += call.completion_tokens;
+        entry.total_tokens += call.total_tokens;
+        entry.prompt_cost_usd += call.prompt_cost_usd;
+        entry.completion_cost_usd += call.completion_cost_usd;
+        entry.total_cost_usd += call.total_cost_usd;
     }
     if !suite_totals.is_empty() {
         out.push_str("### Judge Calls by Suite\n\n");
         out.push_str("| suite | prompt_tokens | completion_tokens | total_tokens | total_cost_usd |\n|---|---:|---:|---:|---:|\n");
-        for (suite, (prompt, completion, cost)) in &suite_totals {
-            out.push_str(&format!("| {} | {} | {} | {} | {:.6} |\n", suite, prompt, completion, prompt + completion, cost));
+        for row in suite_totals.values() {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {:.6} |\n",
+                row.suite,
+                row.prompt_tokens,
+                row.completion_tokens,
+                row.total_tokens,
+                row.total_cost_usd,
+            ));
         }
-        out.push('\n');
+        let judge_total_prompt_cost_usd: f64 = suite_totals.values().map(|row| row.prompt_cost_usd).sum();
+        let judge_total_completion_cost_usd: f64 = suite_totals
+            .values()
+            .map(|row| row.completion_cost_usd)
+            .sum();
+        let judge_total = JudgeSuiteReportRow {
+            suite: "judge_total".to_string(),
+            prompt_tokens: suite_totals.values().map(|row| row.prompt_tokens).sum(),
+            completion_tokens: suite_totals.values().map(|row| row.completion_tokens).sum(),
+            total_tokens: suite_totals.values().map(|row| row.total_tokens).sum(),
+            input_cost_per_million_tokens: first_judge_call
+                .map(|call| call.input_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            output_cost_per_million_tokens: first_judge_call
+                .map(|call| call.output_cost_per_million_tokens)
+                .unwrap_or(0.0),
+            prompt_cost_usd: judge_total_prompt_cost_usd,
+            completion_cost_usd: judge_total_completion_cost_usd,
+            total_cost_usd: suite_totals.values().map(|row| row.total_cost_usd).sum(),
+        };
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {:.6} |\n\n",
+            judge_total.suite,
+            judge_total.prompt_tokens,
+            judge_total.completion_tokens,
+            judge_total.total_tokens,
+            judge_total.total_cost_usd,
+        ));
+        out.push_str("| model | prompt_tokens_cost | completion_tokens_cost | total_cost_usd |\n|---|---|---|---:|\n");
+        out.push_str(&format!(
+            "| {} | {} | {} | {:.6} |\n\n",
+            run_summary.judge_model,
+            format_cost_cell(
+                judge_total.prompt_tokens,
+                judge_total.input_cost_per_million_tokens,
+                judge_total.prompt_cost_usd,
+            ),
+            format_cost_cell(
+                judge_total.completion_tokens,
+                judge_total.output_cost_per_million_tokens,
+                judge_total.completion_cost_usd,
+            ),
+            judge_total.total_cost_usd,
+        ));
     }
+
+    out.push_str("### Runtime by Stage\n\n");
+    out.push_str("| scope | model | prompt_tokens | completion_tokens | total_tokens | total_cost_usd |\n|---|---|---:|---:|---:|---:|\n");
+    for row in &runtime_stage_rows {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {:.6} |\n",
+            row.scope,
+            row.model,
+            row.prompt_tokens,
+            row.completion_tokens,
+            row.total_tokens,
+            row.total_cost_usd,
+        ));
+    }
+    out.push_str(&format!(
+        "| {} | {} | {} | {} | {} | {:.6} |\n\n",
+        runtime_total_stage_row.scope,
+        runtime_total_stage_row.model,
+        runtime_total_stage_row.prompt_tokens,
+        runtime_total_stage_row.completion_tokens,
+        runtime_total_stage_row.total_tokens,
+        runtime_total_stage_row.total_cost_usd,
+    ));
+    out.push_str("| model | prompt_tokens_cost | completion_tokens_cost | total_cost_usd |\n|---|---|---|---:|\n");
+    for row in runtime_model_costs.values() {
+        out.push_str(&format!(
+            "| {} | {} | {} | {:.6} |\n",
+            row.model,
+            format_cost_cell(
+                row.prompt_tokens,
+                row.input_cost_per_million_tokens,
+                row.prompt_cost_usd,
+            ),
+            format_cost_cell(
+                row.completion_tokens,
+                row.output_cost_per_million_tokens,
+                row.completion_cost_usd,
+            ),
+            row.total_cost_usd,
+        ));
+    }
+    out.push_str(&format!(
+        "| {} | {} | {} | {:.6} |\n\n",
+        "runtime_total",
+        format!("sum(stage prompt costs) = {:.6}", runtime_total_prompt_cost_usd),
+        format!("sum(stage completion costs) = {:.6}", runtime_total_completion_cost_usd),
+        runtime_total_stage_row.total_cost_usd,
+    ));
 
     out.push_str("### Totals\n\n");
     out.push_str("| scope | prompt_tokens | completion_tokens | total_tokens | total_cost_usd |\n|---|---:|---:|---:|---:|\n");
@@ -1369,6 +1745,29 @@ fn render_run_report(
 
     // ── Appendix C: Judge Metrics Per Run ─────────────────────────────────────
     out.push_str(&render_judge_per_run_appendix(iteration_rows, "Appendix C"));
+
+    // ── Appendix D: Suite Overview ────────────────────────────────────────────
+    out.push_str("## Appendix D: Suite Overview\n\n");
+    for suite_name in enabled_suites {
+        if let Some(def) = catalog.get(suite_name) {
+            let code = suite_code(suite_name);
+            let applies_to = match def.applies_to {
+                SuiteApplicability::Shared => "shared",
+                SuiteApplicability::InitialOnly => "initial only",
+                SuiteApplicability::ContinuationOnly => "continuation only",
+            };
+            out.push_str(&format!("### {}\n\n", suite_name));
+            out.push_str("| code | applies to | checks | why | inputs | score |\n|---|---|---|---|---|---:|\n");
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | 0/1/2 |\n\n",
+                code,
+                applies_to,
+                def.what_it_checks,
+                def.why_it_matters,
+                def.inputs_to_judge.join(", "),
+            ));
+        }
+    }
 
     out
 }

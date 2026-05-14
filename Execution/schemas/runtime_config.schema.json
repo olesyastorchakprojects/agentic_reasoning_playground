@@ -50,17 +50,12 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "transport_kind",
         "ollama",
         "together"
       ],
       "properties": {
-        "transport_kind": {
-          "type": "string",
-          "enum": ["ollama", "together"]
-        },
-        "ollama": { "$ref": "#/$defs/model_transport" },
-        "together": { "$ref": "#/$defs/model_transport" }
+        "ollama": { "$ref": "#/$defs/ollama_provider" },
+        "together": { "$ref": "#/$defs/together_provider" }
       }
     },
     "input_normalization": {
@@ -79,17 +74,7 @@
       "$ref": "#/$defs/incident_evidence_retrieval"
     },
     "llm_structured_generation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "max_output_tokens"
-      ],
-      "properties": {
-        "max_output_tokens": {
-          "type": "integer",
-          "minimum": 1
-        }
-      }
+      "$ref": "#/$defs/llm_structured_generation"
     },
     "prompt_context": {
       "$ref": "#/$defs/prompt_context"
@@ -169,24 +154,72 @@
         "qdrant_retry": { "$ref": "#/$defs/retry" }
       }
     },
-    "model_transport": {
+    "model_pricing": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "model_name",
-        "timeout_sec",
-        "retry"
+        "input_cost_per_million_tokens",
+        "output_cost_per_million_tokens"
       ],
       "properties": {
-        "model_name": {
-          "type": "string",
-          "minLength": 1
+        "input_cost_per_million_tokens": {
+          "type": "number",
+          "minimum": 0
         },
+        "output_cost_per_million_tokens": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "ollama_provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeout_sec",
+        "retry",
+        "models"
+      ],
+      "properties": {
         "timeout_sec": {
           "type": "integer",
           "minimum": 1
         },
-        "retry": { "$ref": "#/$defs/retry" }
+        "retry": { "$ref": "#/$defs/retry" },
+        "models": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": { "$ref": "#/$defs/model_pricing" },
+          "minProperties": 1
+        }
+      }
+    },
+    "together_provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeout_sec",
+        "retry",
+        "models"
+      ],
+      "properties": {
+        "timeout_sec": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retry": { "$ref": "#/$defs/retry" },
+        "models": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1
+          },
+          "additionalProperties": { "$ref": "#/$defs/model_pricing" },
+          "minProperties": 1
+        }
       }
     },
     "input_normalization": {
@@ -211,11 +244,21 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "provider",
+        "model",
         "controlled_vocabulary_path",
         "prompt_asset_path",
         "max_output_tokens"
       ],
       "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
         "controlled_vocabulary_path": {
           "type": "string",
           "minLength": 1
@@ -277,6 +320,29 @@
           "minLength": 1
         },
         "prompt_asset_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "llm_structured_generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model",
+        "max_output_tokens"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
           "type": "string",
           "minLength": 1
         },

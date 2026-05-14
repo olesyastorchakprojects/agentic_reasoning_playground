@@ -677,6 +677,11 @@ mod tests {
                 resolution: ObservationBoundaryResolution::Supported(ResolvedObservation {
                     text: "latency spike observed".to_string(),
                 }),
+                token_usage: ModelTokenUsage {
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    total_tokens: None,
+                },
             }),
         )
     }
@@ -689,6 +694,11 @@ mod tests {
                 confidence: Confidence::Low,
                 reason: "not a diagnostic observation".to_string(),
                 resolution: ObservationBoundaryResolution::Unsupported,
+                token_usage: ModelTokenUsage {
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    total_tokens: None,
+                },
             }),
         )
     }

@@ -1,0 +1,128 @@
+case_id: cockroachdb_beta_20160829_jepsen_2017_02_16
+title: "CockroachDB beta-20160829 Jepsen analysis: serializability violations and stale-read surprises"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/cockroachdb-beta-20160829.pdf"
+vendor_or_project: "CockroachDB"
+system_type: "distributed SQL database"
+version_tested: "beta-20160829 through beta-20160908"
+report_date: "2017-02-16"
+
+short_summary: >
+  Jepsen found multiple serializability and ordering anomalies in early CockroachDB betas, despite strong
+  consistency messaging around stale reads and majority-replica freshness. Fixes were included in later beta
+  releases, but the report highlights practical limits around clock assumptions and database-wide external consistency.
+
+canonical_symptoms:
+  - "serializability_violation"
+  - "stale_or_out_of_order_reads"
+  - "strict_serializability_gap"
+  - "clock_sensitivity"
+affected_components:
+  - "transaction_protocol"
+  - "hybrid_logical_clocks"
+  - "multi_range_transactions"
+  - "leaseholder_reads"
+failure_mode_candidates:
+  - "strict_serializability_violation"
+  - "double_applied_transaction"
+  - "timestamp_or_clock_offset_issue"
+  - "database_wide_external_consistency_gap"
+observed_phases:
+  - "bounded_clock_operation"
+  - "fault_and_clock_offset_testing"
+  - "cross_key_ordering_analysis"
+
+incident_phases:
+  - phase_name: "bounded_clock_operation"
+    context: >
+      Under expected clock-offset bounds many baseline tests passed, including several serializability-style workloads.
+    symptoms:
+      - "system appears safe for many common tests"
+    user_visible_impact:
+      - "operators may infer stronger guarantees than are actually provided"
+    observations:
+      - "some tests pass so long as clock offset remains bounded"
+    actions_taken:
+      - "run register, sequential, bank, G2, set, monotonic, and comments tests"
+    changes_after_actions:
+      - "problem narrows to stricter ordering and corner-case anomalies"
+
+  - phase_name: "strict_ordering_and_bug_discovery"
+    context: >
+      Jepsen and Cockroach Labs found anomalies involving strict serializability gaps and double-application behavior.
+    symptoms:
+      - "transactions on disjoint keys visible out of real-time order"
+      - "surprising stale-read-like behavior in limited cases"
+    user_visible_impact:
+      - "database-wide behavior weaker than strict serializability"
+    observations:
+      - "reads can be stale in limited scenarios"
+      - "bugs were identified and fixed in later betas"
+    actions_taken:
+      - "extend test suite and refine clock control"
+    changes_after_actions:
+      - "distinction becomes clear between serializability and full external consistency"
+
+turning_points:
+  - "Many common tests passed, which could mask the more subtle anomaly classes."
+  - "The report clarified that database-wide strict serializability was not the same as per-key recency."
+
+candidate_explanations:
+  - "The main gap is strict serializability or external consistency, not broad total corruption."
+  - "Clock assumptions and timestamp derivation are central to anomaly behavior."
+  - "Cross-range transaction ordering can diverge from user expectations about freshness."
+
+diagnostic_patterns:
+  - >
+    mostly healthy system under bounded clocks -> corner-case transaction ordering tests reveal stale or out-of-order visibility
+
+discriminating_checks:
+  - question: "Are the anomalies about full database-wide real-time order, rather than per-key serializability?"
+    why: "Separates strict-serializability expectations from CockroachDB's weaker guarantees."
+  - question: "Do issues intensify when clock offset bounds are stressed or detection is insufficient?"
+    why: "Tests whether clock assumptions are the immediate trigger."
+
+expected_observations:
+  - observation: "Single-key or bounded tests mostly pass, but cross-key real-time order fails."
+    effect: "Strengthen strict_serializability_violation."
+  - observation: "Later betas remove some anomalies."
+    effect: "Strengthen bug-specific explanations rather than purely theoretical limits."
+
+investigation_steps:
+  - "Separate per-key freshness claims from full database-wide ordering guarantees."
+  - "Check clock offset bounds and detection behavior."
+  - "Probe multi-key and disjoint-key ordering, not only single-key safety."
+
+root_cause_summary: >
+  Early CockroachDB betas had multiple bugs and design-limit interactions around timestamping, clock bounds,
+  and transaction ordering, producing serializability and strict-ordering anomalies that later betas partially fixed.
+
+reasoning_summary: >
+  The report is most useful as a reminder that strong-sounding consistency claims often need to be decomposed:
+  per-key recency, serializability, and strict serializability are not the same property.
+
+mitigations_or_workarounds:
+  - "Keep clock offsets tightly bounded."
+  - "Use versions that include fixes from beta-20160915 and beta-20161013."
+  - "Avoid assuming full external consistency from majority-replication messaging alone."
+
+prevention_or_design_followups:
+  - "Test multi-key and ordering-sensitive invariants directly."
+  - "Document freshness versus serializability versus strict-serializability distinctions."
+
+claimed_guarantees:
+  - "serializability"
+  - "no stale reads"
+violated_properties:
+  - "strict serializability / external consistency"
+  - "some serializability-related expectations in tested betas"
+resolution_status: "fixed_in_later_betas"
+fix_versions:
+  - "beta-20160915"
+  - "beta-20161013"
+confidence_notes:
+  - "Medium confidence: intro captures the main operational lesson, though the full report contains multiple specific issue families."
+source_refs:
+  - "practice_corpus/raw/cockroachdb-beta-20160829.pdf"
+

@@ -1,0 +1,134 @@
+case_id: redis_raft_1b3fbf6_jepsen_2020_06_23
+title: "Redis-Raft 1b3fbf6 Jepsen analysis: many safety failures in early Raft-backed Redis"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/redis-raft-1b3fbf6.pdf"
+vendor_or_project: "Redis-Raft"
+system_type: "Raft-backed Redis replication system"
+version_tested: "1b3fbf6 development build"
+report_date: "2020-06-23"
+
+short_summary: >
+  Jepsen found twenty-one issues in early Redis-Raft builds, including partial unavailability in healthy
+  clusters, stale reads, aborted reads, split-brain with lost updates, crashes, infinite loops, and total data
+  loss on failover. Most issues were addressed in later development builds, but the report shows a system that
+  was far from production safety at that stage.
+
+canonical_symptoms:
+  - "partial_unavailability"
+  - "stale_reads"
+  - "aborted_reads"
+  - "split_brain"
+  - "lost_updates"
+  - "data_loss_on_failover"
+  - "crash_loop"
+  - "infinite_write_loop"
+affected_components:
+  - "raft_interception_logic"
+  - "leader_proxying"
+  - "failover_behavior"
+  - "transaction_and_read_paths"
+failure_mode_candidates:
+  - "reentrancy_bug"
+  - "split_brain_under_failover"
+  - "unsafe_recovery_path"
+  - "immature_raft_integration"
+observed_phases:
+  - "healthy_cluster_operation"
+  - "fault_injection"
+  - "failover"
+  - "proxy_mode"
+
+incident_phases:
+  - phase_name: "healthy_cluster_and_proxy_testing"
+    context: >
+      Even healthy clusters exhibited surprising behavior in some modes, including infinite loops with follower proxying enabled.
+    symptoms:
+      - "any write can trigger infinite log replay loop"
+      - "partial unavailability in healthy clusters"
+    user_visible_impact:
+      - "cluster can become unusable without a network partition"
+    observations:
+      - "missing reentrancy check caused repeated Raft wrapping of commands"
+    actions_taken:
+      - "exercise writes with follower-proxy mode enabled"
+    changes_after_actions:
+      - "one concrete bug becomes identifiable and patchable"
+
+  - phase_name: "fault_and_failover_testing"
+    context: >
+      Jepsen injected failures and observed a broader set of anomalies, including stale reads, lost updates, and total data loss on failover.
+    symptoms:
+      - "split-brain"
+      - "lost updates"
+      - "total data loss on failover"
+      - "aborted and stale reads"
+    user_visible_impact:
+      - "system of record usage would be unsafe"
+    observations:
+      - "many issue families appeared across recovery and failover"
+    actions_taken:
+      - "run Jepsen fault suite against development builds"
+    changes_after_actions:
+      - "system is characterized as immature rather than narrowly buggy"
+
+turning_points:
+  - "Healthy cluster proxy mode already showed catastrophic behavior."
+  - "Failover and recovery exposed issues severe enough to include total data loss."
+
+candidate_explanations:
+  - "Redis-Raft was at an early integration stage where Raft semantics were not yet safely enforced end-to-end."
+  - "Proxying, failover, and recovery paths were the major reliability hotspots."
+
+diagnostic_patterns:
+  - >
+    feature intended to add strong consistency -> ordinary operation or failover still yields stale reads,
+    split-brain, or total write loss due to immature implementation paths
+
+discriminating_checks:
+  - question: "Do failures occur only during failover, or even in healthy clusters and proxy mode?"
+    why: "Separates general immaturity from purely failover-induced problems."
+  - question: "Is follower proxy mode enabled?"
+    why: "Checks for the specific infinite-loop class."
+
+expected_observations:
+  - observation: "Writes loop infinitely only when proxy mode is enabled."
+    effect: "Strengthen reentrancy_bug."
+  - observation: "Data loss appears during failover and topology change."
+    effect: "Strengthen split_brain_under_failover and unsafe_recovery_path."
+
+investigation_steps:
+  - "Separate healthy-cluster proxy issues from failover-induced data-loss issues."
+  - "Test leadership, proxy, and recovery paths independently."
+  - "Do not infer production safety from the presence of a Raft layer alone."
+
+root_cause_summary: >
+  Early Redis-Raft builds combined multiple severe implementation defects across proxying, failover, and recovery,
+  leading to behaviors far weaker than the intended strict-serializable design.
+
+reasoning_summary: >
+  This report is best treated as a maturity warning case: the existence of a theoretically strong protocol did not
+  translate into safe system behavior across operational paths.
+
+mitigations_or_workarounds:
+  - "Avoid production reliance on the tested development build."
+  - "Disable or carefully validate proxying and failover paths."
+  - "Use later builds that fixed most identified issues."
+
+prevention_or_design_followups:
+  - "Test healthy-cluster special modes as aggressively as failover paths."
+  - "Validate that command interception cannot re-enter consensus recursively."
+
+claimed_guarantees:
+  - "strict serializability via Raft-backed Redis"
+violated_properties:
+  - "safety during failover"
+  - "basic correctness in some healthy-cluster modes"
+resolution_status: "mostly_fixed_in_later_dev_builds"
+fix_versions:
+  - "Most issues addressed in later development builds; one snapshot assertion crash remained at report time"
+confidence_notes:
+  - "High confidence in broad severity; intro explicitly describes issue breadth."
+source_refs:
+  - "practice_corpus/raw/redis-raft-1b3fbf6.pdf"
+

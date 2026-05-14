@@ -436,8 +436,21 @@ impl PostgresRunStateStore {
         let run_ids = self.list_run_ids().await?;
         let mut summaries = Vec::with_capacity(run_ids.len());
         for run_id in run_ids {
-            if let Some(run) = self.load_run(run_id).await? {
-                summaries.push(build_run_summary_row(&run));
+            match self.load_run(run_id).await {
+                Ok(Some(run)) => summaries.push(build_run_summary_row(&run)),
+                Ok(None) => {
+                    tracing::warn!(
+                        run_id = %run_id.0,
+                        "skipping run summary row because the run could not be loaded"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        run_id = %run_id.0,
+                        error = %error,
+                        "skipping unreadable run while building run summaries"
+                    );
+                }
             }
         }
         Ok(summaries)

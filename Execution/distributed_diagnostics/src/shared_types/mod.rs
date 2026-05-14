@@ -656,6 +656,7 @@ pub struct ObservationBoundaryResolverOutput {
     pub confidence: Confidence,
     pub reason: String,
     pub resolution: ObservationBoundaryResolution,
+    pub token_usage: ModelTokenUsage,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -666,11 +667,24 @@ pub struct DiagnosticResultInterpretation {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct RunConfigSnapshot {
+pub struct RuntimeLlmStageConfigSnapshot {
+    pub provider: String,
     pub model_name: String,
-    pub transport_kind: String,
     pub input_cost_per_million_tokens: f64,
     pub output_cost_per_million_tokens: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RunConfigSnapshot {
+    pub query_structuring: RuntimeLlmStageConfigSnapshot,
+    pub observation_boundary_resolver: RuntimeLlmStageConfigSnapshot,
+    pub observation_extraction: RuntimeLlmStageConfigSnapshot,
+    pub llm_structured_generation: RuntimeLlmStageConfigSnapshot,
+    pub query_structuring_prompt_version: String,
+    pub observation_boundary_resolver_prompt_version: String,
+    pub observation_extraction_prompt_version: String,
+    pub prompt_context_prompt_version: String,
+    pub diagnostic_update_prompt_context_prompt_version: String,
     pub retrieval_cards_top_k: usize,
     pub retrieval_cards_collection: String,
     pub retrieval_practice_top_k: usize,
@@ -718,4 +732,3 @@ pub use diagnostic_context::{
     DiagnosticContext, DiagnosticContextError, HypothesisState, Observation, ObservationStatus,
     ProblemUnderstanding, ProblemUnderstandingSource, SuggestedCheck, TrackedHypothesis,
 };
-

@@ -184,6 +184,7 @@ impl ObservationBoundaryResolver {
 
         self.resolve_instrumented(request, diagnostic_context, &oi_span)
             .instrument(span)
+            .instrument(oi_span.clone())
             .await
     }
 
@@ -454,6 +455,7 @@ impl ObservationBoundaryResolver {
             confidence,
             reason: raw.reason,
             resolution,
+            token_usage,
         };
 
         if let Ok(output_json) = serde_json::to_string(&output) {

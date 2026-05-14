@@ -212,6 +212,7 @@ impl QueryStructuring {
         let mut output = self
             .structure_instrumented(request, &oi_span)
             .instrument(span)
+            .instrument(oi_span.clone())
             .await?;
 
         if let Some(ref golden_question) = context.golden_question {

@@ -173,6 +173,7 @@ impl LlmStructuredGeneration {
 
         self.generate_instrumented(prompt_context, &oi_span)
             .instrument(span)
+            .instrument(oi_span.clone())
             .await
     }
 

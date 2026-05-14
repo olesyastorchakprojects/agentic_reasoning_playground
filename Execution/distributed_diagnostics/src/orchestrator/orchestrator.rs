@@ -1,6 +1,3 @@
-use std::collections::HashMap;
-use std::sync::Mutex;
-
 use async_trait::async_trait;
 use thiserror::Error;
 
@@ -16,8 +13,8 @@ use crate::orchestrator::transition_policy::{
     PolicyError, PolicyTransition, TransitionPolicy,
 };
 use crate::shared_types::{
-    Context, OpenInferenceContext, ResponseValidationAndNormalizationOutput, RunConfigSnapshot,
-    UserRequest,
+    Context, ModelTokenUsage, OpenInferenceContext, ResponseValidationAndNormalizationOutput,
+    RunConfigSnapshot, RuntimeLlmStageConfigSnapshot, UserRequest,
 };
 
 pub struct Orchestrator<P> {
@@ -25,7 +22,6 @@ pub struct Orchestrator<P> {
     executor: StepExecutor,
     run_repository: RunRepository,
     config_snapshot: Option<RunConfigSnapshot>,
-    run_otel_contexts: Mutex<HashMap<RunId, opentelemetry::Context>>,
 }
 
 impl<P: std::fmt::Debug> std::fmt::Debug for Orchestrator<P> {
@@ -86,7 +82,6 @@ where
             executor,
             run_repository,
             config_snapshot: None,
-            run_otel_contexts: Mutex::new(HashMap::new()),
         }
     }
 
@@ -96,17 +91,12 @@ where
     }
 
     pub async fn run(&self, user_input: UserRequest) -> Result<RunOutcome, OrchestratorError> {
-        use tracing_opentelemetry::OpenTelemetrySpanExt;
         let mut state = RunState::new();
-        let run_id = state.run_id;
-        let run_id_str = run_id.0.to_string();
-        let root_span = crate::observability::run_span(&run_id_str, "run");
-        let _root_entered = root_span.enter();
-        root_span.record("input.value", user_input.query.as_str());
-        root_span.record("input.mime_type", "text/plain");
-        self.run_otel_contexts.lock().unwrap().insert(run_id, root_span.context());
+        let run_id_str = state.run_id.0.to_string();
+        let trace_root_span = crate::observability::run_span(&run_id_str, "run");
+        let _root_entered = trace_root_span.enter();
         let outcome = self.run_body(user_input, &mut state).await;
-        record_run_outcome(&root_span, &outcome, Some(&state));
+        record_run_outcome(&trace_root_span, &outcome, Some(&state));
         outcome
     }
 
@@ -136,27 +126,22 @@ where
         self.run_repository
             .append_iteration(state, iteration_sequence_no, iteration)
             .await?;
-        self.drive_to_outcome(state, None).await
+        self.drive_to_outcome(state).await
     }
 
     pub async fn resume(&self, run_id: RunId) -> Result<RunOutcome, OrchestratorError> {
-        use tracing_opentelemetry::OpenTelemetrySpanExt;
         let run_id_str = run_id.0.to_string();
-        let parent_ctx = self.run_otel_contexts.lock().unwrap().get(&run_id).cloned();
-        let root_span = crate::observability::run_span(&run_id_str, "resume");
-        if let Some(ctx) = parent_ctx {
-            let _ = root_span.set_parent(ctx);
-        }
-        let _root_entered = root_span.enter();
+        let trace_root_span = crate::observability::run_span(&run_id_str, "resume");
+        let _root_entered = trace_root_span.enter();
         let mut state = match self.load_existing_run(run_id).await {
             Err(e) => {
                 crate::observability::record_error(
-                    &root_span,
+                    &trace_root_span,
                     orchestrator_error_type(&e),
                     &e.to_string(),
                 );
-                root_span.record("status", "error");
-                root_span.record("run.outcome", "failure");
+                trace_root_span.record("status", "error");
+                trace_root_span.record("run.outcome", "failure");
                 return Err(e);
             }
             Ok(s) => s,
@@ -164,8 +149,8 @@ where
         if state.status == RunStatus::WaitingForUser {
             return Err(OrchestratorError::WaitingForUserRequiresNewInput { run_id });
         }
-        let outcome = self.drive_to_outcome(&mut state, None).await;
-        record_run_outcome(&root_span, &outcome, Some(&state));
+        let outcome = self.drive_to_outcome(&mut state).await;
+        record_run_outcome(&trace_root_span, &outcome, Some(&state));
         outcome
     }
 
@@ -174,8 +159,11 @@ where
         run_id: RunId,
         user_input: UserRequest,
     ) -> Result<RunOutcome, OrchestratorError> {
-        let parent_ctx = self.run_otel_contexts.lock().unwrap().get(&run_id).cloned();
-        let (outcome, _state) = self.resume_with_input_body(run_id, user_input, parent_ctx).await;
+        let run_id_str = run_id.0.to_string();
+        let trace_root_span = crate::observability::run_span(&run_id_str, "resume_with_input");
+        let _root_entered = trace_root_span.enter();
+        let (outcome, state) = self.resume_with_input_body(run_id, user_input).await;
+        record_run_outcome(&trace_root_span, &outcome, state.as_ref());
         outcome
     }
 
@@ -183,7 +171,6 @@ where
         &self,
         run_id: RunId,
         user_input: UserRequest,
-        parent_ctx: Option<opentelemetry::Context>,
     ) -> (Result<RunOutcome, OrchestratorError>, Option<RunState>) {
         let mut state = match self.load_existing_run(run_id).await {
             Err(e) => return (Err(e), None),
@@ -193,6 +180,11 @@ where
             let mut writer = RunStateWriter::new(&mut state);
             if let Err(e) = writer.begin_iteration(user_input) {
                 return (Err(OrchestratorError::from(e)), Some(state));
+            }
+        }
+        if let Some(snapshot) = &self.config_snapshot {
+            if let Some(iter) = state.iterations.last_mut() {
+                iter.config_snapshot = Some(snapshot.clone());
             }
         }
         let iteration_sequence_no = RunStateView::new(&state).iteration_count() as u64 - 1;
@@ -210,7 +202,7 @@ where
         {
             return (Err(OrchestratorError::from(e)), Some(state));
         }
-        let outcome = self.drive_to_outcome(&mut state, parent_ctx).await;
+        let outcome = self.drive_to_outcome(&mut state).await;
         (outcome, Some(state))
     }
 
@@ -218,19 +210,8 @@ where
         load_existing_run_impl(&self.run_repository, run_id).await
     }
 
-    async fn drive_to_outcome(
-        &self,
-        state: &mut RunState,
-        parent_ctx: Option<opentelemetry::Context>,
-    ) -> Result<RunOutcome, OrchestratorError> {
-        drive_to_outcome_impl(
-            &self.policy,
-            &self.executor,
-            &self.run_repository,
-            state,
-            parent_ctx.as_ref(),
-        )
-        .await
+    async fn drive_to_outcome(&self, state: &mut RunState) -> Result<RunOutcome, OrchestratorError> {
+        drive_to_outcome_impl(&self.policy, &self.executor, &self.run_repository, state).await
     }
 }
 
@@ -372,7 +353,7 @@ where
         .append_iteration(&state, iteration_sequence_no, iteration)
         .await?;
 
-    drive_to_outcome_impl(policy, executor, run_repository, &mut state, None).await
+    drive_to_outcome_impl(policy, executor, run_repository, &mut state).await
 }
 
 #[cfg(test)]
@@ -391,7 +372,7 @@ where
     if state.status == RunStatus::WaitingForUser {
         return Err(OrchestratorError::WaitingForUserRequiresNewInput { run_id });
     }
-    drive_to_outcome_impl(policy, executor, run_repository, &mut state, None).await
+    drive_to_outcome_impl(policy, executor, run_repository, &mut state).await
 }
 
 #[cfg(test)]
@@ -427,7 +408,7 @@ where
         .append_iteration(&state, iteration_sequence_no, iteration)
         .await?;
 
-    drive_to_outcome_impl(policy, executor, run_repository, &mut state, None).await
+    drive_to_outcome_impl(policy, executor, run_repository, &mut state).await
 }
 
 async fn load_existing_run_impl<R>(
@@ -448,7 +429,6 @@ async fn drive_to_outcome_impl<P, E, R>(
     executor: &E,
     run_repository: &R,
     state: &mut RunState,
-    parent_ctx: Option<&opentelemetry::Context>,
 ) -> Result<RunOutcome, OrchestratorError>
 where
     P: TransitionPolicy,
@@ -460,25 +440,27 @@ where
         Some(it) => {
             let iter_id = it.iteration_id.0.to_string();
             let seq = (state.iterations.len() - 1) as u64;
-            let span =
-                crate::observability::iteration_span(&run_id_str, &iter_id, seq, parent_ctx);
+            let span = crate::observability::iteration_span(&run_id_str, &iter_id, seq);
             (span, iter_id)
         }
         None => (tracing::Span::none(), String::new()),
     };
     let _iter_entered = iter_span.enter();
     let iteration_sequence_no = state.iterations.len().saturating_sub(1) as u64;
+    let oi_root_span = crate::observability::oi_iteration_chain_span(
+        &iter_span,
+        &run_id_str,
+        &iter_id_str,
+        iteration_sequence_no,
+    );
+    let _oi_root_entered = oi_root_span.enter();
     let context = Context::new(
         OpenInferenceContext {
-            root_span: crate::observability::oi_iteration_chain_span(
-                &iter_span,
-                &run_id_str,
-                &iter_id_str,
-                iteration_sequence_no,
-            ),
+            root_span: oi_root_span.clone(),
         },
         current_iteration_golden_question(state),
     );
+    record_iteration_input(&oi_root_span, state);
 
     let outcome = drive_to_outcome_loop(
         policy,
@@ -494,47 +476,42 @@ where
     match &outcome {
         Ok(RunOutcome::Finished { result, .. }) => {
             iter_span.record("status", "ok");
-            context.open_inference.root_span.record("status", "ok");
-            context.open_inference.root_span.record("run.outcome", "success");
+            record_iteration_cost(&oi_root_span, state);
+            oi_root_span.record("status", "ok");
+            oi_root_span.record("run.outcome", "success");
             if let Ok(output_json) = serde_json::to_string(result) {
-                context
-                    .open_inference
-                    .root_span
-                    .record("output.value", output_json.as_str());
-                context
-                    .open_inference
-                    .root_span
-                    .record("output.mime_type", "application/json");
+                oi_root_span.record("output.value", output_json.as_str());
+                oi_root_span.record("output.mime_type", "application/json");
             }
         }
         Ok(RunOutcome::WaitingForUser { .. }) => {
             iter_span.record("status", "ok");
-            context.open_inference.root_span.record("run.outcome", "waiting_for_user");
+            record_iteration_cost(&oi_root_span, state);
+            oi_root_span.record("status", "ok");
+            oi_root_span.record("run.outcome", "waiting_for_user");
         }
         Ok(RunOutcome::Failed { error, .. }) => {
             iter_span.record("status", "error");
-            context.open_inference.root_span.record("run.outcome", "failure");
+            record_iteration_cost(&oi_root_span, state);
+            oi_root_span.record("run.outcome", "failure");
             crate::observability::record_error(
                 &iter_span,
                 step_error_type(error),
                 &error.to_string(),
             );
-            crate::observability::record_error(
-                &context.open_inference.root_span,
-                step_error_type(error),
-                &error.to_string(),
-            );
+            crate::observability::record_error(&oi_root_span, step_error_type(error), &error.to_string());
         }
         Err(error) => {
             iter_span.record("status", "error");
-            context.open_inference.root_span.record("run.outcome", "failure");
+            record_iteration_cost(&oi_root_span, state);
+            oi_root_span.record("run.outcome", "failure");
             crate::observability::record_error(
                 &iter_span,
                 orchestrator_error_type(error),
                 &error.to_string(),
             );
             crate::observability::record_error(
-                &context.open_inference.root_span,
+                &oi_root_span,
                 orchestrator_error_type(error),
                 &error.to_string(),
             );
@@ -551,6 +528,29 @@ fn current_iteration_golden_question(state: &RunState) -> Option<crate::shared_t
         Ok(StepResultEnvelope::UserInputReceived(request)) => request.golden_question.clone(),
         _ => None,
     }
+}
+
+fn record_iteration_input(span: &tracing::Span, state: &RunState) {
+    let Some(iteration) = RunStateView::new(state).last_iteration() else {
+        return;
+    };
+    let Some(user_input) = iteration.finished_step(StepKind::UserInputReceived) else {
+        return;
+    };
+    let Ok(StepResultEnvelope::UserInputReceived(request)) = user_input.result() else {
+        return;
+    };
+
+    span.record("input.value", request.query.as_str());
+    span.record("input.mime_type", "text/plain");
+}
+
+fn record_iteration_cost(span: &tracing::Span, state: &RunState) {
+    let Some(iteration) = state.iterations.last() else {
+        return;
+    };
+    let usage = aggregate_iteration_usage(iteration);
+    span.record("runtime.total_cost_usd", usage.total_cost_usd);
 }
 
 async fn drive_to_outcome_loop<P, E, R>(
@@ -801,6 +801,14 @@ fn record_run_outcome(
     outcome: &Result<RunOutcome, OrchestratorError>,
     state: Option<&RunState>,
 ) {
+    if let Some(s) = state {
+        let usage = aggregate_runtime_usage(s);
+        span.record("llm.token_count.prompt", usage.prompt_tokens);
+        span.record("llm.token_count.completion", usage.completion_tokens);
+        span.record("llm.token_count.total", usage.total_tokens);
+        span.record("runtime.total_cost_usd", usage.total_cost_usd);
+    }
+
     match outcome {
         Ok(RunOutcome::Finished { result, .. }) => {
             span.record("status", "ok");
@@ -838,6 +846,98 @@ fn record_run_outcome(
             crate::observability::record_error(span, orchestrator_error_type(e), &e.to_string());
         }
     }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct RuntimeUsageTotals {
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    total_tokens: i64,
+    total_cost_usd: f64,
+}
+
+fn aggregate_runtime_usage(state: &RunState) -> RuntimeUsageTotals {
+    let mut totals = RuntimeUsageTotals::default();
+
+    for iteration in &state.iterations {
+        accumulate_iteration_usage(&mut totals, iteration);
+    }
+
+    totals
+}
+
+fn aggregate_iteration_usage(iteration: &RunIteration) -> RuntimeUsageTotals {
+    let mut totals = RuntimeUsageTotals::default();
+    accumulate_iteration_usage(&mut totals, iteration);
+    totals
+}
+
+fn accumulate_iteration_usage(totals: &mut RuntimeUsageTotals, iteration: &RunIteration) {
+    for record in &iteration.step_records {
+        let finished = match record {
+            StepRecord::Finished(finished) => finished,
+            StepRecord::Pending(_) => continue,
+        };
+        let result = match &finished.result {
+            Ok(result) => result,
+            Err(_) => continue,
+        };
+
+        if let Some((usage, pricing)) =
+            runtime_usage_and_pricing(result, iteration.config_snapshot.as_ref())
+        {
+            let prompt_tokens = usage.prompt_tokens.unwrap_or(0) as i64;
+            let completion_tokens = usage.completion_tokens.unwrap_or(0) as i64;
+            let total_tokens = usage
+                .total_tokens
+                .unwrap_or(prompt_tokens as usize + completion_tokens as usize)
+                as i64;
+
+            totals.prompt_tokens += prompt_tokens;
+            totals.completion_tokens += completion_tokens;
+            totals.total_tokens += total_tokens;
+
+            if let Some(stage_pricing) = pricing {
+                totals.total_cost_usd += token_cost_usd(
+                    prompt_tokens as usize,
+                    stage_pricing.input_cost_per_million_tokens,
+                );
+                totals.total_cost_usd += token_cost_usd(
+                    completion_tokens as usize,
+                    stage_pricing.output_cost_per_million_tokens,
+                );
+            }
+        }
+    }
+}
+
+fn runtime_usage_and_pricing<'a>(
+    result: &'a StepResultEnvelope,
+    config_snapshot: Option<&'a RunConfigSnapshot>,
+) -> Option<(&'a ModelTokenUsage, Option<&'a RuntimeLlmStageConfigSnapshot>)> {
+    match result {
+        StepResultEnvelope::QueryStructuring(output) => Some((
+            &output.token_usage,
+            config_snapshot.map(|snapshot| &snapshot.query_structuring),
+        )),
+        StepResultEnvelope::ObservationBoundaryResolver(output) => Some((
+            &output.token_usage,
+            config_snapshot.map(|snapshot| &snapshot.observation_boundary_resolver),
+        )),
+        StepResultEnvelope::ObservationExtraction(output) => Some((
+            &output.token_usage,
+            config_snapshot.map(|snapshot| &snapshot.observation_extraction),
+        )),
+        StepResultEnvelope::LlmStructuredGeneration(output) => Some((
+            &output.token_usage,
+            config_snapshot.map(|snapshot| &snapshot.llm_structured_generation),
+        )),
+        _ => None,
+    }
+}
+
+fn token_cost_usd(tokens: usize, per_million: f64) -> f64 {
+    tokens as f64 * per_million / 1_000_000.0
 }
 
 fn record_failed_step_kind(span: &tracing::Span, state: &RunState) {

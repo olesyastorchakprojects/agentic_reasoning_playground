@@ -1,4 +1,7 @@
-use crate::shared_types::{IncidentChunkTag, RunConfigSnapshot};
+use std::collections::BTreeMap;
+use std::fs;
+
+use crate::shared_types::{IncidentChunkTag, RunConfigSnapshot, RuntimeLlmStageConfigSnapshot};
 use crate::utils::retry::RetryPolicyConfig;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -6,8 +9,8 @@ pub struct Settings {
     pub runtime: RuntimeSettings,
     pub retrieval: RetrievalSettings,
     pub input_normalization: InputNormalizationSettings,
-    pub query_structuring: QueryStructuringSettings,
-    pub llm_structured_generation: LlmStructuredGenerationSettings,
+    pub query_structuring: QueryStructuringRuntimeSettings,
+    pub llm_structured_generation: LlmStructuredGenerationRuntimeSettings,
     pub observation_boundary_resolver: ObservationBoundaryResolverRuntimeSettings,
     pub observation_extraction: ObservationExtractionRuntimeSettings,
     pub incident_evidence_retrieval: IncidentEvidenceRetrievalSettings,
@@ -58,7 +61,9 @@ pub struct InputNormalizationSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct QueryStructuringSettings {
+pub struct QueryStructuringRuntimeSettings {
+    pub provider: String,
+    pub model: String,
     pub controlled_vocabulary_path: String,
     pub prompt_asset_path: String,
     pub max_output_tokens: u32,
@@ -76,6 +81,13 @@ pub struct ObservationBoundaryResolverRuntimeSettings {
 pub struct ObservationExtractionRuntimeSettings {
     pub provider: String,
     pub model: String,
+    pub prompt_asset_path: String,
+    pub max_output_tokens: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueryStructuringSettings {
+    pub controlled_vocabulary_path: String,
     pub prompt_asset_path: String,
     pub max_output_tokens: u32,
 }
@@ -224,17 +236,48 @@ pub struct Bm25LikeSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmStructuredGenerationRuntimeSettings {
+    pub provider: String,
+    pub model: String,
+    pub max_output_tokens: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlmStructuredGenerationSettings {
     pub max_output_tokens: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelSettings {
-    pub transport: ModelTransportSettings,
+    pub ollama: OllamaProviderSettings,
+    pub together: TogetherProviderSettings,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ModelTransportSettings {
+pub struct OllamaProviderSettings {
+    pub url: String,
+    pub timeout_sec: u64,
+    pub retry: RetryPolicyConfig,
+    pub models: BTreeMap<String, ModelPricingSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TogetherProviderSettings {
+    pub url: String,
+    pub api_key: String,
+    pub timeout_sec: u64,
+    pub retry: RetryPolicyConfig,
+    pub models: BTreeMap<String, ModelPricingSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelPricingSettings {
+    pub input_cost_per_million_tokens: f64,
+    pub output_cost_per_million_tokens: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResolvedModelSettings {
     Ollama(OllamaModelSettings),
     Together(TogetherModelSettings),
 }
@@ -260,29 +303,56 @@ pub struct TogetherModelSettings {
     pub output_cost_per_million_tokens: f64,
 }
 
-impl ModelTransportSettings {
-    pub fn active_model_name(&self) -> &str {
-        match self {
-            ModelTransportSettings::Ollama(s) => &s.model_name,
-            ModelTransportSettings::Together(s) => &s.model_name,
+impl ModelSettings {
+    pub fn resolve(&self, provider: &str, model_name: &str) -> Option<ResolvedModelSettings> {
+        match provider {
+            "ollama" => self.ollama.models.get(model_name).map(|pricing| {
+                ResolvedModelSettings::Ollama(OllamaModelSettings {
+                    url: self.ollama.url.clone(),
+                    model_name: model_name.to_string(),
+                    timeout_sec: self.ollama.timeout_sec,
+                    retry: self.ollama.retry.clone(),
+                    input_cost_per_million_tokens: pricing.input_cost_per_million_tokens,
+                    output_cost_per_million_tokens: pricing.output_cost_per_million_tokens,
+                })
+            }),
+            "together" => self.together.models.get(model_name).map(|pricing| {
+                ResolvedModelSettings::Together(TogetherModelSettings {
+                    url: self.together.url.clone(),
+                    api_key: self.together.api_key.clone(),
+                    model_name: model_name.to_string(),
+                    timeout_sec: self.together.timeout_sec,
+                    retry: self.together.retry.clone(),
+                    input_cost_per_million_tokens: pricing.input_cost_per_million_tokens,
+                    output_cost_per_million_tokens: pricing.output_cost_per_million_tokens,
+                })
+            }),
+            _ => None,
         }
     }
 
-    pub fn transport_kind(&self) -> &'static str {
-        match self {
-            ModelTransportSettings::Ollama(_) => "ollama",
-            ModelTransportSettings::Together(_) => "together",
-        }
-    }
-
-    pub fn cost_per_million_tokens(&self) -> (f64, f64) {
-        match self {
-            ModelTransportSettings::Ollama(s) => {
-                (s.input_cost_per_million_tokens, s.output_cost_per_million_tokens)
-            }
-            ModelTransportSettings::Together(s) => {
-                (s.input_cost_per_million_tokens, s.output_cost_per_million_tokens)
-            }
+    fn resolve_required_stage(
+        &self,
+        stage_name: &str,
+        provider: &str,
+        model_name: &str,
+    ) -> RuntimeLlmStageConfigSnapshot {
+        let resolved = self
+            .resolve(provider, model_name)
+            .unwrap_or_else(|| panic!("stage {stage_name} has unresolved model binding"));
+        match resolved {
+            ResolvedModelSettings::Ollama(cfg) => RuntimeLlmStageConfigSnapshot {
+                provider: "ollama".to_string(),
+                model_name: cfg.model_name,
+                input_cost_per_million_tokens: cfg.input_cost_per_million_tokens,
+                output_cost_per_million_tokens: cfg.output_cost_per_million_tokens,
+            },
+            ResolvedModelSettings::Together(cfg) => RuntimeLlmStageConfigSnapshot {
+                provider: "together".to_string(),
+                model_name: cfg.model_name,
+                input_cost_per_million_tokens: cfg.input_cost_per_million_tokens,
+                output_cost_per_million_tokens: cfg.output_cost_per_million_tokens,
+            },
         }
     }
 }
@@ -298,12 +368,47 @@ impl CollectionSettings {
 
 impl Settings {
     pub fn build_run_config_snapshot(&self) -> RunConfigSnapshot {
-        let (input_cost, output_cost) = self.model.transport.cost_per_million_tokens();
         RunConfigSnapshot {
-            model_name: self.model.transport.active_model_name().to_string(),
-            transport_kind: self.model.transport.transport_kind().to_string(),
-            input_cost_per_million_tokens: input_cost,
-            output_cost_per_million_tokens: output_cost,
+            query_structuring: self.model.resolve_required_stage(
+                "query_structuring",
+                &self.query_structuring.provider,
+                &self.query_structuring.model,
+            ),
+            observation_boundary_resolver: self.model.resolve_required_stage(
+                "observation_boundary_resolver",
+                &self.observation_boundary_resolver.provider,
+                &self.observation_boundary_resolver.model,
+            ),
+            observation_extraction: self.model.resolve_required_stage(
+                "observation_extraction",
+                &self.observation_extraction.provider,
+                &self.observation_extraction.model,
+            ),
+            llm_structured_generation: self.model.resolve_required_stage(
+                "llm_structured_generation",
+                &self.llm_structured_generation.provider,
+                &self.llm_structured_generation.model,
+            ),
+            query_structuring_prompt_version: load_prompt_version(
+                "query_structuring.prompt_asset_path",
+                &self.query_structuring.prompt_asset_path,
+            ),
+            observation_boundary_resolver_prompt_version: load_prompt_version(
+                "observation_boundary_resolver.prompt_asset_path",
+                &self.observation_boundary_resolver.prompt_asset_path,
+            ),
+            observation_extraction_prompt_version: load_prompt_version(
+                "observation_extraction.prompt_asset_path",
+                &self.observation_extraction.prompt_asset_path,
+            ),
+            prompt_context_prompt_version: load_prompt_version(
+                "prompt_context.prompt_asset_path",
+                &self.prompt_context.prompt_asset_path,
+            ),
+            diagnostic_update_prompt_context_prompt_version: load_prompt_version(
+                "diagnostic_update_prompt_context.prompt_asset_path",
+                &self.diagnostic_update_prompt_context.prompt_asset_path,
+            ),
             retrieval_cards_top_k: self.retrieval.cards.top_k,
             retrieval_cards_collection: self.retrieval.cards.collection.collection_name().to_string(),
             retrieval_practice_top_k: self.retrieval.practice.top_k,
@@ -312,4 +417,17 @@ impl Settings {
             retrieval_theory_collection: self.retrieval.theory.collection.collection_name().to_string(),
         }
     }
+}
+
+fn load_prompt_version(field_name: &str, path: &str) -> String {
+    let body = fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("{field_name}: failed to read prompt asset at '{path}': {e}"));
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap_or_else(|e| {
+        panic!("{field_name}: failed to parse prompt asset at '{path}' as json: {e}")
+    });
+    json.get("version")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| panic!("{field_name}: prompt asset at '{path}' has no non-empty version"))
+        .to_string()
 }

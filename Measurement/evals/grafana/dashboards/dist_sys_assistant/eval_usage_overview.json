@@ -1,0 +1,193 @@
+{
+  "title": "DSA Eval Usage Overview",
+  "uid": "dsa-eval-usage-overview",
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "title": "Token Usage",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-agentic-reasoning"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "WITH totals AS (SELECT COALESCE(sum(runtime_total_tokens), 0)::bigint AS runtime_total_tokens_sum, COALESCE(sum(judge_total_tokens), 0)::bigint AS judge_total_tokens_sum, COALESCE(sum(run_total_tokens), 0)::bigint AS run_total_tokens_sum, COALESCE(sum(runtime_total_cost_usd), 0)::numeric(20,10) AS runtime_total_cost_usd_sum, COALESCE(sum(judge_total_cost_usd), 0)::numeric(20,10) AS judge_total_cost_usd_sum, COALESCE(sum(run_total_cost_usd), 0)::numeric(20,10) AS run_total_cost_usd_sum FROM diagnostics.eval_run_summaries WHERE $__timeFilter(started_at)) SELECT scope, total_tokens, total_cost_usd FROM (VALUES (1, 'runtime', (SELECT runtime_total_tokens_sum FROM totals), (SELECT runtime_total_cost_usd_sum FROM totals)), (2, 'judge_total', (SELECT judge_total_tokens_sum FROM totals), (SELECT judge_total_cost_usd_sum FROM totals)), (3, 'run_total', (SELECT run_total_tokens_sum FROM totals), (SELECT run_total_cost_usd_sum FROM totals))) AS t(ord, scope, total_tokens, total_cost_usd) ORDER BY ord",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "scope"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "total_cost_usd"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "title": "Runs in Time Range",
+      "type": "table",
+      "datasource": {
+        "type": "postgres",
+        "uid": "postgres-agentic-reasoning"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT started_at, eval_run_id, iterations_evaluated_count, judge_model, runtime_query_structuring_model, runtime_observation_boundary_resolver_model, runtime_observation_extraction_model, runtime_llm_structured_generation_model FROM diagnostics.eval_run_summaries WHERE $__timeFilter(started_at) ORDER BY started_at DESC, eval_run_id DESC",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "started_at"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "eval_run_id"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 320
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "iterations_evaluated_count"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "judge_model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "runtime_query_structuring_model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "runtime_observation_boundary_resolver_model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "runtime_observation_extraction_model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "runtime_llm_structured_generation_model"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 220
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

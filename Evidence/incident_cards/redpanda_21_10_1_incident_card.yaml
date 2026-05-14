@@ -1,0 +1,215 @@
+case_id: redpanda_21_10_1_jepsen_2022_04_29
+title: "Redpanda 21.10.1 Jepsen analysis: mixed safety and liveness failures in streaming and transactions"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/redpanda-21.10.1.pdf"
+vendor_or_project: "Redpanda"
+system_type: "distributed streaming system"
+version_tested: "21.10.1 through 21.11.2 and development builds"
+report_date: "2022-04-29"
+
+short_summary: >
+  Jepsen found multiple Redpanda safety and liveness issues, including duplicate writes,
+  aborted reads, inconsistent offsets, lost or stale messages, crashes, and transactional anomalies.
+  Several issues were fixed across later releases, but some problems, especially around lost/stale
+  messages and one crash, remained unresolved or under investigation at the time of the report.
+
+canonical_symptoms:
+  - "duplicate_messages"
+  - "lost_messages"
+  - "stale_messages"
+  - "aborted_reads"
+  - "inconsistent_offsets"
+  - "transactional_anomalies"
+  - "crash_during_reconfiguration"
+  - "partial_unavailability"
+affected_components:
+  - "producer_path"
+  - "consumer_offsets"
+  - "transaction_protocol"
+  - "partition_leadership"
+  - "internal_metadata_topics"
+  - "idempotence_support"
+failure_mode_candidates:
+  - "duplicate_write_without_idempotence"
+  - "transaction_protocol_bug"
+  - "leadership_change_causes_lost_writes"
+  - "offset_commit_non_monotonicity"
+  - "insufficient_internal_replication_defaults"
+observed_phases:
+  - "normal_streaming"
+  - "fault_injection"
+  - "transaction_execution"
+  - "leadership_change"
+  - "post_recovery_polling"
+
+incident_phases:
+  - phase_name: "baseline_streaming_behavior"
+    context: >
+      Redpanda presents itself as a safer Kafka-compatible system, including durability-oriented claims
+      and majority-fsynced acknowledgements for stronger ack settings.
+    symptoms:
+      - "system appears attractive for safety-critical streaming workloads"
+      - "users may assume zero data loss by default"
+    user_visible_impact:
+      - "operators may trust default behavior more than warranted"
+    observations:
+      - "product messaging emphasized safety and low operational complexity"
+      - "transaction and offset semantics required careful interpretation"
+    actions_taken:
+      - "establish baseline expectations from product claims and Kafka-compatible client settings"
+    changes_after_actions:
+      - "focus moves toward testing fault behavior, offsets, idempotence, and transactions"
+
+  - phase_name: "fault_injection_under_produce_consume_workloads"
+    context: >
+      Jepsen introduced pauses, crashes, and partitions while exercising queue and append workloads.
+    symptoms:
+      - "duplicate writes"
+      - "lost or stale messages"
+      - "inconsistent or non-monotonic committed offsets"
+      - "consumer-visible anomalies after failures"
+    user_visible_impact:
+      - "messages may be processed twice"
+      - "messages believed committed may vanish or appear stale"
+      - "consumer recovery may resume from misleading offsets"
+    observations:
+      - "duplicate writes could occur by default"
+      - "committed offsets could move backward"
+      - "lost/stale messages remained under investigation"
+    actions_taken:
+      - "inject pause, crash, and partition faults"
+      - "observe producer/consumer behavior and final polls"
+    changes_after_actions:
+      - "anomaly profile becomes clearly tied to fault recovery and default client/server settings"
+
+  - phase_name: "transaction_protocol_analysis"
+    context: >
+      Jepsen tested Redpanda's Kafka-compatible transaction protocol and found transactional anomalies
+      including aborted reads, lost transactional writes, and weak write isolation behavior.
+    symptoms:
+      - "aborted transactional reads"
+      - "lost transactional writes"
+      - "circular information flow or weak transactional isolation"
+      - "difficulty obtaining exactly-once semantics"
+    user_visible_impact:
+      - "applications relying on transactions can still see unsafe outcomes"
+      - "exactly-once assumptions may fail in practice"
+    observations:
+      - "aborted reads and lost transactional writes were observed"
+      - "some transaction anomalies were later fixed"
+      - "documentation around transaction isolation was incomplete or contradictory"
+    actions_taken:
+      - "run transactional queue and append tests"
+      - "compare read_committed behavior and transaction-related settings"
+    changes_after_actions:
+      - "diagnosis narrows from generic stream reliability to transaction protocol limitations and bugs"
+
+  - phase_name: "release_and_configuration_followup"
+    context: >
+      Later versions resolved many issues, but defaults around idempotence and internal-topic replication
+      still created practical risk.
+    symptoms:
+      - "default settings can still expose duplication or fault-tolerance gaps"
+      - "some issues remain unresolved or require documentation"
+    user_visible_impact:
+      - "healthy-looking deployments may still carry latent duplication or safety risk"
+    observations:
+      - "idempotence was not enabled by default at the time"
+      - "some internal topics had replication factor 1 by default"
+      - "some fixes landed only in later versions"
+    actions_taken:
+      - "map anomalies to versions and configuration guidance"
+    changes_after_actions:
+      - "problem framing expands from bug list to deployment-safety review"
+
+turning_points:
+  - "Fault injection revealed message and offset anomalies not obvious from nominal behavior."
+  - "Transaction testing showed that Kafka-compatible transactional semantics were weaker and less intuitive than many users might expect."
+  - "Defaults such as disabled idempotence and weak replication for internal topics materially affected practical safety."
+
+candidate_explanations:
+  - "Observed duplicates are driven by non-idempotent producer behavior under retries or failures."
+  - "Lost or stale messages are linked to leadership changes, crash/partition recovery, or unresolved stream-state bugs."
+  - "Transactional anomalies stem from protocol bugs plus inherently weak or ambiguous write-isolation semantics."
+  - "Offset confusion is a consumer-state problem rather than direct data-plane corruption alone."
+
+diagnostic_patterns:
+  - >
+    normal produce/consume flow -> pause/crash/partition -> duplicate or missing messages appear after recovery
+  - >
+    transaction-enabled workload -> read_committed assumptions -> aborted reads or lost transactional writes
+  - >
+    consumer restart or recovery -> committed offset appears authoritative -> offset moves backward or skips state
+
+discriminating_checks:
+  - question: "Are duplicates happening only when idempotence is disabled or retries are active?"
+    why: "Separates producer-idempotence problems from deeper log corruption or transaction issues."
+  - question: "Do lost or stale messages appear specifically after crash, pause, partition, or leadership changes?"
+    why: "Tests whether recovery and leadership transitions are the trigger."
+  - question: "Are the anomalies in transactional workflows, or also in ordinary produce/consume paths?"
+    why: "Separates transaction-protocol failures from general streaming reliability issues."
+  - question: "Do committed consumer offsets regress or skip unexpectedly during recovery?"
+    why: "Distinguishes offset-state anomalies from raw message loss alone."
+
+expected_observations:
+  - observation: "Duplicates disappear after enabling idempotence while non-transactional traffic stabilizes."
+    effect: "Strengthen duplicate_write_without_idempotence."
+  - observation: "Lost or stale messages cluster around leader changes, crash recovery, or partitions."
+    effect: "Strengthen leadership_change_causes_lost_writes."
+  - observation: "Problems appear mainly in transactional workloads with read_committed expectations."
+    effect: "Strengthen transaction_protocol_bug."
+  - observation: "Consumer recovery resumes from surprising offsets even when log contents seem mostly intact."
+    effect: "Strengthen offset_commit_non_monotonicity."
+
+investigation_steps:
+  - "Separate producer duplication, consumer offset anomalies, and transaction failures into different buckets."
+  - "Check whether idempotence is enabled and whether retries are active."
+  - "Correlate message loss or staleness with pause/crash/partition or leadership changes."
+  - "Inspect transaction usage, transactional IDs, and read_committed assumptions."
+  - "Review replication defaults for internal metadata and transaction-coordinator topics."
+
+root_cause_summary: >
+  Redpanda 21.10.x combined multiple distinct reliability risks: default duplication risk without idempotence,
+  transaction-protocol bugs and weak transactional semantics, offset-state anomalies, and unresolved lost/stale
+  message behavior during failure recovery or leadership change.
+
+reasoning_summary: >
+  The report shows that not all anomalies share a single cause. Some stem from configuration defaults such as
+  idempotence being disabled, some from transaction bugs later fixed in newer releases, and some from unresolved
+  behavior involving lost or stale messages and crashes. The most transferable lesson is that streaming, offsets,
+  and transactions must be diagnosed separately before choosing mitigations.
+
+mitigations_or_workarounds:
+  - "Enable idempotence where producer semantics depend on avoiding duplicates."
+  - "Review and harden replication settings for internal and transaction-related topics."
+  - "Treat exactly-once and transaction guarantees as configuration- and workflow-sensitive, not automatic."
+  - "Correlate recovery incidents with leader changes, retries, and committed offset behavior."
+
+prevention_or_design_followups:
+  - "Separate monitoring for duplicates, lost/stale messages, offset regressions, and transaction anomalies."
+  - "Run failure-injection tests for pause, crash, partition, and recovery paths."
+  - "Document operational expectations around idempotence, transaction scope, and offset semantics."
+  - "Revisit whether application semantics truly require transactions or stronger end-to-end deduplication."
+
+claimed_guarantees:
+  - "Kafka-compatible distributed streaming"
+  - "safety-oriented durability claims including majority fsync for stronger acknowledgements"
+  - "transaction support and exactly-once-style expectations in some workflows"
+violated_properties:
+  - "message durability under some failure/recovery conditions"
+  - "duplicate-free processing under defaults"
+  - "intuitive transactional isolation"
+  - "stable monotonic committed offset expectations"
+resolution_status: "mixed_fixed_and_unresolved"
+fix_versions:
+  - "Frequent safety issues largely resolved by 21.10.3"
+  - "Aborted reads and lost transactional writes fixed in 21.11.15"
+  - "Some duplicate-write and transactional fixes landed in later releases"
+  - "Crash during deallocation and lost/stale messages remained under investigation in the report"
+confidence_notes:
+  - "High confidence in the broad pattern: several anomaly families, some fixed, some unresolved."
+  - "Medium confidence in exact per-issue version mapping because the report describes multiple issue tracks."
+  - "Canonical symptoms and failure-mode labels are adapted for this project's diagnostic use."
+source_refs:
+  - "practice_corpus/raw/redpanda-21.10.1.pdf"
