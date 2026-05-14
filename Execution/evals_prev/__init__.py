@@ -1,2 +1,0 @@
-"""Executable eval pipeline modules."""
-

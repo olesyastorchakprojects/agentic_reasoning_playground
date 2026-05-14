@@ -38,6 +38,8 @@ The request pipeline is a set of explicit runtime stages. Each stage has one nar
 
 Continuation uses the same overall architecture but inserts observation-specific stages so the system can treat the new user input as an update to the current case rather than as a fresh unrelated request.
 
+`query_structuring` is intentionally not a free-form answer step. It is a constrained transformation over the normalized user query plus a controlled vocabulary. Some output fields are expected to normalize into controlled terms such as symptoms, subsystems, failure modes, and system properties, while others stay more directly query-derived. The step is designed to prefer omission over weak unsupported inference, and it keeps nearby but unselected interpretations visible through fields such as `rejected_nearby_terms`. That discipline matters because downstream adequacy checks, retrieval, and evaluation all depend on structured output that is conservative as well as syntactically valid.
+
 ### Storage And Retrieval
 
 The runtime depends on two different data layers.
@@ -65,16 +67,17 @@ The first-response path is the default path for a new problem report.
 1. The runtime receives a raw user request.
 2. The request is normalized into a deterministic form suitable for downstream processing.
 3. The normalized request is converted into a structured query representation.
-4. Candidate incident cards are retrieved and partitioned into a primary branch and alternatives.
-5. The selected card identifiers are hydrated into full structured card records.
-6. Incident evidence and theory evidence are retrieved as separate context layers.
-7. A prompt context is assembled from the normalized request, the selected card material, and the retrieved evidence.
-8. The model produces a strict JSON response.
-9. The response is validated and normalized into the trusted runtime output.
+4. The structured query passes through an adequacy gate that either allows the iteration to continue or returns `WaitForUser` with follow-up questions.
+5. Candidate incident cards are retrieved and partitioned into a primary branch and alternatives.
+6. The selected card identifiers are hydrated into full structured card records.
+7. Incident evidence and theory evidence are retrieved as separate context layers.
+8. A prompt context is assembled from the normalized request, the selected card material, and the retrieved evidence.
+9. The model produces a strict JSON response.
+10. The response is validated and normalized into the trusted runtime output.
 
 The continuation path starts when the user adds a new observation after an earlier answer.
 
-Instead of restarting from scratch, the runtime appends a new iteration to the existing run. The new user input first passes through observation-boundary handling so the system can decide whether it is a diagnostically usable update. It then extracts the observation in a structured way, carries forward the current diagnostic context, refreshes the supporting evidence for the updated situation, assembles a continuation prompt context, and produces a new validated response that updates the diagnostic state.
+Instead of restarting from scratch, the runtime appends a new iteration to the existing run. The new user input is normalized, then passes through observation-boundary handling so the system can decide whether it is a diagnostically usable update. For supported observations, the runtime extracts structured observations and runs a continuation adequacy gate that may again return `WaitForUser`. For sufficient supported observations, it refreshes candidate cards, reranks the continuation branch, reloads the selected cards, refreshes supporting evidence, assembles a continuation prompt context, and produces a new validated response that updates the diagnostic state. Unsupported observations do not continue into retrieval; they terminate the current iteration in `WaitForUser`.
 
 This is one of the most important architectural choices in the project: follow-up input is treated as part of an ongoing investigation, not merely as another chat turn.
 

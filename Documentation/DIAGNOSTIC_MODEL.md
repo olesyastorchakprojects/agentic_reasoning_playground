@@ -68,7 +68,7 @@ For continuation updates, the compact context also carries the existing diagnost
 This packing step matters because prompt usefulness depends on relevance density, not on raw chunk volume.
 The system tries to keep only the context that can explain the match, shape the next check, preserve ambiguity, or supply mechanism-level framing.
 
-More detailed packing rules live in [PROMPT_CONTEXT_ASSEMBLY.md](/home/olesia/code/dist_sys_assistant/Documentation/PROMPT_CONTEXT_ASSEMBLY.md).
+More detailed packing rules live in [PROMPT_CONTEXT_ASSEMBLY.md](./PROMPT_CONTEXT_ASSEMBLY.md).
 
 ### Chunk Roles And Tag-Guided Selection
 
@@ -227,8 +227,8 @@ The continuation loop should refine it rather than recreate it from scratch.
 
 In the first response, the system should:
 
-1. structure the user query;
-2. assess signal quality for a first diagnostic response using the structured query;
+1. normalize and structure the user query;
+2. assess signal quality for a first diagnostic response using the structured query, with the option to stop and ask follow-up questions instead of continuing;
 3. retrieve:
    - a primary incident precedent;
    - explicit alternative incident context;
@@ -240,6 +240,7 @@ In the first response, the system should:
    - one discriminating `first_check`
    - `result_interpretation`
    - `competing_interpretation`
+6. validate and normalize that generated response before treating it as the trusted iteration result.
 
 The first response should establish a useful investigation path, not a final answer.
 
@@ -249,7 +250,7 @@ When a new user message arrives after the first response, the system should not 
 
 It should first:
 
-1. resolve the new message against the current context so short follow-ups become standalone factual updates;
+1. normalize the new message and resolve it against the current context so short follow-ups become standalone factual updates;
 2. determine whether the message is actually an observation rather than:
    - a new question;
    - an ambiguous clarification;
@@ -257,7 +258,7 @@ It should first:
 3. extract a compact set of atomic observations;
 4. decide whether signal quality is sufficient to continue or whether clarification is needed.
 
-Only then should it update the diagnostic state.
+Only then should it refresh the relevant precedent branch, rerank it for the continuation case, rebuild continuation evidence, and update the diagnostic state.
 
 ## Continuity Rules
 

@@ -73,29 +73,35 @@ This first iteration is the bootstrap step. The system starts from one short raw
 
 The step sequence for this iteration is:
 
-1. `query_structuring`
-Purpose: extract structured fields that can later help evaluate query completness and shape the final answer.
+1. `input_normalization`
+Purpose: convert the raw problem report into the deterministic normalized text used by the downstream initial-iteration pipeline.
 
-2. `information_adequacy_analyzer`
+2. `query_structuring`
+Purpose: extract structured fields that can later help evaluate query completeness and shape the final answer.
+
+3. `information_adequacy_analyzer`
 Purpose: decide whether the structured input is sufficient for a real diagnostic move or whether the system should stop and ask follow-up questions instead.
 
-3. `candidate_card_retrieval`
+4. `candidate_card_retrieval`
 Purpose: find the closest precedent card and a small set of alternatives.
 
-4. `card_hydration`
+5. `card_hydration`
 Purpose: load the full structured incident cards for the selected `card_id`s.
 
-5. `incident_evidence_retrieval`
+6. `incident_evidence_retrieval`
 Purpose: pull practical chunks from the primary and alternative cards.
 
-6. `theory_evidence_retrieval`
+7. `theory_evidence_retrieval`
 Purpose: add mechanism-level evidence that explains why the same symptom could arise from different causes.
 
-7. `prompt_context_assembly`
+8. `prompt_context_assembly`
 Purpose: compress the retrieved material into the evidence pack actually sent to generation.
 
-8. `llm_structured_generation`
+9. `llm_structured_generation`
 Purpose: turn that assembled context into the first diagnostic update: problem understanding, hypotheses, and a discriminating check.
+
+10. `response_validation_and_normalization`
+Purpose: validate the generated structured response and convert it into the trusted runtime result returned for the iteration.
 
 ### Input
 
@@ -458,19 +464,22 @@ Purpose: decide whether the extracted observation is sufficient for a real conti
 4. `candidate_card_retrieval`
 Purpose: refresh the closest precedent and the competing context in light of the new observation.
 
-5. `card_hydration`
+5. `card_branch_reranking`
+Purpose: reorder the retrieved candidate branch so the continuation flow carries forward the strongest refreshed primary card and competing context before hydration.
+
+6. `card_hydration`
 Purpose: load the structured cards for the refreshed `card_id`s.
 
-6. `incident_evidence_retrieval`
+7. `incident_evidence_retrieval`
 Purpose: pull practical chunks from the primary and alternative cards using the updated framing.
 
-7. `theory_evidence_retrieval`
+8. `theory_evidence_retrieval`
 Purpose: add mechanism-level evidence that can explain the new observation.
 
-8. `diagnostic_update_prompt_context_assembly`
+9. `diagnostic_update_prompt_context_assembly`
 Purpose: assemble the compact continuation evidence pack for the next model step.
 
-9. `llm_structured_generation`
+10. `llm_structured_generation`
 Purpose: update problem understanding, hypotheses, and the next discriminating check.
 
 ### Input
@@ -753,15 +762,17 @@ Step sequence on this iteration:
    Why: decide whether the extracted observation set is diagnostically sufficient to continue without asking follow-up questions.
 4. `candidate_card_retrieval`
    Why: rerun semantic retrieval on the updated continuation query.
-5. `card_hydration`
+5. `card_branch_reranking`
+   Why: rerank the retrieved continuation branch so the strongest refreshed primary card and competing context are carried into downstream evidence loading.
+6. `card_hydration`
    Why: load the selected structured incident cards from Postgres.
-6. `incident_evidence_retrieval`
+7. `incident_evidence_retrieval`
    Why: retrieve tagged incident chunks from the selected cards.
-7. `theory_evidence_retrieval`
+8. `theory_evidence_retrieval`
    Why: add mechanism-level explanatory evidence.
-8. `diagnostic_update_prompt_context_assembly`
+9. `diagnostic_update_prompt_context_assembly`
    Why: build a continuation-oriented prompt context around the prior diagnostic state and the new observation.
-9. `llm_structured_generation`
+10. `llm_structured_generation`
    Why: produce the next structured diagnostic update.
 
 ### Input
