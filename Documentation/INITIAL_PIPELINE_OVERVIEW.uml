@@ -1,84 +1,106 @@
 @startuml
-title Initial Pipeline Overview
+title Diagnostic Loop Pipeline Overview
 
 skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam componentStyle rectangle
 skinparam defaultTextAlignment center
+skinparam linetype ortho
 
-|Step Modules|
-start
-:Input Normalization;
-:Query Structuring;
+together {
+package "Initial Flow" {
+  component "InputNormalization" as InitialInputNormalization
+  component "QueryStructuring" as InitialQueryStructuring
+  component "InformationAdequacyInitial" as InitialInformationAdequacy
+  component "CandidateCardRetrieval" as InitialCandidateCardRetrieval
+  component "CardHydration" as InitialCardHydration
+  component "IncidentEvidenceRetrieval" as InitialIncidentEvidenceRetrieval
+  component "TheoryEvidenceRetrieval" as InitialTheoryEvidenceRetrieval
+  component "PromptContextAssembly" as InitialPromptContextAssembly
+  component "LlmStructuredGeneration" as InitialLlmStructuredGeneration
+  component "ResponseValidationAndNormalization" as InitialResponseValidation
+  component "WaitForUser" as InitialWaitForUser
+  component "FinishWithResult" as InitialFinish
+}
 
-|API Clients|
-:Model Client;
+package "Continuation Flow" {
+  component "InputNormalization" as ContinuationInputNormalization
+  component "ObservationBoundaryResolver" as ContinuationObservationBoundaryResolver
+  component "ObservationExtraction" as ContinuationObservationExtraction
+  component "InformationAdequacySupportedObservation" as ContinuationAdequacySupported
+  component "InformationAdequacyUnsupportedObservation" as ContinuationAdequacyUnsupported
+  component "CandidateCardRetrieval" as ContinuationCandidateCardRetrieval
+  component "CardBranchReranking" as ContinuationCardBranchReranking
+  component "CardHydration" as ContinuationCardHydration
+  component "IncidentEvidenceRetrieval" as ContinuationIncidentEvidenceRetrieval
+  component "TheoryEvidenceRetrieval" as ContinuationTheoryEvidenceRetrieval
+  component "DiagnosticUpdatePromptContextAssembly" as ContinuationPromptContextAssembly
+  component "LlmStructuredGeneration" as ContinuationLlmStructuredGeneration
+  component "ResponseValidationAndNormalization" as ContinuationResponseValidation
+  component "WaitForUser" as ContinuationWaitForUser
+  component "FinishWithResult" as ContinuationFinish
+}
+}
 
-|External Systems|
-:Model Provider;
+InitialInputNormalization -down-> InitialQueryStructuring
+InitialQueryStructuring -down-> InitialInformationAdequacy
+InitialInformationAdequacy -down-> InitialCandidateCardRetrieval : Sufficient
+InitialInformationAdequacy --> InitialWaitForUser : Blocking or WeakButRunnable
+InitialCandidateCardRetrieval -down-> InitialCardHydration
+InitialCardHydration -down-> InitialIncidentEvidenceRetrieval
+InitialIncidentEvidenceRetrieval -down-> InitialTheoryEvidenceRetrieval
+InitialTheoryEvidenceRetrieval -down-> InitialPromptContextAssembly
+InitialPromptContextAssembly -down-> InitialLlmStructuredGeneration
+InitialLlmStructuredGeneration -down-> InitialResponseValidation
+InitialResponseValidation -down-> InitialFinish
 
-|Step Modules|
-:Information Adequacy Initial;
+ContinuationInputNormalization -down-> ContinuationObservationBoundaryResolver
+ContinuationObservationBoundaryResolver -down-> ContinuationObservationExtraction : Supported
+ContinuationObservationBoundaryResolver --> ContinuationAdequacyUnsupported : Unsupported
+ContinuationObservationExtraction -down-> ContinuationAdequacySupported
+ContinuationAdequacySupported -down-> ContinuationCandidateCardRetrieval : Sufficient
+ContinuationAdequacySupported --> ContinuationWaitForUser : Blocking or WeakButRunnable
+ContinuationAdequacyUnsupported --> ContinuationWaitForUser
+ContinuationCandidateCardRetrieval -down-> ContinuationCardBranchReranking
+ContinuationCardBranchReranking -down-> ContinuationCardHydration
+ContinuationCardHydration -down-> ContinuationIncidentEvidenceRetrieval
+ContinuationIncidentEvidenceRetrieval -down-> ContinuationTheoryEvidenceRetrieval
+ContinuationTheoryEvidenceRetrieval -down-> ContinuationPromptContextAssembly
+ContinuationPromptContextAssembly -down-> ContinuationLlmStructuredGeneration
+ContinuationLlmStructuredGeneration -down-> ContinuationResponseValidation
+ContinuationResponseValidation -down-> ContinuationFinish
 
-if (Sufficient?) then (yes)
-  :Candidate Card Retrieval;
+InitialInputNormalization -[hidden]right-> ContinuationInputNormalization
+InitialInformationAdequacy -[hidden]right-> ContinuationObservationBoundaryResolver
+InitialCandidateCardRetrieval -[hidden]right-> ContinuationAdequacySupported
+InitialCardHydration -[hidden]right-> ContinuationCandidateCardRetrieval
+InitialIncidentEvidenceRetrieval -[hidden]right-> ContinuationCardHydration
+InitialTheoryEvidenceRetrieval -[hidden]right-> ContinuationIncidentEvidenceRetrieval
+InitialPromptContextAssembly -[hidden]right-> ContinuationTheoryEvidenceRetrieval
+InitialLlmStructuredGeneration -[hidden]right-> ContinuationPromptContextAssembly
+InitialResponseValidation -[hidden]right-> ContinuationResponseValidation
+InitialFinish -[hidden]right-> ContinuationFinish
+ContinuationObservationExtraction -[hidden]right-> ContinuationAdequacyUnsupported
+ContinuationCandidateCardRetrieval -[hidden]left-> ContinuationWaitForUser
 
-  |API Clients|
-  :Cards Collection Client;
+note right of InitialInformationAdequacy
+Initial flow uses a single adequacy gate.
+If adequacy is not sufficient, the iteration waits for user input.
+end note
 
-  |External Systems|
-  :Qdrant Cards Collection;
+note left of ContinuationObservationBoundaryResolver
+Continuation flow branches first on observation support.
+Only the supported branch executes observation extraction.
+end note
 
-  |Step Modules|
-  :Card Hydration;
+note left of ContinuationAdequacyUnsupported
+Unsupported observations always end in WaitForUser
+for the current iteration.
+end note
 
-  |API Clients|
-  :Incident Card Store Client;
-
-  |External Systems|
-  :Postgres Incident Cards;
-
-  |Step Modules|
-  :Incident Evidence Retrieval;
-
-  |API Clients|
-  :Practice Chunks Collection Client;
-
-  |External Systems|
-  :Qdrant Practice Chunks Collection;
-
-  |Step Modules|
-  :Theory Evidence Retrieval;
-
-  |API Clients|
-  :Theory Chunks Collection Client;
-
-  |External Systems|
-  :Qdrant Theory Chunks Collection;
-
-  |Step Modules|
-  :Prompt Context Assembly;
-  note right
-    Builds the bounded prompt context
-    from the selected cards and evidence.
-  end note
-
-  :LLM Structured Generation;
-
-  |API Clients|
-  :Model Client;
-
-  |External Systems|
-  :Model Provider;
-
-  |Step Modules|
-  :Response Validation And Normalization;
-  stop
-else (no)
-  :Wait For User Input;
-  note right
-    This is the only branching point
-    in the initial policy.
-  end note
-  stop
-endif
+note right of InitialFinish
+Any step may also terminate the current iteration
+with FinishWithError after a recorded step error.
+end note
 
 @enduml

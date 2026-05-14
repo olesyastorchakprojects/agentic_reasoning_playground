@@ -141,11 +141,12 @@ The project is built around a continuation loop.
 
 Given an initial user problem, the system:
 
-1. structures the query;
-2. checks signal quality for a first diagnostic response using the structured query;
+1. normalizes and structures the query;
+2. checks signal quality for a first diagnostic response and may stop to ask follow-up questions if the initial report is too weak;
 3. retrieves a primary precedent, explicit alternative context, and theory context;
 4. gathers and role-packs supporting evidence;
-5. produces a first diagnostic response with hypotheses and one check.
+5. produces a first diagnostic response with hypotheses and one check;
+6. validates that structured response before returning it as trusted runtime output.
 
 ### Observation Update
 
@@ -153,12 +154,13 @@ When the user provides a new observation, the system should not simply rewrite t
 
 Instead, it should:
 
-1. resolve the new observation against the existing context so short follow-ups become standalone factual updates;
+1. normalize the new input and resolve it against the existing context so short follow-ups become standalone factual updates;
 2. accept only input that behaves like an observation, rather than a new question or ambiguous clarification request;
 3. extract a compact set of atomic observations and decide whether the input is sufficient to continue or whether the system should ask the user for clarification;
-4. update the existing hypothesis state;
-5. strengthen, weaken, or reject hypotheses where warranted;
-6. choose the next best check for the updated state.
+4. if the observation is supported and sufficient, refresh the retrieved precedent branch and supporting evidence for the updated situation;
+5. update the existing hypothesis state;
+6. strengthen, weaken, or reject hypotheses where warranted;
+7. choose the next best check for the updated state and validate the structured update before returning it.
 
 The continuation loop matters because real incident investigation is sequential.
 The system is useful only if it becomes more specific after new evidence appears.
