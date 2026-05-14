@@ -1345,6 +1345,11 @@ mod tests {
                             resolution: distributed_diagnostics::shared_types::ObservationBoundaryResolution::Supported(
                                 ResolvedObservation { text: "memory is stable".to_string() },
                             ),
+                            token_usage: ModelTokenUsage {
+                                prompt_tokens: None,
+                                completion_tokens: None,
+                                total_tokens: None,
+                            },
                         },
                     ),
                 ),

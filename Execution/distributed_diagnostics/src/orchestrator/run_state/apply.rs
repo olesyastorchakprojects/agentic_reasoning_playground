@@ -1279,6 +1279,11 @@ mod tests {
                         confidence: crate::shared_types::Confidence::High,
                         reason: "ok".to_string(),
                         resolution: crate::shared_types::ObservationBoundaryResolution::Unsupported,
+                        token_usage: crate::shared_types::ModelTokenUsage {
+                            prompt_tokens: None,
+                            completion_tokens: None,
+                            total_tokens: None,
+                        },
                     },
                 ),
             ),

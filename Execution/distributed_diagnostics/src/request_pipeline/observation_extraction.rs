@@ -170,6 +170,7 @@ impl ObservationExtraction {
 
         self.extract_instrumented(input, &oi_span)
             .instrument(span)
+            .instrument(oi_span.clone())
             .await
     }
 
@@ -889,6 +890,11 @@ mod tests {
             resolution: ObservationBoundaryResolution::Supported(ResolvedObservation {
                 text: resolved_text.to_string(),
             }),
+            token_usage: ModelTokenUsage {
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+            },
         }
     }
 
@@ -898,6 +904,11 @@ mod tests {
             confidence: Confidence::Low,
             reason: "This is a question, not an observation.".to_string(),
             resolution: ObservationBoundaryResolution::Unsupported,
+            token_usage: ModelTokenUsage {
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+            },
         }
     }
 

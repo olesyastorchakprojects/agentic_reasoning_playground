@@ -1,0 +1,104 @@
+case_id: mysql_8_0_34_jepsen_2023_12_19
+title: "MySQL 8.0.34 Jepsen analysis: Repeatable Read anomalies and internal consistency surprises"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/mysql-8.0.34.pdf"
+vendor_or_project: "MySQL"
+system_type: "relational database using InnoDB"
+version_tested: "8.0.34"
+report_date: "2023-12-19"
+
+short_summary: >
+  Jepsen confirmed that MySQL Repeatable Read still allows anomalies including G2-item, G-single,
+  lost update, internal consistency violations, and Monotonic Atomic View failures. The report also notes
+  that AWS RDS MySQL clusters routinely violate Serializability.
+
+canonical_symptoms:
+  - "repeatable_read_anomaly"
+  - "lost_update"
+  - "read_skew"
+  - "internal_consistency_violation"
+  - "monotonic_atomic_view_violation"
+affected_components:
+  - "repeatable_read_isolation_level"
+  - "interactive_transactions"
+  - "innodb_concurrency_control"
+failure_mode_candidates:
+  - "weaker_than_expected_repeatable_read"
+  - "lost_update_under_repeatable_read"
+  - "partial_visibility_of_transaction_effects"
+observed_phases:
+  - "normal_transaction_execution"
+  - "formal_isolation_testing"
+
+incident_phases:
+  - phase_name: "formal_isolation_testing"
+    context: >
+      Jepsen revisited Hermitage-style questions with Elle and found multiple anomalies in MySQL's Repeatable Read.
+    symptoms:
+      - "transactions can observe inconsistent subsets of another transaction's effects"
+      - "lost updates and read skew occur"
+    user_visible_impact:
+      - "application invariants may fail even when using Repeatable Read"
+    observations:
+      - "Repeatable Read is stronger than Read Committed but weaker than many users assume"
+      - "internal consistency violations were observed"
+    actions_taken:
+      - "run transaction consistency tests with Elle"
+    changes_after_actions:
+      - "repeatable-read semantics become the primary concern rather than general availability"
+
+turning_points:
+  - "The surprising result is not only lost update, but partial then missing visibility of the same transaction's effects."
+
+candidate_explanations:
+  - "MySQL Repeatable Read is significantly weaker than users may expect from the name."
+  - "Some anomalies come from formalization gaps between SQL naming and actual engine behavior."
+
+diagnostic_patterns:
+  - >
+    application relies on Repeatable Read for invariant preservation -> concurrent updates and reads still expose
+    partial or contradictory transaction effects
+
+discriminating_checks:
+  - question: "Is the application relying on Repeatable Read to prevent lost updates or read skew?"
+    why: "Tests whether isolation-level assumptions are the source of inconsistency."
+  - question: "Do transactions ever observe some effects of another transaction and later miss others?"
+    why: "Checks for Monotonic Atomic View failure."
+
+expected_observations:
+  - observation: "Anomalies persist under Repeatable Read without infrastructure failure."
+    effect: "Strengthen weaker_than_expected_repeatable_read."
+
+investigation_steps:
+  - "Audit invariants that depend on Repeatable Read semantics."
+  - "Test for lost updates, read skew, and partial visibility anomalies directly."
+
+root_cause_summary: >
+  MySQL 8.0.34's Repeatable Read remains weaker than many users infer from the name and permits multiple
+  transaction anomalies, including partial and internally inconsistent visibility patterns.
+
+reasoning_summary: >
+  This is primarily a semantics mismatch case: the system can behave 'normally' while the chosen isolation level
+  fails to provide the protections users thought it did.
+
+mitigations_or_workarounds:
+  - "Do not assume Repeatable Read prevents lost update or all read skew anomalies."
+  - "Use stronger mechanisms for safety-critical invariants."
+
+prevention_or_design_followups:
+  - "Test invariants under real engine semantics rather than SQL-level naming."
+
+claimed_guarantees:
+  - "Repeatable Read"
+violated_properties:
+  - "commonly expected Repeatable Read protections"
+  - "Monotonic Atomic View"
+resolution_status: "behavior_characterized"
+fix_versions:
+  - "none recorded in reviewed excerpt"
+confidence_notes:
+  - "Medium confidence: card focuses on the main anomaly family from the intro and not every formal result."
+source_refs:
+  - "practice_corpus/raw/mysql-8.0.34.pdf"
+

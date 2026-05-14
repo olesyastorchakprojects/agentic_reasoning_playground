@@ -120,6 +120,7 @@ impl TheoryEvidenceRetrieval {
 
         self.retrieve_instrumented(request, &oi_span, context)
             .instrument(span)
+            .instrument(oi_span.clone())
             .await
     }
 

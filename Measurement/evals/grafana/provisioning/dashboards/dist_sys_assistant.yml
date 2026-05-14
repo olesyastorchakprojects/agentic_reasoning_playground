@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: dist-sys-assistant-eval-dashboards
+    folder: dist_sys_assistant_evals
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dsa-eval-dashboards

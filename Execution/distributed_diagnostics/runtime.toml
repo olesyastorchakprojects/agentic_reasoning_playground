@@ -45,6 +45,8 @@ max_input_tokens = 3000
 tokenizer_source = "Qwen/Qwen3-Embedding-0.6B"
 
 [query_structuring]
+provider = "together"
+model = "openai/gpt-oss-120b"
 controlled_vocabulary_path = "/home/olesia/code/dist_sys_assistant/Specification/runtime/request_pipeline/query_structuring_controlled_vocabulary.manual_test.json"
 prompt_asset_path = "/home/olesia/code/dist_sys_assistant/Specification/runtime/request_pipeline/query_structuring_prompt_baseline_v2.manual_test.json"
 max_output_tokens = 2200
@@ -57,7 +59,7 @@ max_output_tokens = 600
 
 [observation_extraction]
 provider = "together"
-model = "openai/gpt-oss-20b"
+model = "openai/gpt-oss-120b"
 prompt_asset_path = "/home/olesia/code/dist_sys_assistant/Specification/runtime/request_pipeline/observation_extraction/observation_extraction_prompt_baseline.manual_test.json"
 max_output_tokens = 3000
 
@@ -219,30 +221,35 @@ fallback_to_any_chunk = false
 tag_priority = []
 
 [llm_structured_generation]
-max_output_tokens = 6000
-
-[model]
-transport_kind = "together"
+provider = "together"
+model = "openai/gpt-oss-120b"
+max_output_tokens = 10000
 
 [model.ollama]
-model_name = "qwen2.5:1.5b-instruct-ctx32k"
 timeout_sec = 120
-input_cost_per_million_tokens = 0.00
-output_cost_per_million_tokens = 0.00
 
 [model.ollama.retry]
 max_attempts = 3
 backoff = "exponential"
 
+[model.ollama.models."qwen2.5:1.5b-instruct-ctx32k"]
+input_cost_per_million_tokens = 0.00
+output_cost_per_million_tokens = 0.00
+
 [model.together]
-model_name = "openai/gpt-oss-20b"
 timeout_sec = 120
-input_cost_per_million_tokens = 0.05
-output_cost_per_million_tokens = 0.20
 
 [model.together.retry]
 max_attempts = 3
 backoff = "exponential"
+
+[model.together.models."openai/gpt-oss-20b"]
+input_cost_per_million_tokens = 0.05
+output_cost_per_million_tokens = 0.20
+
+[model.together.models."openai/gpt-oss-120b"]
+input_cost_per_million_tokens = 0.15
+output_cost_per_million_tokens = 0.60
 
 [observability]
 tracing_enabled = true

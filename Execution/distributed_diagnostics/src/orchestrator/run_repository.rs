@@ -13,9 +13,6 @@ fn repository_error_type(e: &RunRepositoryError) -> &'static str {
     match e {
         RunRepositoryError::DuplicateRun { .. } => "RunRepositoryError.DuplicateRun",
         RunRepositoryError::InvalidRunState { .. } => "RunRepositoryError.InvalidRunState",
-        RunRepositoryError::MissingInitialUserQuery { .. } => {
-            "RunRepositoryError.MissingInitialUserQuery"
-        }
         RunRepositoryError::Store(_) => "RunRepositoryError.Store",
     }
 }
@@ -225,7 +222,7 @@ impl RunRepository {
             .await
             .map_err(map_store_error)?;
 
-        summaries.into_iter().map(build_run_list_item).collect()
+        Ok(summaries.into_iter().map(build_run_list_item).collect())
     }
 }
 
@@ -248,9 +245,6 @@ pub enum RunRepositoryError {
     #[error("run state is invalid for persistence: {message}")]
     InvalidRunState { message: String },
 
-    #[error("run list row is missing the initial user query for run {run_id:?}")]
-    MissingInitialUserQuery { run_id: RunId },
-
     #[error(transparent)]
     Store(#[from] RunStateStoreError),
 }
@@ -265,23 +259,21 @@ fn map_store_error(err: RunStateStoreError) -> RunRepositoryError {
     }
 }
 
-fn build_run_list_item(summary: RunSummaryRow) -> Result<RunListItem, RunRepositoryError> {
-    let initial_user_query =
-        summary
-            .initial_user_query
-            .ok_or(RunRepositoryError::MissingInitialUserQuery {
-                run_id: summary.run_id,
-            })?;
-
-    Ok(RunListItem {
+fn build_run_list_item(summary: RunSummaryRow) -> RunListItem {
+    RunListItem {
         run_id: summary.run_id,
         status: summary.status,
         created_at: summary.created_at,
         updated_at: summary.updated_at,
         revision: summary.revision,
-        initial_user_query,
+        initial_user_query: summary.initial_user_query.unwrap_or_else(|| {
+            format!(
+                "<initial query unavailable for run {}>",
+                summary.run_id.0
+            )
+        }),
         final_problem_understanding: summary.final_problem_understanding,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -319,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn build_run_list_item_requires_initial_user_query() {
+    fn build_run_list_item_uses_fallback_when_initial_user_query_is_missing() {
         let now = Utc::now();
         let summary = RunSummaryRow {
             run_id: RunId(uuid::Uuid::new_v4()),
@@ -331,10 +323,11 @@ mod tests {
             final_problem_understanding: None,
         };
 
-        let err = build_run_list_item(summary).unwrap_err();
-        assert!(matches!(
-            err,
-            RunRepositoryError::MissingInitialUserQuery { .. }
-        ));
+        let expected_run_id = summary.run_id.0;
+        let item = build_run_list_item(summary);
+        assert_eq!(
+            item.initial_user_query,
+            format!("<initial query unavailable for run {}>", expected_run_id)
+        );
     }
 }

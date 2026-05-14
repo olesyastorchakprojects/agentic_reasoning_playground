@@ -5,8 +5,9 @@ use distributed_diagnostics::orchestrator::run_state::model::{
 use distributed_diagnostics::shared_types::{
     CandidateCardRetrievalOutput, CardHydrationOutput, GoldenQuestion, IncidentEvidenceRetrievalOutput,
     IterationProfile, LlmStructuredGenerationOutput, ModelTokenUsage, NormalizedUserRequest,
-    ObservationExtractionOutput, PromptContextAssemblyOutput, QueryStructuringOutput,
-    ResponseValidationAndNormalizationOutput, TheoryEvidenceRetrievalOutput, UserRequest,
+    ObservationBoundaryResolverOutput, ObservationExtractionOutput, PromptContextAssemblyOutput,
+    QueryStructuringOutput, ResponseValidationAndNormalizationOutput, RunConfigSnapshot,
+    RuntimeLlmStageConfigSnapshot, TheoryEvidenceRetrievalOutput, UserRequest,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,12 +17,32 @@ pub enum SnapshotIterationSelector {
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct RuntimeTokenUsageSummary {
-    pub query_structuring: ModelTokenUsage,
-    pub llm_structured_generation: ModelTokenUsage,
-    pub total: ModelTokenUsage,
+pub struct RuntimeLlmStageUsageSummary {
+    pub provider: String,
+    pub model_name: String,
+    pub token_usage: ModelTokenUsage,
     pub input_cost_per_million_tokens: f64,
     pub output_cost_per_million_tokens: f64,
+    pub prompt_cost_usd: f64,
+    pub completion_cost_usd: f64,
+    pub total_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeUsageTotalsSummary {
+    pub token_usage: ModelTokenUsage,
+    pub prompt_cost_usd: f64,
+    pub completion_cost_usd: f64,
+    pub total_cost_usd: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeTokenUsageSummary {
+    pub query_structuring: RuntimeLlmStageUsageSummary,
+    pub observation_boundary_resolver: RuntimeLlmStageUsageSummary,
+    pub observation_extraction: RuntimeLlmStageUsageSummary,
+    pub llm_structured_generation: RuntimeLlmStageUsageSummary,
+    pub total: RuntimeUsageTotalsSummary,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -43,10 +64,13 @@ pub struct DiagnosticEvalIterationSnapshot {
     pub llm_structured_generation_output: LlmStructuredGenerationOutput,
     pub response_validation_and_normalization_output: ResponseValidationAndNormalizationOutput,
     /// Present only for continuation iterations.
+    pub observation_boundary_resolver_output: Option<ObservationBoundaryResolverOutput>,
+    /// Present only for continuation iterations.
     pub observation_extraction_output: Option<ObservationExtractionOutput>,
     /// Present only for continuation iterations — the snapshot of the directly preceding
     /// completed iteration.
     pub previous_snapshot: Option<Box<DiagnosticEvalIterationSnapshot>>,
+    pub config_snapshot: Option<RunConfigSnapshot>,
     pub runtime_token_usage: RuntimeTokenUsageSummary,
 }
 
@@ -102,23 +126,26 @@ fn build_snapshot_for_iteration(
     let (
         query_structuring_output,
         prompt_context_assembly_output,
+        observation_boundary_resolver_output,
         observation_extraction_output,
         previous_snapshot,
     ) = if iteration_kind == IterationProfile::Continuation {
         let prev_iteration = find_previous_completed_iteration(run_state, iteration)?;
         let prev_snap = build_snapshot_for_iteration(run_state, prev_iteration)?;
+        let obr = expect_observation_boundary_resolver(iteration)?;
         let oe = expect_observation_extraction(iteration)?;
         let pca = expect_diagnostic_update_prompt_context_assembly(iteration)?;
         (
             prev_snap.query_structuring_output.clone(),
             pca,
+            Some(obr),
             Some(oe),
             Some(Box::new(prev_snap)),
         )
     } else {
         let qs = expect_query_structuring(iteration)?;
         let pca = expect_prompt_context_assembly(iteration)?;
-        (qs, pca, None, None)
+        (qs, pca, None, None, None)
     };
 
     let candidate_card_retrieval_output = expect_candidate_card_retrieval(iteration)?;
@@ -129,36 +156,67 @@ fn build_snapshot_for_iteration(
     let response_validation_and_normalization_output =
         expect_response_validation_and_normalization(iteration)?;
 
-    let (input_cost, output_cost) = iteration
-        .config_snapshot
-        .as_ref()
-        .map(|s| (s.input_cost_per_million_tokens, s.output_cost_per_million_tokens))
-        .unwrap_or((0.0, 0.0));
-
-    let runtime_token_usage = if iteration_kind == IterationProfile::Continuation {
-        let empty_usage = ModelTokenUsage {
-            prompt_tokens: None,
-            completion_tokens: None,
-            total_tokens: None,
-        };
-        RuntimeTokenUsageSummary {
-            query_structuring: empty_usage,
-            llm_structured_generation: llm_structured_generation_output.token_usage.clone(),
-            total: llm_structured_generation_output.token_usage.clone(),
-            input_cost_per_million_tokens: input_cost,
-            output_cost_per_million_tokens: output_cost,
-        }
-    } else {
-        RuntimeTokenUsageSummary {
-            query_structuring: query_structuring_output.token_usage.clone(),
-            llm_structured_generation: llm_structured_generation_output.token_usage.clone(),
-            total: combine_token_usage(
-                &query_structuring_output.token_usage,
-                &llm_structured_generation_output.token_usage,
-            ),
-            input_cost_per_million_tokens: input_cost,
-            output_cost_per_million_tokens: output_cost,
-        }
+    let query_structuring_usage = build_stage_usage(
+        iteration.config_snapshot.as_ref().map(|s| &s.query_structuring),
+        if iteration_kind == IterationProfile::Continuation {
+            empty_token_usage()
+        } else {
+            query_structuring_output.token_usage.clone()
+        },
+    );
+    let observation_boundary_resolver_usage = build_stage_usage(
+        iteration
+            .config_snapshot
+            .as_ref()
+            .map(|s| &s.observation_boundary_resolver),
+        observation_boundary_resolver_output
+            .as_ref()
+            .map(|output| output.token_usage.clone())
+            .unwrap_or_else(empty_token_usage),
+    );
+    let observation_extraction_usage = build_stage_usage(
+        iteration
+            .config_snapshot
+            .as_ref()
+            .map(|s| &s.observation_extraction),
+        observation_extraction_output
+            .as_ref()
+            .map(|output| output.token_usage.clone())
+            .unwrap_or_else(empty_token_usage),
+    );
+    let llm_structured_generation_usage = build_stage_usage(
+        iteration
+            .config_snapshot
+            .as_ref()
+            .map(|s| &s.llm_structured_generation),
+        llm_structured_generation_output.token_usage.clone(),
+    );
+    let total_token_usage = combine_token_usage_many([
+        &query_structuring_usage.token_usage,
+        &observation_boundary_resolver_usage.token_usage,
+        &observation_extraction_usage.token_usage,
+        &llm_structured_generation_usage.token_usage,
+    ]);
+    let runtime_token_usage = RuntimeTokenUsageSummary {
+        query_structuring: query_structuring_usage.clone(),
+        observation_boundary_resolver: observation_boundary_resolver_usage.clone(),
+        observation_extraction: observation_extraction_usage.clone(),
+        llm_structured_generation: llm_structured_generation_usage.clone(),
+        total: RuntimeUsageTotalsSummary {
+            token_usage: total_token_usage,
+            prompt_cost_usd: query_structuring_usage.prompt_cost_usd
+                + observation_boundary_resolver_usage.prompt_cost_usd
+                + observation_extraction_usage.prompt_cost_usd
+                + llm_structured_generation_usage.prompt_cost_usd,
+            completion_cost_usd: query_structuring_usage.completion_cost_usd
+                + observation_boundary_resolver_usage.completion_cost_usd
+                + observation_extraction_usage.completion_cost_usd
+                + llm_structured_generation_usage.completion_cost_usd,
+            total_cost_usd: query_structuring_usage.total_cost_usd
+                + observation_boundary_resolver_usage.total_cost_usd
+                + observation_extraction_usage.total_cost_usd
+                + llm_structured_generation_usage.total_cost_usd,
+        },
     };
 
     Ok(DiagnosticEvalIterationSnapshot {
@@ -178,8 +236,10 @@ fn build_snapshot_for_iteration(
         prompt_context_assembly_output,
         llm_structured_generation_output,
         response_validation_and_normalization_output,
+        observation_boundary_resolver_output,
         observation_extraction_output,
         previous_snapshot,
+        config_snapshot: iteration.config_snapshot.clone(),
         runtime_token_usage,
     })
 }
@@ -405,6 +465,18 @@ fn expect_observation_extraction(
     }
 }
 
+fn expect_observation_boundary_resolver(
+    iteration: &RunIteration,
+) -> Result<ObservationBoundaryResolverOutput, SnapshotBuildError> {
+    match expect_step_payload(iteration, StepKind::ObservationBoundaryResolver)? {
+        StepResultEnvelope::ObservationBoundaryResolver(output) => Ok(output.clone()),
+        _ => Err(SnapshotBuildError::UnexpectedStepPayload {
+            iteration_id: iteration.iteration_id,
+            step: StepKind::ObservationBoundaryResolver,
+        }),
+    }
+}
+
 fn expect_step_payload<'a>(
     iteration: &'a RunIteration,
     step: StepKind,
@@ -443,6 +515,78 @@ fn combine_token_usage(
         prompt_tokens: sum_optional_usize([lhs.prompt_tokens, rhs.prompt_tokens]),
         completion_tokens: sum_optional_usize([lhs.completion_tokens, rhs.completion_tokens]),
         total_tokens: sum_optional_usize([lhs.total_tokens, rhs.total_tokens]),
+    }
+}
+
+fn combine_token_usage_many(values: [&ModelTokenUsage; 4]) -> ModelTokenUsage {
+    let mut prompt_tokens = 0_usize;
+    let mut completion_tokens = 0_usize;
+    let mut total_tokens = 0_usize;
+    let mut saw_prompt = false;
+    let mut saw_completion = false;
+    let mut saw_total = false;
+
+    for usage in values {
+        if let Some(value) = usage.prompt_tokens {
+            prompt_tokens += value;
+            saw_prompt = true;
+        }
+        if let Some(value) = usage.completion_tokens {
+            completion_tokens += value;
+            saw_completion = true;
+        }
+        if let Some(value) = usage.total_tokens {
+            total_tokens += value;
+            saw_total = true;
+        }
+    }
+
+    ModelTokenUsage {
+        prompt_tokens: saw_prompt.then_some(prompt_tokens),
+        completion_tokens: saw_completion.then_some(completion_tokens),
+        total_tokens: saw_total.then_some(total_tokens),
+    }
+}
+
+fn build_stage_usage(
+    config: Option<&RuntimeLlmStageConfigSnapshot>,
+    token_usage: ModelTokenUsage,
+) -> RuntimeLlmStageUsageSummary {
+    let provider = config
+        .map(|cfg| cfg.provider.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    let model_name = config
+        .map(|cfg| cfg.model_name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    let input_cost_per_million_tokens = config
+        .map(|cfg| cfg.input_cost_per_million_tokens)
+        .unwrap_or(0.0);
+    let output_cost_per_million_tokens = config
+        .map(|cfg| cfg.output_cost_per_million_tokens)
+        .unwrap_or(0.0);
+    let prompt_cost_usd =
+        token_usage.prompt_tokens.unwrap_or(0) as f64 * input_cost_per_million_tokens / 1_000_000.0;
+    let completion_cost_usd = token_usage.completion_tokens.unwrap_or(0) as f64
+        * output_cost_per_million_tokens
+        / 1_000_000.0;
+
+    RuntimeLlmStageUsageSummary {
+        provider,
+        model_name,
+        token_usage,
+        input_cost_per_million_tokens,
+        output_cost_per_million_tokens,
+        prompt_cost_usd,
+        completion_cost_usd,
+        total_cost_usd: prompt_cost_usd + completion_cost_usd,
+    }
+}
+
+fn empty_token_usage() -> ModelTokenUsage {
+    ModelTokenUsage {
+        prompt_tokens: None,
+        completion_tokens: None,
+        total_tokens: None,
     }
 }
 
@@ -683,6 +827,11 @@ mod tests {
                                     text: resolved_text.to_string(),
                                 },
                             ),
+                            token_usage: ModelTokenUsage {
+                                prompt_tokens: None,
+                                completion_tokens: None,
+                                total_tokens: None,
+                            },
                         },
                     ),
                 ),
@@ -808,9 +957,9 @@ mod tests {
         .expect("snapshot should build");
 
         assert_snapshot_iteration(&snapshot, newer.iteration_id);
-        assert_eq!(snapshot.runtime_token_usage.total.prompt_tokens, Some(300));
-        assert_eq!(snapshot.runtime_token_usage.total.completion_tokens, Some(150));
-        assert_eq!(snapshot.runtime_token_usage.total.total_tokens, Some(450));
+        assert_eq!(snapshot.runtime_token_usage.total.token_usage.prompt_tokens, Some(300));
+        assert_eq!(snapshot.runtime_token_usage.total.token_usage.completion_tokens, Some(150));
+        assert_eq!(snapshot.runtime_token_usage.total.token_usage.total_tokens, Some(450));
         assert_eq!(snapshot.iteration_kind, IterationProfile::Initial);
         assert!(snapshot.observation_extraction_output.is_none());
         assert!(snapshot.previous_snapshot.is_none());
@@ -892,8 +1041,18 @@ mod tests {
         assert_eq!(snapshot.prompt_context_assembly_output.prompt, "update prompt");
 
         // token usage reflects only the current iteration's LLM call
-        assert_eq!(snapshot.runtime_token_usage.query_structuring.prompt_tokens, None);
-        assert_eq!(snapshot.runtime_token_usage.llm_structured_generation.prompt_tokens, Some(150));
+        assert_eq!(
+            snapshot.runtime_token_usage.query_structuring.token_usage.prompt_tokens,
+            None
+        );
+        assert_eq!(
+            snapshot
+                .runtime_token_usage
+                .llm_structured_generation
+                .token_usage
+                .prompt_tokens,
+            Some(150)
+        );
     }
 
     #[test]

@@ -21,7 +21,10 @@ use crate::api_clients::qdrant::theory_chunks_collection::{
     QdrantTheoryChunksCollectionDense, QdrantTheoryChunksCollectionHybrid,
     TheoryChunksCollectionError,
 };
-use crate::config::{CollectionSettings, ModelTransportSettings, Settings};
+use crate::config::{
+    CollectionSettings, LlmStructuredGenerationSettings, QueryStructuringSettings,
+    ResolvedModelSettings, Settings,
+};
 use crate::orchestrator::orchestrator::Orchestrator;
 use crate::orchestrator::run_repository::RunRepository;
 use crate::orchestrator::step_executor::{StepExecutor, StepExecutorModules};
@@ -110,15 +113,30 @@ pub enum StartupError {
 pub async fn build_orchestrator(
     settings: &Settings,
 ) -> Result<Orchestrator<DiagnosticLoopTransitionPolicy>, StartupError> {
-    let model_client: Arc<dyn crate::api_clients::model::ModelClient> =
-        match &settings.model.transport {
-            ModelTransportSettings::Ollama(ollama) => {
-                Arc::new(OllamaModelClient::from_settings(ollama)?)
-            }
-            ModelTransportSettings::Together(together) => {
-                Arc::new(TogetherModelClient::from_settings(together)?)
-            }
-        };
+    let query_structuring_model_client = build_model_client(
+        settings,
+        "query_structuring",
+        &settings.query_structuring.provider,
+        &settings.query_structuring.model,
+    )?;
+    let observation_boundary_resolver_model_client = build_model_client(
+        settings,
+        "observation_boundary_resolver",
+        &settings.observation_boundary_resolver.provider,
+        &settings.observation_boundary_resolver.model,
+    )?;
+    let observation_extraction_model_client = build_model_client(
+        settings,
+        "observation_extraction",
+        &settings.observation_extraction.provider,
+        &settings.observation_extraction.model,
+    )?;
+    let llm_structured_generation_model_client = build_model_client(
+        settings,
+        "llm_structured_generation",
+        &settings.llm_structured_generation.provider,
+        &settings.llm_structured_generation.model,
+    )?;
 
     let incident_card_store: Arc<dyn IncidentCardStore> = Arc::new(
         PostgresIncidentCardStore::new(PostgresIncidentCardStoreConfig {
@@ -195,8 +213,14 @@ pub async fn build_orchestrator(
     let input_normalization =
         InputNormalization::new(settings.input_normalization.clone()).await?;
 
-    let query_structuring =
-        QueryStructuring::new(settings.query_structuring.clone(), Arc::clone(&model_client))?;
+    let query_structuring = QueryStructuring::new(
+        QueryStructuringSettings {
+            controlled_vocabulary_path: settings.query_structuring.controlled_vocabulary_path.clone(),
+            prompt_asset_path: settings.query_structuring.prompt_asset_path.clone(),
+            max_output_tokens: settings.query_structuring.max_output_tokens,
+        },
+        Arc::clone(&query_structuring_model_client),
+    )?;
 
     let candidate_card_retrieval = CandidateCardRetrieval::new(
         settings.retrieval.cards.clone(),
@@ -224,7 +248,7 @@ pub async fn build_orchestrator(
             prompt_asset_path: settings.observation_boundary_resolver.prompt_asset_path.clone(),
             max_output_tokens: settings.observation_boundary_resolver.max_output_tokens,
         },
-        Arc::clone(&model_client),
+        Arc::clone(&observation_boundary_resolver_model_client),
     )?;
 
     let observation_extraction = ObservationExtraction::new(
@@ -232,7 +256,7 @@ pub async fn build_orchestrator(
             prompt_asset_path: settings.observation_extraction.prompt_asset_path.clone(),
             max_output_tokens: settings.observation_extraction.max_output_tokens,
         },
-        Arc::clone(&model_client),
+        Arc::clone(&observation_extraction_model_client),
     )?;
 
     let card_branch_reranking = CardBranchReranking::new();
@@ -242,8 +266,10 @@ pub async fn build_orchestrator(
     )?;
 
     let llm_structured_generation = LlmStructuredGeneration::new(
-        settings.llm_structured_generation.clone(),
-        Arc::clone(&model_client),
+        LlmStructuredGenerationSettings {
+            max_output_tokens: settings.llm_structured_generation.max_output_tokens,
+        },
+        Arc::clone(&llm_structured_generation_model_client),
     )?;
 
     let response_validation_and_normalization = ResponseValidationAndNormalization::new();
@@ -283,4 +309,24 @@ pub async fn build_orchestrator(
 
     Ok(Orchestrator::new(policy, executor, run_repository)
         .with_config_snapshot(config_snapshot))
+}
+
+fn build_model_client(
+    settings: &Settings,
+    stage_name: &str,
+    provider: &str,
+    model_name: &str,
+) -> Result<Arc<dyn crate::api_clients::model::ModelClient>, StartupError> {
+    let resolved = settings
+        .model
+        .resolve(provider, model_name)
+        .unwrap_or_else(|| panic!("stage {stage_name} has unresolved model binding"));
+    match resolved {
+        ResolvedModelSettings::Ollama(ollama) => Ok(Arc::new(OllamaModelClient::from_settings(
+            &ollama,
+        )?)),
+        ResolvedModelSettings::Together(together) => Ok(Arc::new(
+            TogetherModelClient::from_settings(&together)?,
+        )),
+    }
 }

@@ -161,15 +161,10 @@ pub(crate) fn record_error(span: &tracing::Span, error_type: &str, error_message
 pub(crate) fn run_span(run_id: &str, entrypoint: &'static str) -> tracing::Span {
     tracing::info_span!(
         "diagnostics.run",
-        openinference.span.kind = "CHAIN",
         run.id = run_id,
         run.entrypoint = entrypoint,
         span.module = "orchestrator",
         span.stage = "run",
-        input.value = field::Empty,
-        input.mime_type = field::Empty,
-        output.value = field::Empty,
-        output.mime_type = field::Empty,
         status = field::Empty,
         run.outcome = field::Empty,
         terminal.transition = field::Empty,
@@ -179,14 +174,8 @@ pub(crate) fn run_span(run_id: &str, entrypoint: &'static str) -> tracing::Span 
     )
 }
 
-pub(crate) fn iteration_span(
-    run_id: &str,
-    iteration_id: &str,
-    sequence_no: u64,
-    parent_ctx: Option<&opentelemetry::Context>,
-) -> tracing::Span {
-    use tracing_opentelemetry::OpenTelemetrySpanExt;
-    let span = tracing::info_span!(
+pub(crate) fn iteration_span(run_id: &str, iteration_id: &str, sequence_no: u64) -> tracing::Span {
+    tracing::info_span!(
         "diagnostics.iteration",
         run.id = run_id,
         iteration.id = iteration_id,
@@ -194,11 +183,7 @@ pub(crate) fn iteration_span(
         span.module = "orchestrator",
         span.stage = "iteration",
         status = tracing::field::Empty,
-    );
-    if let Some(ctx) = parent_ctx {
-        let _ = span.set_parent(ctx.clone());
-    }
-    span
+    )
 }
 
 pub(crate) fn policy_transition_span(
@@ -333,6 +318,7 @@ pub(crate) fn oi_iteration_chain_span(
         input.mime_type = field::Empty,
         output.value = field::Empty,
         output.mime_type = field::Empty,
+        runtime.total_cost_usd = field::Empty,
         run.outcome = field::Empty,
         status = field::Empty,
         error.type = field::Empty,

@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 use crate::config::PostgresSettings;
 
+const MAX_ATTEMPTS_PER_STAGE: i32 = 2;
+
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
     #[error("invalid config: {0}")]
@@ -170,6 +172,39 @@ pub struct EvalIterationSummaryRow {
     pub runtime_incident_primary_metrics: Option<serde_json::Value>,
     pub runtime_incident_alternatives_metrics: Option<serde_json::Value>,
     pub runtime_theory_evidence_metrics: Option<serde_json::Value>,
+    pub runtime_query_structuring_model: String,
+    pub runtime_observation_boundary_resolver_model: String,
+    pub runtime_observation_extraction_model: String,
+    pub runtime_llm_structured_generation_model: String,
+    pub runtime_query_structuring_prompt_tokens: i64,
+    pub runtime_query_structuring_completion_tokens: i64,
+    pub runtime_query_structuring_input_cost_per_million_tokens: f64,
+    pub runtime_query_structuring_output_cost_per_million_tokens: f64,
+    pub runtime_observation_boundary_resolver_prompt_tokens: i64,
+    pub runtime_observation_boundary_resolver_completion_tokens: i64,
+    pub runtime_observation_boundary_resolver_input_cost_per_million_tokens: f64,
+    pub runtime_observation_boundary_resolver_output_cost_per_million_tokens: f64,
+    pub runtime_observation_extraction_prompt_tokens: i64,
+    pub runtime_observation_extraction_completion_tokens: i64,
+    pub runtime_observation_extraction_input_cost_per_million_tokens: f64,
+    pub runtime_observation_extraction_output_cost_per_million_tokens: f64,
+    pub runtime_llm_structured_generation_prompt_tokens: i64,
+    pub runtime_llm_structured_generation_completion_tokens: i64,
+    pub runtime_llm_structured_generation_input_cost_per_million_tokens: f64,
+    pub runtime_llm_structured_generation_output_cost_per_million_tokens: f64,
+    pub runtime_query_structuring_prompt_version: String,
+    pub runtime_observation_boundary_resolver_prompt_version: String,
+    pub runtime_observation_extraction_prompt_version: String,
+    pub runtime_prompt_context_prompt_version: String,
+    pub runtime_diagnostic_update_prompt_context_prompt_version: String,
+    pub runtime_query_structuring_tokens: i64,
+    pub runtime_query_structuring_cost_usd: f64,
+    pub runtime_observation_boundary_resolver_tokens: i64,
+    pub runtime_observation_boundary_resolver_cost_usd: f64,
+    pub runtime_observation_extraction_tokens: i64,
+    pub runtime_observation_extraction_cost_usd: f64,
+    pub runtime_llm_structured_generation_tokens: i64,
+    pub runtime_llm_structured_generation_cost_usd: f64,
     pub runtime_prompt_tokens: i64,
     pub runtime_completion_tokens: i64,
     pub runtime_total_tokens: i64,
@@ -193,6 +228,15 @@ pub struct EvalRunSummaryRow {
     pub iterations_evaluated_count: i64,
     pub judge_provider: String,
     pub judge_model: String,
+    pub runtime_query_structuring_model: String,
+    pub runtime_observation_boundary_resolver_model: String,
+    pub runtime_observation_extraction_model: String,
+    pub runtime_llm_structured_generation_model: String,
+    pub runtime_query_structuring_prompt_version: String,
+    pub runtime_observation_boundary_resolver_prompt_version: String,
+    pub runtime_observation_extraction_prompt_version: String,
+    pub runtime_prompt_context_prompt_version: String,
+    pub runtime_diagnostic_update_prompt_context_prompt_version: String,
     pub suite_versions: serde_json::Value,
     pub usable_first_response_rate: f64,
     pub query_structuring_judge_score: f64,
@@ -234,6 +278,14 @@ pub struct EvalRunSummaryRow {
     pub bad_final_due_to_query_rate: f64,
     pub bad_final_due_to_evidence_rate: f64,
     pub bad_final_with_good_query_and_evidence_rate: f64,
+    pub runtime_query_structuring_tokens: i64,
+    pub runtime_query_structuring_cost_usd: f64,
+    pub runtime_observation_boundary_resolver_tokens: i64,
+    pub runtime_observation_boundary_resolver_cost_usd: f64,
+    pub runtime_observation_extraction_tokens: i64,
+    pub runtime_observation_extraction_cost_usd: f64,
+    pub runtime_llm_structured_generation_tokens: i64,
+    pub runtime_llm_structured_generation_cost_usd: f64,
     pub runtime_prompt_tokens: i64,
     pub runtime_completion_tokens: i64,
     pub runtime_total_tokens: i64,
@@ -441,12 +493,14 @@ impl PostgresEvalStore {
             WHERE eval_run_id = $1::uuid
               AND current_stage = $2
               AND status IN ('pending', 'running', 'failed')
+              AND attempt_count < $3
             ORDER BY subject_received_at ASC, runtime_run_id ASC, iteration_id ASC
             LIMIT 1
             "#,
         )
         .bind(eval_run_id)
         .bind(stage.as_str())
+        .bind(MAX_ATTEMPTS_PER_STAGE)
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| StorageError::Query(e.to_string()))?;
@@ -798,6 +852,39 @@ impl PostgresEvalStore {
                 usable_continuation_response,
                 continuation_update_no_hard_fail,
                 continuation_input_no_hard_fail,
+                runtime_query_structuring_model,
+                runtime_observation_boundary_resolver_model,
+                runtime_observation_extraction_model,
+                runtime_llm_structured_generation_model,
+                runtime_query_structuring_prompt_tokens,
+                runtime_query_structuring_completion_tokens,
+                runtime_query_structuring_input_cost_per_million_tokens,
+                runtime_query_structuring_output_cost_per_million_tokens,
+                runtime_observation_boundary_resolver_prompt_tokens,
+                runtime_observation_boundary_resolver_completion_tokens,
+                runtime_observation_boundary_resolver_input_cost_per_million_tokens,
+                runtime_observation_boundary_resolver_output_cost_per_million_tokens,
+                runtime_observation_extraction_prompt_tokens,
+                runtime_observation_extraction_completion_tokens,
+                runtime_observation_extraction_input_cost_per_million_tokens,
+                runtime_observation_extraction_output_cost_per_million_tokens,
+                runtime_llm_structured_generation_prompt_tokens,
+                runtime_llm_structured_generation_completion_tokens,
+                runtime_llm_structured_generation_input_cost_per_million_tokens,
+                runtime_llm_structured_generation_output_cost_per_million_tokens,
+                runtime_query_structuring_prompt_version,
+                runtime_observation_boundary_resolver_prompt_version,
+                runtime_observation_extraction_prompt_version,
+                runtime_prompt_context_prompt_version,
+                runtime_diagnostic_update_prompt_context_prompt_version,
+                runtime_query_structuring_tokens,
+                runtime_query_structuring_cost_usd,
+                runtime_observation_boundary_resolver_tokens,
+                runtime_observation_boundary_resolver_cost_usd,
+                runtime_observation_extraction_tokens,
+                runtime_observation_extraction_cost_usd,
+                runtime_llm_structured_generation_tokens,
+                runtime_llm_structured_generation_cost_usd,
                 runtime_prompt_tokens,
                 runtime_completion_tokens,
                 runtime_total_tokens,
@@ -819,8 +906,11 @@ impl PostgresEvalStore {
                 $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
                 $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
-                $41, $42,
-                $43::jsonb, $44::jsonb, $45::jsonb, $46::jsonb, $47::jsonb
+                $41, $42, $43, $44, $45, $46, $47, $48, $49, $50,
+                $51, $52, $53, $54, $55, $56, $57, $58, $59, $60,
+                $61, $62, $63, $64, $65, $66, $67, $68, $69, $70,
+                $71, $72, $73, $74, $75,
+                $76::jsonb, $77::jsonb, $78::jsonb, $79::jsonb, $80::jsonb
             )
             ON CONFLICT (eval_run_id, runtime_run_id, iteration_id)
             DO UPDATE SET
@@ -853,6 +943,39 @@ impl PostgresEvalStore {
                 usable_continuation_response = EXCLUDED.usable_continuation_response,
                 continuation_update_no_hard_fail = EXCLUDED.continuation_update_no_hard_fail,
                 continuation_input_no_hard_fail = EXCLUDED.continuation_input_no_hard_fail,
+                runtime_query_structuring_model = EXCLUDED.runtime_query_structuring_model,
+                runtime_observation_boundary_resolver_model = EXCLUDED.runtime_observation_boundary_resolver_model,
+                runtime_observation_extraction_model = EXCLUDED.runtime_observation_extraction_model,
+                runtime_llm_structured_generation_model = EXCLUDED.runtime_llm_structured_generation_model,
+                runtime_query_structuring_prompt_tokens = EXCLUDED.runtime_query_structuring_prompt_tokens,
+                runtime_query_structuring_completion_tokens = EXCLUDED.runtime_query_structuring_completion_tokens,
+                runtime_query_structuring_input_cost_per_million_tokens = EXCLUDED.runtime_query_structuring_input_cost_per_million_tokens,
+                runtime_query_structuring_output_cost_per_million_tokens = EXCLUDED.runtime_query_structuring_output_cost_per_million_tokens,
+                runtime_observation_boundary_resolver_prompt_tokens = EXCLUDED.runtime_observation_boundary_resolver_prompt_tokens,
+                runtime_observation_boundary_resolver_completion_tokens = EXCLUDED.runtime_observation_boundary_resolver_completion_tokens,
+                runtime_observation_boundary_resolver_input_cost_per_million_tokens = EXCLUDED.runtime_observation_boundary_resolver_input_cost_per_million_tokens,
+                runtime_observation_boundary_resolver_output_cost_per_million_tokens = EXCLUDED.runtime_observation_boundary_resolver_output_cost_per_million_tokens,
+                runtime_observation_extraction_prompt_tokens = EXCLUDED.runtime_observation_extraction_prompt_tokens,
+                runtime_observation_extraction_completion_tokens = EXCLUDED.runtime_observation_extraction_completion_tokens,
+                runtime_observation_extraction_input_cost_per_million_tokens = EXCLUDED.runtime_observation_extraction_input_cost_per_million_tokens,
+                runtime_observation_extraction_output_cost_per_million_tokens = EXCLUDED.runtime_observation_extraction_output_cost_per_million_tokens,
+                runtime_llm_structured_generation_prompt_tokens = EXCLUDED.runtime_llm_structured_generation_prompt_tokens,
+                runtime_llm_structured_generation_completion_tokens = EXCLUDED.runtime_llm_structured_generation_completion_tokens,
+                runtime_llm_structured_generation_input_cost_per_million_tokens = EXCLUDED.runtime_llm_structured_generation_input_cost_per_million_tokens,
+                runtime_llm_structured_generation_output_cost_per_million_tokens = EXCLUDED.runtime_llm_structured_generation_output_cost_per_million_tokens,
+                runtime_query_structuring_prompt_version = EXCLUDED.runtime_query_structuring_prompt_version,
+                runtime_observation_boundary_resolver_prompt_version = EXCLUDED.runtime_observation_boundary_resolver_prompt_version,
+                runtime_observation_extraction_prompt_version = EXCLUDED.runtime_observation_extraction_prompt_version,
+                runtime_prompt_context_prompt_version = EXCLUDED.runtime_prompt_context_prompt_version,
+                runtime_diagnostic_update_prompt_context_prompt_version = EXCLUDED.runtime_diagnostic_update_prompt_context_prompt_version,
+                runtime_query_structuring_tokens = EXCLUDED.runtime_query_structuring_tokens,
+                runtime_query_structuring_cost_usd = EXCLUDED.runtime_query_structuring_cost_usd,
+                runtime_observation_boundary_resolver_tokens = EXCLUDED.runtime_observation_boundary_resolver_tokens,
+                runtime_observation_boundary_resolver_cost_usd = EXCLUDED.runtime_observation_boundary_resolver_cost_usd,
+                runtime_observation_extraction_tokens = EXCLUDED.runtime_observation_extraction_tokens,
+                runtime_observation_extraction_cost_usd = EXCLUDED.runtime_observation_extraction_cost_usd,
+                runtime_llm_structured_generation_tokens = EXCLUDED.runtime_llm_structured_generation_tokens,
+                runtime_llm_structured_generation_cost_usd = EXCLUDED.runtime_llm_structured_generation_cost_usd,
                 runtime_prompt_tokens = EXCLUDED.runtime_prompt_tokens,
                 runtime_completion_tokens = EXCLUDED.runtime_completion_tokens,
                 runtime_total_tokens = EXCLUDED.runtime_total_tokens,
@@ -903,6 +1026,39 @@ impl PostgresEvalStore {
         .bind(row.usable_continuation_response)
         .bind(row.continuation_update_no_hard_fail)
         .bind(row.continuation_input_no_hard_fail)
+        .bind(&row.runtime_query_structuring_model)
+        .bind(&row.runtime_observation_boundary_resolver_model)
+        .bind(&row.runtime_observation_extraction_model)
+        .bind(&row.runtime_llm_structured_generation_model)
+        .bind(row.runtime_query_structuring_prompt_tokens)
+        .bind(row.runtime_query_structuring_completion_tokens)
+        .bind(row.runtime_query_structuring_input_cost_per_million_tokens)
+        .bind(row.runtime_query_structuring_output_cost_per_million_tokens)
+        .bind(row.runtime_observation_boundary_resolver_prompt_tokens)
+        .bind(row.runtime_observation_boundary_resolver_completion_tokens)
+        .bind(row.runtime_observation_boundary_resolver_input_cost_per_million_tokens)
+        .bind(row.runtime_observation_boundary_resolver_output_cost_per_million_tokens)
+        .bind(row.runtime_observation_extraction_prompt_tokens)
+        .bind(row.runtime_observation_extraction_completion_tokens)
+        .bind(row.runtime_observation_extraction_input_cost_per_million_tokens)
+        .bind(row.runtime_observation_extraction_output_cost_per_million_tokens)
+        .bind(row.runtime_llm_structured_generation_prompt_tokens)
+        .bind(row.runtime_llm_structured_generation_completion_tokens)
+        .bind(row.runtime_llm_structured_generation_input_cost_per_million_tokens)
+        .bind(row.runtime_llm_structured_generation_output_cost_per_million_tokens)
+        .bind(&row.runtime_query_structuring_prompt_version)
+        .bind(&row.runtime_observation_boundary_resolver_prompt_version)
+        .bind(&row.runtime_observation_extraction_prompt_version)
+        .bind(&row.runtime_prompt_context_prompt_version)
+        .bind(&row.runtime_diagnostic_update_prompt_context_prompt_version)
+        .bind(row.runtime_query_structuring_tokens)
+        .bind(row.runtime_query_structuring_cost_usd)
+        .bind(row.runtime_observation_boundary_resolver_tokens)
+        .bind(row.runtime_observation_boundary_resolver_cost_usd)
+        .bind(row.runtime_observation_extraction_tokens)
+        .bind(row.runtime_observation_extraction_cost_usd)
+        .bind(row.runtime_llm_structured_generation_tokens)
+        .bind(row.runtime_llm_structured_generation_cost_usd)
         .bind(row.runtime_prompt_tokens)
         .bind(row.runtime_completion_tokens)
         .bind(row.runtime_total_tokens)
@@ -963,6 +1119,39 @@ impl PostgresEvalStore {
                 usable_continuation_response,
                 continuation_update_no_hard_fail,
                 continuation_input_no_hard_fail,
+                runtime_query_structuring_model,
+                runtime_observation_boundary_resolver_model,
+                runtime_observation_extraction_model,
+                runtime_llm_structured_generation_model,
+                runtime_query_structuring_prompt_tokens,
+                runtime_query_structuring_completion_tokens,
+                runtime_query_structuring_input_cost_per_million_tokens::double precision AS runtime_query_structuring_input_cost_per_million_tokens,
+                runtime_query_structuring_output_cost_per_million_tokens::double precision AS runtime_query_structuring_output_cost_per_million_tokens,
+                runtime_observation_boundary_resolver_prompt_tokens,
+                runtime_observation_boundary_resolver_completion_tokens,
+                runtime_observation_boundary_resolver_input_cost_per_million_to::double precision AS obr_input_cost_per_million,
+                runtime_observation_boundary_resolver_output_cost_per_million_t::double precision AS obr_output_cost_per_million,
+                runtime_observation_extraction_prompt_tokens,
+                runtime_observation_extraction_completion_tokens,
+                runtime_observation_extraction_input_cost_per_million_tokens::double precision AS runtime_observation_extraction_input_cost_per_million_tokens,
+                runtime_observation_extraction_output_cost_per_million_tokens::double precision AS runtime_observation_extraction_output_cost_per_million_tokens,
+                runtime_llm_structured_generation_prompt_tokens,
+                runtime_llm_structured_generation_completion_tokens,
+                runtime_llm_structured_generation_input_cost_per_million_tokens::double precision AS runtime_llm_structured_generation_input_cost_per_million_tokens,
+                runtime_llm_structured_generation_output_cost_per_million_token::double precision AS lsg_output_cost_per_million,
+                runtime_query_structuring_prompt_version,
+                runtime_observation_boundary_resolver_prompt_version,
+                runtime_observation_extraction_prompt_version,
+                runtime_prompt_context_prompt_version,
+                runtime_diagnostic_update_prompt_context_prompt_version,
+                runtime_query_structuring_tokens,
+                runtime_query_structuring_cost_usd::double precision AS runtime_query_structuring_cost_usd,
+                runtime_observation_boundary_resolver_tokens,
+                runtime_observation_boundary_resolver_cost_usd::double precision AS runtime_observation_boundary_resolver_cost_usd,
+                runtime_observation_extraction_tokens,
+                runtime_observation_extraction_cost_usd::double precision AS runtime_observation_extraction_cost_usd,
+                runtime_llm_structured_generation_tokens,
+                runtime_llm_structured_generation_cost_usd::double precision AS runtime_llm_structured_generation_cost_usd,
                 runtime_prompt_tokens,
                 runtime_completion_tokens,
                 runtime_total_tokens,
@@ -1056,7 +1245,24 @@ impl PostgresEvalStore {
                 judge_total_tokens,
                 judge_total_cost_usd,
                 run_total_tokens,
-                run_total_cost_usd
+                run_total_cost_usd,
+                runtime_query_structuring_model,
+                runtime_observation_boundary_resolver_model,
+                runtime_observation_extraction_model,
+                runtime_llm_structured_generation_model,
+                runtime_query_structuring_prompt_version,
+                runtime_observation_boundary_resolver_prompt_version,
+                runtime_observation_extraction_prompt_version,
+                runtime_prompt_context_prompt_version,
+                runtime_diagnostic_update_prompt_context_prompt_version,
+                runtime_query_structuring_tokens,
+                runtime_query_structuring_cost_usd,
+                runtime_observation_boundary_resolver_tokens,
+                runtime_observation_boundary_resolver_cost_usd,
+                runtime_observation_extraction_tokens,
+                runtime_observation_extraction_cost_usd,
+                runtime_llm_structured_generation_tokens,
+                runtime_llm_structured_generation_cost_usd
             )
             VALUES (
                 $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb,
@@ -1064,7 +1270,9 @@ impl PostgresEvalStore {
                 $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
                 $31, $32, $33, $34, $35, $36, $37, $38, $39, $40,
                 $41, $42, $43, $44, $45, $46, $47, $48, $49, $50,
-                $51, $52, $53, $54, $55, $56, $57, $58, $59
+                $51, $52, $53, $54, $55, $56, $57, $58, $59, $60,
+                $61, $62, $63, $64, $65, $66, $67, $68, $69, $70,
+                $71, $72, $73, $74, $75, $76
             )
             ON CONFLICT (eval_run_id)
             DO UPDATE SET
@@ -1126,6 +1334,23 @@ impl PostgresEvalStore {
                 judge_total_cost_usd = EXCLUDED.judge_total_cost_usd,
                 run_total_tokens = EXCLUDED.run_total_tokens,
                 run_total_cost_usd = EXCLUDED.run_total_cost_usd,
+                runtime_query_structuring_model = EXCLUDED.runtime_query_structuring_model,
+                runtime_observation_boundary_resolver_model = EXCLUDED.runtime_observation_boundary_resolver_model,
+                runtime_observation_extraction_model = EXCLUDED.runtime_observation_extraction_model,
+                runtime_llm_structured_generation_model = EXCLUDED.runtime_llm_structured_generation_model,
+                runtime_query_structuring_prompt_version = EXCLUDED.runtime_query_structuring_prompt_version,
+                runtime_observation_boundary_resolver_prompt_version = EXCLUDED.runtime_observation_boundary_resolver_prompt_version,
+                runtime_observation_extraction_prompt_version = EXCLUDED.runtime_observation_extraction_prompt_version,
+                runtime_prompt_context_prompt_version = EXCLUDED.runtime_prompt_context_prompt_version,
+                runtime_diagnostic_update_prompt_context_prompt_version = EXCLUDED.runtime_diagnostic_update_prompt_context_prompt_version,
+                runtime_query_structuring_tokens = EXCLUDED.runtime_query_structuring_tokens,
+                runtime_query_structuring_cost_usd = EXCLUDED.runtime_query_structuring_cost_usd,
+                runtime_observation_boundary_resolver_tokens = EXCLUDED.runtime_observation_boundary_resolver_tokens,
+                runtime_observation_boundary_resolver_cost_usd = EXCLUDED.runtime_observation_boundary_resolver_cost_usd,
+                runtime_observation_extraction_tokens = EXCLUDED.runtime_observation_extraction_tokens,
+                runtime_observation_extraction_cost_usd = EXCLUDED.runtime_observation_extraction_cost_usd,
+                runtime_llm_structured_generation_tokens = EXCLUDED.runtime_llm_structured_generation_tokens,
+                runtime_llm_structured_generation_cost_usd = EXCLUDED.runtime_llm_structured_generation_cost_usd,
                 updated_at = NOW()
             "#,
         )
@@ -1188,6 +1413,23 @@ impl PostgresEvalStore {
         .bind(row.judge_total_cost_usd)
         .bind(row.run_total_tokens)
         .bind(row.run_total_cost_usd)
+        .bind(&row.runtime_query_structuring_model)
+        .bind(&row.runtime_observation_boundary_resolver_model)
+        .bind(&row.runtime_observation_extraction_model)
+        .bind(&row.runtime_llm_structured_generation_model)
+        .bind(&row.runtime_query_structuring_prompt_version)
+        .bind(&row.runtime_observation_boundary_resolver_prompt_version)
+        .bind(&row.runtime_observation_extraction_prompt_version)
+        .bind(&row.runtime_prompt_context_prompt_version)
+        .bind(&row.runtime_diagnostic_update_prompt_context_prompt_version)
+        .bind(row.runtime_query_structuring_tokens)
+        .bind(row.runtime_query_structuring_cost_usd)
+        .bind(row.runtime_observation_boundary_resolver_tokens)
+        .bind(row.runtime_observation_boundary_resolver_cost_usd)
+        .bind(row.runtime_observation_extraction_tokens)
+        .bind(row.runtime_observation_extraction_cost_usd)
+        .bind(row.runtime_llm_structured_generation_tokens)
+        .bind(row.runtime_llm_structured_generation_cost_usd)
         .execute(&self.pool)
         .await
         .map_err(|e| StorageError::Insert(e.to_string()))?;
@@ -1460,6 +1702,105 @@ fn decode_eval_iteration_summary_row(
         continuation_input_no_hard_fail: row
             .try_get("continuation_input_no_hard_fail")
             .ok(),
+        runtime_query_structuring_model: row
+            .try_get("runtime_query_structuring_model")
+            .unwrap_or_else(|_| "unknown".to_string()),
+        runtime_observation_boundary_resolver_model: row
+            .try_get("runtime_observation_boundary_resolver_model")
+            .unwrap_or_else(|_| "unknown".to_string()),
+        runtime_observation_extraction_model: row
+            .try_get("runtime_observation_extraction_model")
+            .unwrap_or_else(|_| "unknown".to_string()),
+        runtime_llm_structured_generation_model: row
+            .try_get("runtime_llm_structured_generation_model")
+            .unwrap_or_else(|_| "unknown".to_string()),
+        runtime_query_structuring_prompt_tokens: row
+            .try_get("runtime_query_structuring_prompt_tokens")
+            .unwrap_or(0_i64),
+        runtime_query_structuring_completion_tokens: row
+            .try_get("runtime_query_structuring_completion_tokens")
+            .unwrap_or(0_i64),
+        runtime_query_structuring_input_cost_per_million_tokens: row
+            .try_get("runtime_query_structuring_input_cost_per_million_tokens")
+            .unwrap_or(0.0_f64),
+        runtime_query_structuring_output_cost_per_million_tokens: row
+            .try_get("runtime_query_structuring_output_cost_per_million_tokens")
+            .unwrap_or(0.0_f64),
+        runtime_observation_boundary_resolver_prompt_tokens: row
+            .try_get("runtime_observation_boundary_resolver_prompt_tokens")
+            .unwrap_or(0_i64),
+        runtime_observation_boundary_resolver_completion_tokens: row
+            .try_get("runtime_observation_boundary_resolver_completion_tokens")
+            .unwrap_or(0_i64),
+        runtime_observation_boundary_resolver_input_cost_per_million_tokens: row
+            .try_get("obr_input_cost_per_million")
+            .unwrap_or(0.0_f64),
+        runtime_observation_boundary_resolver_output_cost_per_million_tokens: row
+            .try_get("obr_output_cost_per_million")
+            .unwrap_or(0.0_f64),
+        runtime_observation_extraction_prompt_tokens: row
+            .try_get("runtime_observation_extraction_prompt_tokens")
+            .unwrap_or(0_i64),
+        runtime_observation_extraction_completion_tokens: row
+            .try_get("runtime_observation_extraction_completion_tokens")
+            .unwrap_or(0_i64),
+        runtime_observation_extraction_input_cost_per_million_tokens: row
+            .try_get("runtime_observation_extraction_input_cost_per_million_tokens")
+            .unwrap_or(0.0_f64),
+        runtime_observation_extraction_output_cost_per_million_tokens: row
+            .try_get("runtime_observation_extraction_output_cost_per_million_tokens")
+            .unwrap_or(0.0_f64),
+        runtime_llm_structured_generation_prompt_tokens: row
+            .try_get("runtime_llm_structured_generation_prompt_tokens")
+            .unwrap_or(0_i64),
+        runtime_llm_structured_generation_completion_tokens: row
+            .try_get("runtime_llm_structured_generation_completion_tokens")
+            .unwrap_or(0_i64),
+        runtime_llm_structured_generation_input_cost_per_million_tokens: row
+            .try_get("runtime_llm_structured_generation_input_cost_per_million_tokens")
+            .unwrap_or(0.0_f64),
+        runtime_llm_structured_generation_output_cost_per_million_tokens: row
+            .try_get("lsg_output_cost_per_million")
+            .unwrap_or(0.0_f64),
+        runtime_query_structuring_prompt_version: row
+            .try_get("runtime_query_structuring_prompt_version")
+            .unwrap_or_else(|_| "unknown".to_string()),
+        runtime_observation_boundary_resolver_prompt_version: row
+            .try_get("runtime_observation_boundary_resolver_prompt_version")
+            .unwrap_or_else(|_| "unknown".to_string()),
+        runtime_observation_extraction_prompt_version: row
+            .try_get("runtime_observation_extraction_prompt_version")
+            .unwrap_or_else(|_| "unknown".to_string()),
+        runtime_prompt_context_prompt_version: row
+            .try_get("runtime_prompt_context_prompt_version")
+            .unwrap_or_else(|_| "unknown".to_string()),
+        runtime_diagnostic_update_prompt_context_prompt_version: row
+            .try_get("runtime_diagnostic_update_prompt_context_prompt_version")
+            .unwrap_or_else(|_| "unknown".to_string()),
+        runtime_query_structuring_tokens: row
+            .try_get("runtime_query_structuring_tokens")
+            .unwrap_or(0_i64),
+        runtime_query_structuring_cost_usd: row
+            .try_get("runtime_query_structuring_cost_usd")
+            .unwrap_or(0.0_f64),
+        runtime_observation_boundary_resolver_tokens: row
+            .try_get("runtime_observation_boundary_resolver_tokens")
+            .unwrap_or(0_i64),
+        runtime_observation_boundary_resolver_cost_usd: row
+            .try_get("runtime_observation_boundary_resolver_cost_usd")
+            .unwrap_or(0.0_f64),
+        runtime_observation_extraction_tokens: row
+            .try_get("runtime_observation_extraction_tokens")
+            .unwrap_or(0_i64),
+        runtime_observation_extraction_cost_usd: row
+            .try_get("runtime_observation_extraction_cost_usd")
+            .unwrap_or(0.0_f64),
+        runtime_llm_structured_generation_tokens: row
+            .try_get("runtime_llm_structured_generation_tokens")
+            .unwrap_or(0_i64),
+        runtime_llm_structured_generation_cost_usd: row
+            .try_get("runtime_llm_structured_generation_cost_usd")
+            .unwrap_or(0.0_f64),
         runtime_prompt_tokens: row
             .try_get("runtime_prompt_tokens")
             .map_err(|_| StorageError::InvalidStoredRow("runtime_prompt_tokens"))?,

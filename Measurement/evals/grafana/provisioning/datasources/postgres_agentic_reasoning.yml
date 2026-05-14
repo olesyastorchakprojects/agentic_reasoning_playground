@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL Agentic Reasoning
+    type: postgres
+    uid: postgres-agentic-reasoning
+    access: proxy
+    url: postgres:5432
+    user: postgres
+    editable: true
+    jsonData:
+      database: agentic_reasoning
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: postgres

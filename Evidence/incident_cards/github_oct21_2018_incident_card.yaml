@@ -1,0 +1,200 @@
+case_id: github_oct21_2018
+title: "GitHub October 21, 2018 post-incident analysis"
+source_type: "company_postmortem"
+source_name: "GitHub Blog"
+source_path: "https://github.blog/news-insights/company-news/oct21-post-incident-analysis/"
+vendor_or_project: "GitHub"
+system_type: "large-scale code hosting platform with multi-datacenter MySQL topology"
+version_tested: "not_applicable"
+report_date: "2018-10-30"
+
+short_summary: >
+  A brief network partition during maintenance triggered cross-regional MySQL failover and a prolonged
+  degradation period at GitHub. Writes were redirected to a remote primary, replicas lagged badly, users saw
+  out-of-date and inconsistent data, and recovery required replica rebuilds, topology restoration, and backlog reconciliation.
+
+canonical_symptoms:
+  - "stale_reads"
+  - "inconsistent_data_views"
+  - "high_write_latency"
+  - "degraded_service_after_failover"
+  - "replica_lag"
+  - "backlog_accumulation"
+affected_components:
+  - "network_connectivity_between_datacenters"
+  - "orchestrator"
+  - "mysql_primaries_and_replicas"
+  - "application_tier"
+  - "webhook_processing"
+  - "pages_build_pipeline"
+failure_mode_candidates:
+  - "cross_region_failover_to_unusable_topology"
+  - "replication_divergence"
+  - "reads_from_stale_replicas"
+  - "manual_reconciliation_after_partition"
+  - "orchestrator_configuration_mismatch"
+observed_phases:
+  - "network_partition"
+  - "automatic_failover"
+  - "degraded_cross_region_operation"
+  - "replica_rebuild_and_catchup"
+  - "backlog_processing"
+
+incident_phases:
+  - phase_name: "network_partition_and_failover"
+    context: >
+      Routine maintenance on optical equipment caused a 43-second connectivity loss between key East Coast
+      GitHub sites, which triggered automated failover logic.
+    symptoms:
+      - "multiple_internal_faults"
+      - "unexpected_database_topology"
+      - "service_degradation_begins"
+    user_visible_impact:
+      - "platform begins to degrade"
+    observations:
+      - "Orchestrator established quorum elsewhere and promoted West Coast primaries"
+      - "application tier immediately began writing cross-country"
+    actions_taken:
+      - "incident declared"
+      - "deployment tooling manually locked"
+      - "database teams paged"
+    changes_after_actions:
+      - "focus shifts from generic outage to topology and data-integrity problem"
+
+  - phase_name: "degraded_cross_region_operation"
+    context: >
+      East Coast applications now depended on West Coast primaries and a broken or incomplete replication state.
+    symptoms:
+      - "service unusable for many users"
+      - "write_latency_increase"
+      - "out_of_date_and_inconsistent_information"
+    user_visible_impact:
+      - "reads and writes become unreliable"
+      - "webhooks and GitHub Pages are unavailable or delayed"
+    observations:
+      - "some East Coast writes had not replicated West before failover"
+      - "failing back immediately would risk user data integrity"
+    actions_taken:
+      - "choose fail-forward to preserve data"
+      - "begin manual topology repair and backup/restore work"
+    changes_after_actions:
+      - "latency and inconsistency persist while recovery prioritizes integrity"
+
+  - phase_name: "replica_restore_and_stale_read_window"
+    context: >
+      Restored East Coast replicas came online gradually, but many replicas were still hours behind primary.
+    symptoms:
+      - "users see inconsistent data depending on which replica serves their read"
+      - "replication delays increase under traffic"
+    user_visible_impact:
+      - "some pages show up-to-date results while others remain stale"
+    observations:
+      - "dozens of replicas were multiple hours delayed"
+      - "replication catchup followed a slower-than-expected curve"
+    actions_taken:
+      - "provision additional read replicas"
+      - "spread read load to reduce utilization and help replicas catch up"
+    changes_after_actions:
+      - "replication eventually converges enough to restore original topology"
+
+  - phase_name: "backlog_processing_and_reconciliation"
+    context: >
+      After topology was healthy again, GitHub still had queued events, Pages builds, and a small set of
+      writes needing reconciliation.
+    symptoms:
+      - "large backlog of hook events and pages builds"
+      - "risk of dropped or delayed downstream processing"
+    user_visible_impact:
+      - "recovery continues after core site responsiveness improves"
+    observations:
+      - "over five million hook events and 80 thousand Pages builds were queued"
+      - "a portion of webhook payloads exceeded internal TTL and were dropped until TTL was increased"
+      - "a small set of writes required analysis and reconciliation"
+    actions_taken:
+      - "keep degraded status until backlog settles"
+      - "analyze MySQL binlogs for writes not replicated west"
+      - "perform user-facing reconciliation where necessary"
+    changes_after_actions:
+      - "incident closes only after backlog is processed and systems settle"
+
+turning_points:
+  - "A brief network partition triggered a much longer topology and data-integrity incident."
+  - "The decision to fail forward preserved data but made latency and usability much worse."
+  - "Once primaries were local again, stale replicas became the dominant user-visible symptom."
+
+candidate_explanations:
+  - "Unexpected cross-region failover created a topology the application tier could not tolerate."
+  - "Replica lag, not simple total outage, explains the later stale and inconsistent reads."
+  - "Small sets of unreplicated writes required reconciliation after topology repair."
+
+diagnostic_patterns:
+  - >
+    short network event -> automatic failover to remote region -> write path survives but latency explodes ->
+    replica lag grows -> users see stale or inconsistent data until topology and replicas recover
+  - >
+    recovery of primary topology -> platform becomes more responsive -> stale reads persist because delayed replicas
+    remain in rotation
+
+discriminating_checks:
+  - question: "Did stale or inconsistent reads intensify after failover rather than at the exact moment of the network event?"
+    why: "Separates direct network outage effects from post-failover replica-lag effects."
+  - question: "Were writes accepted in one region while replicas in another lagged or diverged?"
+    why: "Tests whether topology divergence and replication catchup are central."
+  - question: "Do affected objects cluster around the failover and replication-rebuild window?"
+    why: "Helps distinguish ordinary replica lag from disputed or unreconciled writes."
+  - question: "Did system responsiveness improve before data consistency fully recovered?"
+    why: "Identifies the stale-replica phase as a separate part of the incident."
+
+expected_observations:
+  - observation: "Writes continue but many reads return older data from lagging replicas."
+    effect: "Strengthen reads_from_stale_replicas and replica_lag."
+  - observation: "Failing back immediately is considered unsafe because writes exist in both regions."
+    effect: "Strengthen replication_divergence."
+  - observation: "Manual binlog analysis or reconciliation is needed for a bounded set of writes."
+    effect: "Strengthen manual_reconciliation_after_partition."
+
+investigation_steps:
+  - "Build a precise timeline from network event through failover and replica restoration."
+  - "Separate primary-write-path issues from stale-read issues."
+  - "Check whether application assumptions about topology match orchestrator behavior."
+  - "Measure replica lag and determine whether stale replicas remain in serving rotation."
+  - "Preserve and analyze logs or binlogs for writes in the disputed failover window."
+
+root_cause_summary: >
+  A short network partition triggered Orchestrator to promote cross-regional MySQL primaries into a topology
+  that GitHub's application tier could not tolerate well. Recovery was prolonged by replication divergence,
+  lagging replicas, and the need to reconcile a small set of unreplicated writes while preserving data integrity.
+
+reasoning_summary: >
+  The postmortem shows a layered incident. The initial trigger was network maintenance, but the dominant
+  operational problem became the mismatch between automated failover behavior and application expectations.
+  Later, once the system was partially restored, stale and inconsistent reads came from lagging replicas rather
+  than the original partition itself. This makes the case especially useful for reasoning about failover-induced
+  topology divergence and delayed recovery.
+
+mitigations_or_workarounds:
+  - "Avoid automatic cross-regional primary promotion when the application tier cannot safely tolerate it."
+  - "Keep service degraded while preserving integrity and completing backlog reconciliation."
+  - "Provision additional replicas and reduce read pressure to help replication catch up."
+  - "Capture disputed-write logs for manual or automatic reconciliation."
+
+prevention_or_design_followups:
+  - "Reconfigure Orchestrator to prevent unsafe cross-regional promotions."
+  - "Improve component-level status reporting and communication."
+  - "Invest in active/active/active multi-datacenter serving."
+  - "Increase fault-injection and chaos-engineering practice for realistic failure scenarios."
+
+claimed_guarantees:
+  - "high availability through redundant data-center topology and managed MySQL failover"
+violated_properties:
+  - "timely consistency of user-visible reads during failover recovery"
+  - "availability and performance under unexpected cross-region topology"
+resolution_status: "resolved_with_reconciliation_and_follow_up_work"
+fix_versions:
+  - "not_versioned; changes described as operational and architectural follow-up"
+confidence_notes:
+  - "High confidence: the postmortem provides detailed timeline and remediation rationale."
+  - "Canonical symptom and phase labels are adapted for our diagnostic use."
+source_refs:
+  - "https://github.blog/news-insights/company-news/oct21-post-incident-analysis/"
+

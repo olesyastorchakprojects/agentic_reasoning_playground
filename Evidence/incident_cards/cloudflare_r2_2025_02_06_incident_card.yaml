@@ -1,0 +1,179 @@
+case_id: cloudflare_r2_2025_02_06
+title: "Cloudflare incident on February 6, 2025"
+source_type: "company_postmortem"
+source_name: "Cloudflare Blog"
+source_path: "https://blog.cloudflare.com/cloudflare-incident-on-february-6-2025/"
+vendor_or_project: "Cloudflare"
+system_type: "object storage service and dependent platform services"
+version_tested: "not_applicable"
+report_date: "2025-02-07"
+
+short_summary: >
+  Cloudflare R2 experienced a 59-minute primary outage after a human error during abuse remediation
+  disabled the production R2 Gateway service. Recovery then triggered a smaller secondary incident as
+  clients reconnected and backlog drained into R2's metadata layer. No customer data was lost or corrupted.
+
+canonical_symptoms:
+  - "api_unavailable"
+  - "secondary_errors_during_recovery"
+  - "reconnect_surge"
+  - "metadata_layer_saturation"
+  - "dependency_blast_radius"
+affected_components:
+  - "r2_gateway"
+  - "r2_metadata_layer"
+  - "durable_objects"
+  - "client_reconnect_behavior"
+  - "abuse_remediation_controls"
+  - "dependent_services"
+failure_mode_candidates:
+  - "critical_dependency_outage"
+  - "recovery_amplification"
+  - "reconnect_storm"
+  - "control_plane_disablement_error"
+  - "insufficient_guardrails_for_manual_action"
+observed_phases:
+  - "primary_outage"
+  - "service_recovery"
+  - "secondary_recovery_window"
+  - "post_incident_remediation"
+
+incident_phases:
+  - phase_name: "primary_outage"
+    context: >
+      During routine abuse remediation for a phishing report, an operator action disabled the production
+      R2 Gateway service rather than the intended endpoint or bucket.
+    symptoms:
+      - "object storage API unavailable"
+      - "100_percent_failure_rate_for_r2_operations"
+      - "dependent_services_fail"
+    user_visible_impact:
+      - "uploads downloads and metadata operations fail"
+      - "services depending on R2 experience significant failures"
+    observations:
+      - "R2 frontend was disabled while underlying storage remained intact"
+      - "no data loss or corruption occurred"
+    actions_taken:
+      - "identify cause of disablement"
+      - "engage lower-level operations access"
+      - "re-deploy R2 Gateway service"
+    changes_after_actions:
+      - "primary outage ends as gateway redeploy rolls out"
+
+  - phase_name: "secondary_recovery_window"
+    context: >
+      As R2 recovered and clients reconnected, backlog and renewed operations increased pressure on the
+      metadata layer built on Durable Objects.
+    symptoms:
+      - "secondary wave of errors"
+      - "metadata layer pressure"
+      - "slight durable_objects_error_increase"
+    user_visible_impact:
+      - "small isolated error-rate increase during recovery"
+    observations:
+      - "client reconnects and backlog surge occurred after primary recovery"
+      - "secondary errors were materially smaller than the primary outage"
+    actions_taken:
+      - "continue recovery while monitoring metadata-layer behavior"
+    changes_after_actions:
+      - "system stabilizes once reconnect surge subsides"
+
+  - phase_name: "post_incident_controls"
+    context: >
+      After the outage Cloudflare focused on reducing blast radius and preventing unsafe manual
+      disablement actions.
+    symptoms:
+      - "control and workflow gaps discovered"
+    user_visible_impact:
+      - "future risk identified around internal-account handling and disablement workflows"
+    observations:
+      - "internal accounts were not strongly protected from disablement actions"
+      - "recovery was slowed by lack of direct revert controls"
+    actions_taken:
+      - "add Admin API guardrails"
+      - "disable risky abuse-review UI actions while safeguards are improved"
+      - "introduce two-party approval and tighter access controls"
+    changes_after_actions:
+      - "prevention focus shifts to system guardrails instead of operator training alone"
+
+turning_points:
+  - "The core outage came from disabling the API gateway, not from storage corruption."
+  - "Recovery itself created a second smaller incident through reconnect pressure and backlog drain."
+  - "The lack of direct revert controls made recovery slower than it should have been."
+
+candidate_explanations:
+  - "Primary outage caused by accidental disablement of a critical frontend dependency."
+  - "Secondary errors caused by recovery amplification from reconnect surge and backlog drain."
+  - "Blast radius widened because dependent services were tightly coupled to R2 availability."
+
+diagnostic_patterns:
+  - >
+    critical service frontend disabled -> primary API outage -> service begins recovery ->
+    clients reconnect and backlog drains -> metadata/control layer sees secondary pressure
+  - >
+    operator or control-plane action on shared service -> unexpectedly broad product impact ->
+    recovery slowed by missing revert path or weak guardrails
+
+discriminating_checks:
+  - question: "Did the secondary error wave begin only after the primary service started recovering?"
+    why: "Separates recovery amplification from independent metadata-layer degradation."
+  - question: "Did reconnect rate or client operation volume spike before metadata saturation?"
+    why: "Tests whether reconnect surge and backlog drain explain the secondary symptoms."
+  - question: "Was the underlying storage or data plane healthy while the frontend/API layer was unavailable?"
+    why: "Separates frontend disablement from data loss or storage corruption scenarios."
+  - question: "Was recovery slowed by missing direct revert controls or by dependency on lower-level operations access?"
+    why: "Identifies control-plane recovery inhibitors."
+
+expected_observations:
+  - observation: "Metadata-layer pressure appears only after clients reconnect during recovery."
+    effect: "Strengthen recovery_amplification and reconnect_storm."
+  - observation: "Successful 200 responses before the outage remain durable and no data rollback is observed."
+    effect: "Strengthen control_plane_disablement_error over data_corruption explanations."
+  - observation: "Recovery requires redeployment or lower-level intervention because direct revert controls are missing."
+    effect: "Strengthen insufficient_guardrails_for_manual_action."
+
+investigation_steps:
+  - "Separate primary outage window from secondary recovery window."
+  - "Check whether data loss actually occurred or if the failure was limited to the service frontend."
+  - "Correlate reconnect/backlog metrics with metadata-layer error increases."
+  - "Inspect control-plane actions that could disable shared production services."
+  - "Review whether recovery tooling or revert controls are available for the affected action type."
+
+root_cause_summary: >
+  A human error during abuse remediation disabled the production R2 Gateway service because system guardrails
+  were insufficient. Recovery then produced a smaller secondary incident as reconnecting clients and backlog
+  drain increased load on R2's metadata layer.
+
+reasoning_summary: >
+  The report clearly separates the primary outage from the secondary recovery behavior. The primary incident
+  was a control-plane and safeguard failure affecting the R2 API frontend, not the underlying object storage.
+  Once the gateway recovered, reconnecting clients and queued work created metadata pressure, which is why
+  the case is especially useful as a narrative pattern for recovery amplification.
+
+mitigations_or_workarounds:
+  - "Add hard guardrails that prevent disablement of internal production services."
+  - "Disable or tightly restrict high-risk manual remediation actions until stronger safeguards exist."
+  - "Use staged recovery and monitor metadata/control layers during reconnect surges."
+  - "Ensure direct revert controls exist for dangerous administrative actions."
+
+prevention_or_design_followups:
+  - "Reduce the blast radius of system- or human-actions that can disable production services."
+  - "Require two-party approval for ad hoc high-risk disablement actions."
+  - "Strengthen internal-account identification and protection logic."
+  - "Design recovery paths to tolerate reconnect storms and backlog drain."
+
+claimed_guarantees:
+  - "R2 separates gateway, metadata, caches, and storage for safety and blast-radius management"
+  - "successful 200 responses should not revert on recovery"
+violated_properties:
+  - "service availability of the R2 API frontend"
+  - "safe administrative blast-radius controls"
+resolution_status: "resolved_with_follow_up_work"
+fix_versions:
+  - "not_versioned; remediations described as actioned and in-flight control changes"
+confidence_notes:
+  - "High confidence: the markdown post is explicit about primary cause, secondary recovery behavior, and follow-up controls."
+  - "Canonical symptom labels are adapted for project retrieval and diagnosis."
+source_refs:
+  - "https://blog.cloudflare.com/cloudflare-incident-on-february-6-2025/"
+

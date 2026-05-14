@@ -1,0 +1,175 @@
+case_id: etcd_3_4_3_jepsen_2020_01_30
+title: "etcd 3.4.3 Jepsen analysis: unsafe locks despite strong key-value guarantees"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/etcd-3.4.3.pdf"
+vendor_or_project: "etcd"
+system_type: "distributed coordination key-value store"
+version_tested: "3.4.3"
+report_date: "2020-01-30"
+
+short_summary: >
+  Jepsen found that etcd 3.4.3 key-value operations appeared strict serializable by default,
+  and watches preserved ordered delivery, but distributed locks were fundamentally unsafe.
+  The main practical risk was not ordinary stale reads in the key-value API, but using etcd
+  locks as if they guaranteed exclusive ownership for external critical sections.
+
+canonical_symptoms:
+  - "stale_reads"
+  - "lost_updates"
+  - "unsafe_locking"
+  - "duplicate_lock_holders"
+  - "coordination_anomalies"
+affected_components:
+  - "lock_service"
+  - "lease_validation"
+  - "watch_api"
+  - "key_value_api"
+  - "external_critical_sections"
+failure_mode_candidates:
+  - "lock_ownership_violation"
+  - "stale_lock_after_lease_change"
+  - "missing_lease_validity_recheck"
+  - "coordination_primitive_unsound_for_external_state"
+observed_phases:
+  - "baseline_verification"
+  - "fault_injection"
+  - "lock_contention"
+  - "post_wait_lock_acquisition"
+
+incident_phases:
+  - phase_name: "baseline_verification"
+    context: >
+      Jepsen first evaluated normal key-value behavior, append/register/set workloads, and watch
+      behavior before focusing on locks.
+    symptoms:
+      - "no major stale-read anomalies in default key-value operations"
+      - "watches delivered updates in order"
+    user_visible_impact:
+      - "basic read/write API appears safe"
+      - "system may look healthy to operators focused only on kv correctness"
+    observations:
+      - "key-value operations appear strict serializable by default"
+      - "watch streams preserve ordered updates to a key"
+    actions_taken:
+      - "run register, set, append, and watch workloads"
+    changes_after_actions:
+      - "attention shifts from kv API safety to lock semantics"
+
+  - phase_name: "lock_contention_and_fault_testing"
+    context: >
+      Jepsen tested etcd locks under network partitions, crashes, pauses, leader failures,
+      clock skew, and membership changes while clients acquired leases and used keepalive.
+    symptoms:
+      - "multiple clients may believe they hold the same lock"
+      - "external critical section loses mutual exclusion"
+      - "lost updates when locks are used to protect external state"
+    user_visible_impact:
+      - "applications using etcd locks as mutexes can corrupt state"
+      - "operators may see inconsistent updates despite using the lock API"
+    observations:
+      - "locks are not safe as a general mutual exclusion primitive"
+      - "practical set-update tests revealed lost updates protected by locks"
+    actions_taken:
+      - "run randomized lock/unlock tests"
+      - "use locks to guard updates to external in-memory state"
+      - "inject network and timing faults"
+    changes_after_actions:
+      - "problem profile changes from 'kv store correctness' to 'coordination primitive unsoundness'"
+
+  - phase_name: "bug_specific_analysis"
+    context: >
+      Jepsen identified a bug where lock acquisition did not re-check lease validity after waiting,
+      which further worsened already unsafe lock semantics.
+    symptoms:
+      - "stale lock holder can continue as if ownership were still valid"
+      - "lock safety failures worsen after wait paths"
+    user_visible_impact:
+      - "critical sections can overlap after lease expiry or invalidation"
+      - "applications may trust lock ownership that is already invalid"
+    observations:
+      - "lease validity was not checked after waiting for a lock"
+      - "this exacerbated the core risk in lock behavior"
+    actions_taken:
+      - "analyze behavior after lock waits and lease interactions"
+    changes_after_actions:
+      - "diagnosis narrows from generic lock risk to a concrete implementation bug plus design unsafety"
+
+turning_points:
+  - "Key-value API looked strong, which could mask lock unsafety."
+  - "Testing locks against external state exposed the user-relevant failure mode."
+  - "Lease-validity recheck bug explained why some lock failures became easier to trigger."
+
+candidate_explanations:
+  - "The issue is not ordinary stale reads in the kv API but unsafe lock semantics."
+  - "Applications are using etcd locks as if they guarantee exclusive ownership of external resources."
+  - "A missing lease-validity recheck after waiting amplifies lock safety violations."
+
+diagnostic_patterns:
+  - >
+    coordination store appears healthy for basic reads/writes -> application still sees conflicting
+    critical-section behavior -> root issue is unsafe lock usage rather than kv inconsistency
+  - >
+    lease-bound lock waits -> lease changes or expires -> client continues as if lock ownership remained valid
+
+discriminating_checks:
+  - question: "Are the observed inconsistencies happening in code paths protected by etcd locks rather than plain key-value transactions?"
+    why: "Separates lock-unsafety incidents from ordinary kv consistency incidents."
+  - question: "Do conflicting updates happen after lease expiry, delayed keepalive, or lock wait paths?"
+    why: "Tests whether lease/lock interaction is the immediate trigger."
+  - question: "If the same workflow is rewritten to use etcd transactional guards on etcd state itself, do anomalies persist?"
+    why: "Separates external critical-section misuse from core kv-store serializability failure."
+
+expected_observations:
+  - observation: "Plain key-value operations remain consistent, but external mutex-protected workflows still overlap."
+    effect: "Strengthen lock_ownership_violation."
+  - observation: "Conflicts cluster after lease expiry, delayed heartbeats, or waiting to acquire a lock."
+    effect: "Strengthen missing_lease_validity_recheck and stale_lock_after_lease_change."
+  - observation: "Failures disappear when workflow stops relying on etcd locks for external mutual exclusion."
+    effect: "Strengthen coordination_primitive_unsound_for_external_state."
+
+investigation_steps:
+  - "Separate symptoms from kv operations versus symptoms from lock-protected workflows."
+  - "Inspect lease lifetime, keepalive timing, and lock wait behavior."
+  - "Look for overlapping critical sections or duplicate lock holders."
+  - "Check whether the protected resource is outside etcd, not just etcd state itself."
+  - "Validate whether transactional etcd guards can replace unsafe lock-based coordination."
+
+root_cause_summary: >
+  etcd 3.4.3 key-value operations appeared strong, but etcd locks were unsafe as a general mutual exclusion
+  primitive, and a bug that skipped lease-validity checks after waiting for a lock made those failures worse.
+
+reasoning_summary: >
+  The report distinguishes two different realities: strict-serializable behavior for core key-value operations,
+  versus unsafe lock behavior when applications use etcd locks to protect external state. Jepsen's lock tests
+  and practical set-update experiments showed lost updates and overlapping critical sections, and the analysis
+  tied part of that behavior to missing lease-validity rechecks after lock waits.
+
+mitigations_or_workarounds:
+  - "Do not assume etcd locks safely protect arbitrary external resources."
+  - "Prefer etcd transactional guards when the protected state also lives in etcd."
+  - "Audit lock users for lease expiry, delayed keepalive, and post-wait lock ownership assumptions."
+  - "Treat etcd lock ownership as a risky coordination signal unless safety is independently verified."
+
+prevention_or_design_followups:
+  - "Use coordination patterns with explicit fencing or version checks for external resources."
+  - "Document the difference between kv serializability and lock safety."
+  - "Test coordination primitives under partitions, pauses, lease expiry, and delayed keepalives."
+  - "Avoid building external mutual exclusion on top of assumptions the lock API does not guarantee."
+
+claimed_guarantees:
+  - "strict-serializable reads, writes, and micro-transactions across the datastore"
+  - "distributed locking support as part of coordination primitives"
+  - "ordered watches"
+violated_properties:
+  - "safe mutual exclusion for distributed locks"
+  - "exclusive ownership semantics for external critical sections"
+resolution_status: "partially_fixed_or_mixed"
+fix_versions:
+  - "Report states lock risks were exacerbated by a specific bug; broader lock unsafety appears fundamental."
+confidence_notes:
+  - "High confidence that this card captures the main practical lesson of the report."
+  - "Medium confidence on exact remediation status because the report excerpt reviewed here emphasizes behavior more than release mapping."
+  - "Canonical symptoms are project-oriented abstractions, not verbatim labels from the source."
+source_refs:
+  - "practice_corpus/raw/etcd-3.4.3.pdf"

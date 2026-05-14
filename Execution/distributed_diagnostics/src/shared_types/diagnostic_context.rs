@@ -466,6 +466,11 @@ mod tests {
             resolution: ObservationBoundaryResolution::Supported(ResolvedObservation {
                 text: resolved_text.to_string(),
             }),
+            token_usage: crate::shared_types::ModelTokenUsage {
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+            },
         })
     }
 
@@ -475,6 +480,11 @@ mod tests {
             confidence: Confidence::Low,
             reason: "not a new observation".to_string(),
             resolution: ObservationBoundaryResolution::Unsupported,
+            token_usage: crate::shared_types::ModelTokenUsage {
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+            },
         })
     }
 

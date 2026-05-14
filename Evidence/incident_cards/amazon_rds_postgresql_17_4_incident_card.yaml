@@ -1,0 +1,127 @@
+Source Artifactscase_id: amazon_rds_postgresql_17_4_jepsen_2025_04_29
+title: "Amazon RDS for PostgreSQL 17.4 Jepsen analysis: multi-AZ reader endpoint violates snapshot isolation"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/amazon-rds-for-postgresql-17.4.pdf"
+vendor_or_project: "Amazon RDS for PostgreSQL"
+system_type: "managed PostgreSQL multi-AZ cluster"
+version_tested: "13.15 through 17.4"
+report_date: "2025-04-29"
+
+short_summary: >
+  Jepsen found that Amazon RDS for PostgreSQL multi-AZ clusters violate Snapshot Isolation across
+  the primary and reader endpoints even under healthy conditions and without failover. The issue
+  appears as Long Fork and other G-nonadjacent cycles, likely because primaries and secondaries
+  disagree on transaction visibility order.
+
+canonical_symptoms:
+  - "inconsistent_reads_between_primary_and_reader"
+  - "snapshot_isolation_violation"
+  - "long_fork"
+  - "healthy_cluster_anomaly"
+affected_components:
+  - "primary_endpoint"
+  - "reader_endpoint"
+  - "transaction_visibility_order"
+  - "wal_replication"
+failure_mode_candidates:
+  - "reader_endpoint_visibility_divergence"
+  - "long_fork"
+  - "primary_vs_secondary_order_disagreement"
+observed_phases:
+  - "healthy_cluster_operation"
+  - "read_from_secondaries"
+
+incident_phases:
+  - phase_name: "healthy_cluster_operation"
+    context: >
+      Jepsen tested provisioned multi-AZ RDS PostgreSQL clusters with no fault injection and no failovers.
+    symptoms:
+      - "read-only transactions can disagree about order of committed writes"
+      - "snapshot-like anomalies appear every few minutes under load"
+    user_visible_impact:
+      - "applications using reader endpoints may observe inconsistent snapshots"
+    observations:
+      - "G-nonadjacent cycles occurred on every tested version"
+      - "anomalies appeared without failures"
+    actions_taken:
+      - "exercise read-write transactions via primary endpoint"
+      - "exercise read-only transactions via reader endpoint"
+    changes_after_actions:
+      - "problem localizes to cross-endpoint consistency rather than failover behavior"
+
+  - phase_name: "post_report_cause_identification"
+    context: >
+      After release, AWS and community analysis identified a Long Fork mechanism involving lock order on the
+      primary versus WAL order on secondaries.
+    symptoms:
+      - "primary and secondaries expose conflicting apparent transaction order"
+    user_visible_impact:
+      - "readers on secondaries can see a snapshot incompatible with primary visibility order"
+    observations:
+      - "lock order and WAL order can diverge"
+    actions_taken:
+      - "document likely cause and encourage vendor documentation/fix"
+    changes_after_actions:
+      - "root cause explanation becomes more specific, but behavior remains practically relevant"
+
+turning_points:
+  - "No failover or injected fault was needed for the anomaly to appear."
+  - "The strongest supported level across all endpoints was weaker than users might assume."
+
+candidate_explanations:
+  - "Reader endpoint snapshots are weaker than single-node PostgreSQL snapshot isolation."
+  - "Primaries and secondaries expose transaction visibility in different orders."
+  - "Safety-critical reads may need to avoid secondaries."
+
+diagnostic_patterns:
+  - >
+    healthy managed cluster -> writes succeed normally -> read-only queries on secondaries disagree about
+    order of committed writes -> inconsistent snapshot appears without obvious outage
+
+discriminating_checks:
+  - question: "Do anomalies appear only when read-only traffic uses reader/secondary endpoints?"
+    why: "Separates endpoint-induced visibility problems from general write-path corruption."
+  - question: "Do safety-critical transactions always include at least one write or use only the writer endpoint?"
+    why: "Tests whether avoiding read-only secondaries removes the issue."
+
+expected_observations:
+  - observation: "Anomalies disappear when critical reads use only the writer endpoint."
+    effect: "Strengthen reader_endpoint_visibility_divergence."
+  - observation: "Conflicting snapshots occur in healthy conditions without failover."
+    effect: "Strengthen primary_vs_secondary_order_disagreement."
+
+investigation_steps:
+  - "Compare behavior on writer endpoint versus reader endpoint."
+  - "Check whether critical invariants depend on read-only secondaries."
+  - "Look for Long Fork-like histories where different reads observe incompatible transaction order."
+
+root_cause_summary: >
+  Amazon RDS for PostgreSQL multi-AZ clusters appear to violate Snapshot Isolation across endpoints because
+  primaries and secondaries can expose different transaction visibility orders, producing Long Fork and related anomalies.
+
+reasoning_summary: >
+  The key practical lesson is that the cluster can look healthy while still serving inconsistent snapshots through
+  secondary/read-only paths. This is not primarily a failover story, but an endpoint semantics story.
+
+mitigations_or_workarounds:
+  - "Use the writer endpoint for safety-critical reads."
+  - "Avoid assuming reader endpoints preserve the same snapshot semantics as the primary."
+  - "Design invariants with Long Fork risk in mind when using secondaries."
+
+prevention_or_design_followups:
+  - "Document cross-endpoint consistency limits explicitly."
+  - "Test applications for Long Fork-style anomalies when reader endpoints are involved."
+
+claimed_guarantees:
+  - "Snapshot Isolation as strongest level supported across all endpoints"
+violated_properties:
+  - "Snapshot Isolation across primary and reader endpoints"
+resolution_status: "behavior_documented_cause_identified"
+fix_versions:
+  - "Report update on 2025-05-03 identified likely cause; no fix version recorded in reviewed excerpt"
+confidence_notes:
+  - "High confidence in anomaly shape and practical mitigation direction."
+source_refs:
+  - "practice_corpus/raw/amazon-rds-for-postgresql-17.4.pdf"
+

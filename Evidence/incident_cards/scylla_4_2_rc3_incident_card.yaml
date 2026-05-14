@@ -1,0 +1,131 @@
+case_id: scylla_4_2_rc3_jepsen_2020_12_23
+title: "Scylla 4.2-rc3 Jepsen analysis: LWT split-brain and weaker-than-claimed non-LWT isolation"
+source_type: "jepsen_report"
+source_name: "Jepsen"
+source_path: "practice_corpus/raw/scylla-4.2-rc3.pdf"
+vendor_or_project: "Scylla"
+system_type: "distributed wide-column database"
+version_tested: "4.2-rc3 through 4.2.rc5"
+report_date: "2020-12-23"
+
+short_summary: >
+  Jepsen found that both LWT and non-LWT operations in Scylla 4.2-rc3 failed to meet claimed guarantees.
+  LWT exhibited split-brain even in healthy clusters, while non-LWT operations were not isolated as documented.
+  Several issues were fixed in 4.2, 4.2.1, and 4.3.rc1, but split-brain risk remained around membership changes plus faults.
+
+canonical_symptoms:
+  - "lwt_split_brain"
+  - "aborted_reads"
+  - "missing_rows_in_batch_results"
+  - "non_lwt_isolation_gap"
+  - "membership_change_risk"
+affected_components:
+  - "lightweight_transactions"
+  - "membership_changes"
+  - "non_lwt_write_path"
+  - "batch_statements"
+failure_mode_candidates:
+  - "lwt_split_brain"
+  - "membership_change_concurrency_issue"
+  - "aborted_read_with_lwt"
+  - "weaker_than_claimed_non_lwt_isolation"
+observed_phases:
+  - "healthy_cluster_lwt"
+  - "membership_change"
+  - "fault_injection"
+  - "batch_statement_testing"
+
+incident_phases:
+  - phase_name: "healthy_cluster_lwt_testing"
+    context: >
+      Jepsen found split-brain in LWT even before adding membership changes or more complex failures.
+    symptoms:
+      - "LWT split-brain in healthy clusters"
+    user_visible_impact:
+      - "applications depending on LWT for linearizable coordination can still diverge"
+    observations:
+      - "claimed strong LWT guarantees did not hold even in healthy tests"
+    actions_taken:
+      - "run cas-register and Elle-based LWT workloads"
+    changes_after_actions:
+      - "LWT path becomes a primary risk area"
+
+  - phase_name: "membership_change_and_fault_interaction"
+    context: >
+      Additional problems appeared or intensified when membership changes coincided with faults.
+    symptoms:
+      - "split-brain after membership changes"
+      - "aborted reads"
+      - "missing rows in LWT batch responses"
+    user_visible_impact:
+      - "cluster management operations can destabilize already sensitive transaction semantics"
+    observations:
+      - "some issues were fixed in subsequent releases"
+    actions_taken:
+      - "inject partitions, pauses, kills, clock skew, and membership changes"
+    changes_after_actions:
+      - "risk narrows to a combination of transaction path and topology dynamics"
+
+turning_points:
+  - "Healthy-cluster LWT split-brain was the sharpest surprise."
+  - "Membership changes plus other faults preserved some residual split-brain risk even after fixes."
+
+candidate_explanations:
+  - "LWT consensus path was not consistently enforcing the intended single-winner semantics."
+  - "Membership changes interacted badly with fault handling."
+  - "Non-LWT operations were weaker than product claims suggested."
+
+diagnostic_patterns:
+  - >
+    application relies on LWT for strong coordination -> healthy cluster or membership change still allows split-brain-like outcomes
+
+discriminating_checks:
+  - question: "Is the workload using LWT or ordinary non-LWT writes?"
+    why: "Separates claimed-strong path issues from already weaker eventual paths."
+  - question: "Did anomalies begin around membership changes, repair, decommission, or node removal?"
+    why: "Tests the topology-change trigger."
+
+expected_observations:
+  - observation: "LWT anomalies appear even without severe faults."
+    effect: "Strengthen lwt_split_brain."
+  - observation: "Residual split-brain mainly appears when membership changes coincide with faults."
+    effect: "Strengthen membership_change_concurrency_issue."
+
+investigation_steps:
+  - "Separate LWT and non-LWT behavior."
+  - "Correlate anomalies with membership operations."
+  - "Verify whether later fixed versions remove specific issue families."
+
+root_cause_summary: >
+  Scylla 4.2-rc3 had multiple gaps between claimed and actual isolation behavior, especially around LWT split-brain,
+  with additional instability introduced by membership changes and certain batch/read paths.
+
+reasoning_summary: >
+  This case is especially useful for showing that 'stronger path exists' is not enough: operators must still ask
+  whether that path holds under healthy conditions, topology change, and mixed-fault scenarios.
+
+mitigations_or_workarounds:
+  - "Upgrade past 4.2, 4.2.1, and 4.3.rc1 issue lines where applicable."
+  - "Treat membership changes as a high-risk operational window for LWT-sensitive workloads."
+  - "Do not assume non-LWT operations are isolated."
+
+prevention_or_design_followups:
+  - "Exercise LWT under healthy and topology-change scenarios."
+  - "Document non-LWT semantics conservatively."
+
+claimed_guarantees:
+  - "isolated writes within a partition"
+  - "stronger LWT semantics"
+violated_properties:
+  - "single-winner / linearizable expectations for LWT"
+  - "claimed isolation for non-LWT operations"
+resolution_status: "partially_fixed_with_residual_risk"
+fix_versions:
+  - "4.2"
+  - "4.2.1"
+  - "4.3.rc1"
+confidence_notes:
+  - "High confidence in the broad anomaly families and fix trajectory."
+source_refs:
+  - "practice_corpus/raw/scylla-4.2-rc3.pdf"
+

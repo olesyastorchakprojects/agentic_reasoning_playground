@@ -1,0 +1,204 @@
+case_id: slack_2022_02_22
+title: "Slack's Incident on 2-22-22"
+source_type: "engineering_incident_writeup"
+source_name: "Slack Engineering"
+source_path: "https://slack.engineering/slacks-incident-on-2-22-22/"
+vendor_or_project: "Slack"
+system_type: "large-scale messaging platform with cache, datastore, and service-discovery control plane"
+version_tested: "not_applicable"
+report_date: "2022-04-26"
+
+short_summary: >
+  Slack described the February 22, 2022 incident as a complex systems failure involving overloaded Vitess
+  datastores, cache-tier churn, service-discovery rollout effects, and a cascading failure centered on client boot.
+  Throttling client boot reduced load enough to stabilize service, and later analysis traced the trigger to interactions
+  between Consul rollout behavior, Mcrib cache control, cache misses, and a high-volume scatter query.
+
+canonical_symptoms:
+  - "client_boot_failures"
+  - "database_overload"
+  - "cache_instability"
+  - "cascading_failure"
+  - "load_recovery_instability"
+  - "retry_amplification"
+affected_components:
+  - "client_boot_path"
+  - "vitess_datastore"
+  - "memcached_cache_tier"
+  - "mcrouter"
+  - "mcrib_control_plane"
+  - "consul_service_discovery"
+failure_mode_candidates:
+  - "cache_churn_causes_database_miss_storm"
+  - "control_plane_rollout_triggers_cache_instability"
+  - "scatter_query_amplifies_overload"
+  - "retries_and_boot_traffic_amplify_cascading_failure"
+observed_phases:
+  - "initial_overload"
+  - "throttled_operation"
+  - "trigger_analysis"
+  - "recovery_and_cache_refill"
+  - "post_incident_learning"
+
+incident_phases:
+  - phase_name: "initial_overload"
+    context: >
+      Users and internal teams began reporting connection problems while one Vitess keyspace handling
+      channel membership by user became severely overloaded.
+    symptoms:
+      - "users_unable_to_connect"
+      - "client_boot_failures"
+      - "high_database_load"
+      - "pages_and_alerts_fire_across_teams"
+    user_visible_impact:
+      - "many users cannot boot Slack clients"
+      - "service quality degrades broadly"
+    observations:
+      - "boot requests became slow and often failed"
+      - "one keyspace was much more overloaded than usual"
+    actions_taken:
+      - "parallel investigation and mitigation work begins"
+    changes_after_actions:
+      - "focus narrows onto boot path, cache behavior, and datastore load"
+
+  - phase_name: "boot_throttling_and_partial_stabilization"
+    context: >
+      Slack identified client boot as the most affected API path and applied restrictive throttling to reduce
+      pressure on the datastore and allow caches to refill.
+    symptoms:
+      - "resource_exhaustion_in_database_tier"
+      - "users_without_booted_clients_cannot_connect"
+      - "service_improves_for_already_booted_clients"
+    user_visible_impact:
+      - "new or disconnected clients struggle to connect"
+      - "users with active clients see relatively better behavior"
+    observations:
+      - "restrictive throttle reduced errors and improved service for some users"
+      - "raising limits too quickly caused load and failures to surge again"
+    actions_taken:
+      - "throttle client boot requests"
+      - "increase limits gradually after overshoot"
+    changes_after_actions:
+      - "incident shifts into a controlled but fragile state"
+
+  - phase_name: "trigger_and_cascade_analysis"
+    context: >
+      Deeper investigation traced the overload to interactions between application reads, caches, Mcrouter,
+      Mcrib, and a Consul rollout that changed cache membership behavior.
+    symptoms:
+      - "cache_hit_rate_collapse"
+      - "cache_ring_churn"
+      - "high_query_load_for_gdm_lookup"
+      - "cascading_database_pressure"
+    user_visible_impact:
+      - "system remains metastable and sensitive to more boot traffic"
+    observations:
+      - "a high-volume GDM query was fronted by cache, so heavy DB load implied cache trouble"
+      - "Mcrib rapidly repaired cache configuration as nodes deregistered/rejoined during rollout"
+      - "empty or flushed cache slots pushed more reads to Vitess"
+    actions_taken:
+      - "investigate cache architecture and Consul rollout effects"
+    changes_after_actions:
+      - "root cause expands from one overloaded keyspace to cross-system control-loop interaction"
+
+  - phase_name: "recovery_and_followup"
+    context: >
+      Slack modified the problematic query, used replicas where acceptable, allowed caches to refill,
+      and gradually restored client boot traffic.
+    symptoms:
+      - "load gradually falls as caches warm"
+      - "recovery requires careful traffic shaping"
+    user_visible_impact:
+      - "service returns progressively rather than instantly"
+    observations:
+      - "query was changed to read only missing data from Vitess"
+      - "immutable GDM data could be safely read from replicas"
+      - "clients already used retries with backoff and jitter, but retries still contributed load"
+    actions_taken:
+      - "optimize scatter query"
+      - "allow replica reads for immutable data"
+      - "raise boot throttle cautiously"
+    changes_after_actions:
+      - "cache hit rates increase and database pressure drops enough for full recovery"
+
+turning_points:
+  - "The visible symptom was failed client boot, but the hidden bottleneck was a cache/datastore/control-plane interaction."
+  - "Throttle mitigated the incident, but relaxing it too quickly recreated overload."
+  - "Mcrib was efficient and correct locally, yet contributed to unsafe global system behavior."
+
+candidate_explanations:
+  - "Cache instability caused a miss storm into an already sensitive datastore path."
+  - "Consul rollout and service-discovery churn triggered excessive cache reconfiguration."
+  - "A high-volume scatter query amplified the cost of cache misses."
+  - "Client boot and retry traffic turned underlying instability into a cascading failure."
+
+diagnostic_patterns:
+  - >
+    maintenance or rollout in service-discovery layer -> cache membership churn -> cache misses rise ->
+    database overload -> client boot failures -> retries and new sessions add more load
+  - >
+    throttle boot traffic -> some users recover and caches refill -> relax throttle too fast -> overload returns
+
+discriminating_checks:
+  - question: "Did cache hit rate drop before or alongside the database overload on the affected keyspace?"
+    why: "Separates database-capacity explanations from cache-instability explanations."
+  - question: "Were recent service-discovery or control-plane changes causing cache-node deregistration or churn?"
+    why: "Tests whether rollout or membership churn triggered the incident."
+  - question: "Does throttling boot traffic materially improve service for already-connected users?"
+    why: "Identifies boot-path amplification as a central load driver."
+  - question: "Are the heaviest database queries cache-fronted scatter queries that become dangerous on cache miss?"
+    why: "Distinguishes general overload from query-specific amplification."
+
+expected_observations:
+  - observation: "Cache misses and ring churn rise before the keyspace becomes severely overloaded."
+    effect: "Strengthen cache_churn_causes_database_miss_storm and control_plane_rollout_triggers_cache_instability."
+  - observation: "Restrictive boot throttling improves service for already-booted clients."
+    effect: "Strengthen retries_and_boot_traffic_amplify_cascading_failure."
+  - observation: "Relaxing throttle too quickly recreates failure."
+    effect: "Strengthen metastable or cascading-failure interpretation."
+  - observation: "Query optimization and replica reads reduce load enough for caches to refill."
+    effect: "Strengthen scatter_query_amplifies_overload."
+
+investigation_steps:
+  - "Measure whether cache hit-rate collapse precedes or follows datastore overload."
+  - "Inspect recent control-plane or service-discovery changes affecting cache membership."
+  - "Check whether one or a small set of cache-fronted queries dominate the overloaded keyspace."
+  - "Throttle or shape boot-like high-fanout traffic to see if the system stabilizes."
+  - "During recovery, raise traffic limits gradually and watch for metastable fallback into overload."
+
+root_cause_summary: >
+  The incident was a cascading systems failure in which service-discovery rollout behavior and cache-control
+  loop dynamics increased cache churn, a high-volume cache-fronted scatter query drove heavy database load,
+  and client boot plus retry traffic amplified the overload until traffic shaping and query changes allowed recovery.
+
+reasoning_summary: >
+  Slack's writeup is valuable because it does not present a single simple bug. Instead it shows how multiple
+  locally reasonable mechanisms interacted: Consul rollout, Mcrib's quick cache repair, cache misses, a costly
+  query pattern, and boot traffic. This is exactly the kind of case where dynamic incident phases and diagnostic
+  checks matter more than a one-line root cause label.
+
+mitigations_or_workarounds:
+  - "Throttle boot or equivalent high-fanout traffic during acute overload."
+  - "Increase limits cautiously rather than all at once."
+  - "Optimize or reshape cache-fronted scatter queries."
+  - "Use replica reads for immutable or staleness-tolerant data where safe."
+
+prevention_or_design_followups:
+  - "Change Consul rollout process to avoid triggering this cache-control failure mode."
+  - "Reduce Mcrib control-loop sensitivity to transient cache-node instability."
+  - "Audit other high-volume cache-fronted queries for similar scatter-risk."
+  - "Increase resilience of the caching tier against coordinated churn or brief partitions."
+
+claimed_guarantees:
+  - "Slack's cache and datastore architecture is intended to provide low-latency scalable access"
+violated_properties:
+  - "stable client boot under datastore and cache stress"
+  - "safe behavior under combined control-plane churn and cache misses"
+resolution_status: "resolved_with_architectural_follow_up"
+fix_versions:
+  - "not_versioned; remediation described as rollout changes, query changes, and cache-tier resilience work"
+confidence_notes:
+  - "High confidence in the high-level cascading-failure narrative and the role of cache/control-plane interactions."
+  - "The source is an engineering narrative, so some diagnostic fields are synthesized from the described sequence rather than listed explicitly."
+source_refs:
+  - "https://slack.engineering/slacks-incident-on-2-22-22/"
