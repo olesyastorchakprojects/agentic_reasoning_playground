@@ -104,6 +104,20 @@ This subtree is important because the evaluation layer is implemented in Rust an
 
 Repository-owned execution inputs and helper artifacts such as vocabularies and tokenizer-related data used by the runtime or supporting tooling.
 
+This subtree also matters for Qdrant hybrid retrieval because sparse vocabularies and BM25-like term-stat artifacts are stored here and referenced by runtime ingest and retrieval configuration.
+
+### `Execution/ingest/`
+
+Ingest configuration for the repository's retrieval corpora.
+
+This is where the current Qdrant collection definitions and ingest-shape assumptions are easiest to inspect in one place, including:
+
+- the card-level hybrid BM25-like collection
+- the `fixed_in_structural` practical-incident ingest pipeline
+- the `fixed_in_structural` theory ingest pipeline
+
+The current runtime uses hybrid Qdrant retrieval, and the practical incident and theory corpora are ingested with `fixed_in_structural` chunking plus `bm25_like` sparse scoring.
+
 ### `Execution/docker/`
 
 Local operating environment assets for services such as storage and observability dependencies.
@@ -128,11 +142,9 @@ Produced evaluation artifacts, including datasets and run outputs.
 
 Canonical structured incident cards used as practical precedent knowledge.
 
-### `Evidence/incedent_reports/chunks/`
+### `Evidence/incident_reports/chunks/`
 
 Chunked report material used by retrieval layers.
-
-The directory name is currently spelled `incedent_reports` in the repository; this map reflects the actual on-disk structure.
 
 * * *
 ## Why This Structure Matters
