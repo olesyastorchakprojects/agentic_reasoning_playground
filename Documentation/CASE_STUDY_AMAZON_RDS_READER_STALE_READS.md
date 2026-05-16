@@ -189,6 +189,43 @@ This artifact is useful mainly because it helps evaluate input completeness and 
 }
 ```
 
+#### Vocabulary-Backed Term Selection
+
+The `query_structuring` step produces four vocabulary-backed fields—fields where the model selects terms from or is evaluated against the controlled vocabulary built from the incident corpus. The other eight fields (intent, scenario, entities, constraints, triggers, observability_signals, unresolved_terms, rejected_nearby_terms) are extracted freely without vocabulary constraints.
+
+During evaluation, the four vocabulary-backed fields are compared against golden expectations for this specific question, which define strict and soft acceptable terms and their relevance scores.
+
+For this case, the model's term selections versus golden expectations were:
+
+| Field | Model Selected | Expected (Strict) | Match? |
+|-------|---|---|---|
+| **symptoms** | inconsistent_reads_between_primary_and_reader | inconsistent_reads_between_primary_and_reader | ✅ |
+| **affected_subsystems** | reader_endpoint, primary_endpoint | reader_endpoint | ✅ (but extra term) |
+| **failure_modes** | reader_endpoint_visibility_divergence | reader_endpoint_visibility_divergence | ✅ |
+| **system_properties** | durability of acknowledged writes..., snapshot-consistent reads... | Snapshot Isolation across primary and reader endpoints | ❌ |
+
+Three fields matched perfectly. However, **system_properties** reveals why query-structuring metrics are challenging: the model selected terms from the vocabulary that are semantically related to snapshot isolation, but did not select the expected term "Snapshot Isolation across primary and reader endpoints". This creates:
+- **false positives**: 2 selected terms outside the golden expectation set
+- **false negative**: 1 expected term not selected
+- Lower precision and recall scores
+
+The controlled vocabulary itself comes from the incident card collection (stored in PostgreSQL). During query structuring, the model received this vocabulary as JSON in the prompt and could:
+- Select terms directly from the vocabulary (as happened here);
+- Propose new terms if they had clear grounding in the user query (not needed in this case).
+
+#### Why Query Structuring Quality Metrics Matter
+
+For this specific case, the metrics reveal the challenge: while 3 of 4 vocabulary-backed fields matched golden expectations perfectly, the **system_properties** field mismatch cascades:
+
+- **false_positive_count** for system_properties: 2 (selected terms not in golden set)
+- **false_negative_count** for system_properties: 1 (missed the expected term)
+- **precision_soft**: ~0.5 (only half of selected terms were in golden soft set)
+- **recall_strict**: 0.75 (only 3 of 4 expected strict terms found across all fields)
+
+The model's selections ("durability of acknowledged writes", "snapshot-consistent reads") are reasonable synonyms for snapshot isolation, yet they do not match the golden expectations. This is a real engineering pattern: controlled vocabulary term selection is nuanced—the model must choose exact terms from a finite vocabulary that the golden set specifies, even when semantically-close alternatives exist.
+
+Query structuring is therefore a leverage point: improvements in structuring directly improve downstream retrieval and answer quality.
+
 ### Candidate Retrieval
 
 The candidate-card retriever then selected one strong primary precedent and two alternatives.
