@@ -197,16 +197,18 @@ During evaluation, the four vocabulary-backed fields are compared against golden
 
 For this case, the model's term selections versus golden expectations were:
 
-| Field | Model Selected | Expected (Strict) | Match? |
-|-------|---|---|---|
-| **symptoms** | inconsistent_reads_between_primary_and_reader | inconsistent_reads_between_primary_and_reader | ✅ |
-| **affected_subsystems** | reader_endpoint, primary_endpoint | reader_endpoint | ✅ (but extra term) |
-| **failure_modes** | reader_endpoint_visibility_divergence | reader_endpoint_visibility_divergence | ✅ |
-| **system_properties** | durability of acknowledged writes..., snapshot-consistent reads... | Snapshot Isolation across primary and reader endpoints | ❌ |
+| Field | Model Selected | In Vocabulary? | Expected (Strict) | Match? |
+|-------|---|---|---|---|
+| **symptoms** | inconsistent_reads_between_primary_and_reader | ✅ Yes | inconsistent_reads_between_primary_and_reader | ✅ |
+| **affected_subsystems** | reader_endpoint | ✅ Yes | reader_endpoint | ✅ |
+| **affected_subsystems** | primary_endpoint | ✅ Yes | (soft: primary_endpoint) | ✅ |
+| **failure_modes** | reader_endpoint_visibility_divergence | ✅ Yes | reader_endpoint_visibility_divergence | ✅ |
+| **system_properties** | durability of acknowledged writes... | ✅ Yes | Snapshot Isolation across primary and reader endpoints | ❌ |
+| **system_properties** | snapshot-consistent reads across transaction modes | ✅ Yes | (same ↑) | ❌ |
 
-Three fields matched perfectly. However, **system_properties** reveals why query-structuring metrics are challenging: the model selected terms from the vocabulary that are semantically related to snapshot isolation, but did not select the expected term "Snapshot Isolation across primary and reader endpoints". This creates:
-- **false positives**: 2 selected terms outside the golden expectation set
-- **false negative**: 1 expected term not selected
+Three fields matched perfectly. However, **system_properties** reveals why query-structuring metrics are challenging: all selected terms are valid vocabulary terms, yet two of them (rows 5-6) do not match golden expectations. The expected strict term "Snapshot Isolation across primary and reader endpoints" is also in the vocabulary, but the model did not select it—instead selecting semantically-related but distinct terms. This creates:
+- **false positives**: 2 selected terms in vocabulary but outside golden expectation set
+- **false negative**: 1 expected vocabulary term not selected by model
 - Lower precision and recall scores
 
 The controlled vocabulary itself comes from the incident card collection (stored in PostgreSQL). During query structuring, the model received this vocabulary as JSON in the prompt and could:
