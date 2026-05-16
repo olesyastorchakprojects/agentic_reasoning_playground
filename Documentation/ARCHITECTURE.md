@@ -38,7 +38,13 @@ The request pipeline is a set of explicit runtime stages. Each stage has one nar
 
 Continuation uses the same overall architecture but inserts observation-specific stages so the system can treat the new user input as an update to the current case rather than as a fresh unrelated request.
 
-`query_structuring` is intentionally not a free-form answer step. It is a constrained transformation over the normalized user query plus a controlled vocabulary. Some output fields are expected to normalize into controlled terms such as symptoms, subsystems, failure modes, and system properties, while others stay more directly query-derived. The step is designed to prefer omission over weak unsupported inference, and it keeps nearby but unselected interpretations visible through fields such as `rejected_nearby_terms`. That discipline matters because downstream adequacy checks, retrieval, and evaluation all depend on structured output that is conservative as well as syntactically valid.
+`query_structuring` is intentionally not a free-form answer step. It is a constrained transformation that produces a typed 12-field `StructuredUserQuery` by combining the normalized user query with a prebuilt controlled vocabulary.
+
+The controlled vocabulary (canonical_symptoms, affected_components, failure_mode_candidates, violated_properties) is derived offline from the incident card corpus stored in PostgreSQL and loaded as a JSON asset at startup. The model receives this vocabulary in the prompt for the four vocabulary-backed fields (symptoms, affected_subsystems, failure_modes, system_properties). The model can select terms from the vocabulary or propose new terms if it sees clear grounding in the user query.
+
+The remaining eight output fields (intent, scenario, entities, constraints, triggers, observability_signals, unresolved_terms, rejected_nearby_terms) are extracted without vocabulary constraints.
+
+The discipline of term selection is enforced through rich query-structuring metrics that measure set-based accuracy, evidence grounding, and support confidence. This keeps downstream adequacy checks, retrieval, and evaluation all dependent on structured output that is both conservative and syntactically valid.
 
 ### Storage And Retrieval
 

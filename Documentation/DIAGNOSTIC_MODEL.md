@@ -37,6 +37,26 @@ It should not:
 - silently invert the meaning of the user's report;
 - discard important previously established context without reason.
 
+### Query Structuring And Controlled Vocabulary
+
+Before the reasoning state is built, the system structures the user query into a typed `StructuredUserQuery` with 12 fields.
+
+Four fields are vocabulary-backed and validated against the controlled vocabulary (derived offline from incident cards stored in PostgreSQL):
+- `symptoms` — matched against canonical_symptoms
+- `affected_subsystems` — matched against affected_components
+- `failure_modes` — matched against failure_mode_candidates
+- `system_properties` — matched against violated_properties
+
+The remaining eight fields (intent, scenario, entities, constraints, triggers, observability_signals, unresolved_terms, rejected_nearby_terms) are extracted freely without vocabulary constraints.
+
+For the four vocabulary-backed fields, the model can:
+- Select relevant terms from the controlled vocabulary
+- Propose terms outside the vocabulary if they have clear grounding in the user query
+
+The controlled vocabulary is prebuilt offline from the incident card corpus and loaded as a JSON asset at startup. At runtime, the model receives this vocabulary as compact JSON in the prompt, allowing it to make informed term selections.
+
+The quality of term selection for all four vocabulary-backed fields is measured through rich metrics: precision, recall, graded coverage, grounding (whether evidence spans are actually in the user query), and support-level discipline. These metrics are computed per-request and aggregated in evaluation runs (see [Specification/runtime/request_pipeline/query_structuring_metrics.md](../Specification/runtime/request_pipeline/query_structuring_metrics.md) and [Evidence/evals/runs/](../Evidence/evals/runs/) for concrete reports).
+
 ### Retrieval Context
 
 The reasoning state is built on top of retrieved context, not directly on raw free-form generation.
