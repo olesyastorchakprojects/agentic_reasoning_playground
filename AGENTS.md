@@ -44,13 +44,20 @@ Interpretation:
 
 ## Read This First
 
-For most tasks, read in this order:
+For most tasks, start with [Documentation/README.md](./Documentation/README.md) which recommends the core reading path:
 
-1. [Documentation/README.md](./Documentation/README.md)
-2. [Documentation/ARCHITECTURE.md](./Documentation/ARCHITECTURE.md)
-3. [Documentation/KEY_ENGINEERING_DECISIONS.md](./Documentation/KEY_ENGINEERING_DECISIONS.md)
-4. [Documentation/SPECIFICATION_FIRST_APPROACH.md](./Documentation/SPECIFICATION_FIRST_APPROACH.md)
-5. the relevant files under `Specification/runtime/` or `Specification/contracts/`
+1. [Documentation/OVERVIEW.md](./Documentation/OVERVIEW.md) — product framing
+2. [Documentation/DIAGNOSTIC_MODEL.md](./Documentation/DIAGNOSTIC_MODEL.md) — reasoning model
+3. [Documentation/CASE_STUDY_AMAZON_RDS_READER_STALE_READS.md](./Documentation/CASE_STUDY_AMAZON_RDS_READER_STALE_READS.md) — concrete example
+4. [Documentation/EVALUATION_STORY.md](./Documentation/EVALUATION_STORY.md) — quality measurement
+5. [Documentation/OBSERVABILITY_STORY.md](./Documentation/OBSERVABILITY_STORY.md) — traces and inspection
+6. [Documentation/ARCHITECTURE.md](./Documentation/ARCHITECTURE.md) — runtime pipeline
+
+Then:
+
+7. [Documentation/KEY_ENGINEERING_DECISIONS.md](./Documentation/KEY_ENGINEERING_DECISIONS.md) — design rationale
+8. [Documentation/SPECIFICATION_FIRST_APPROACH.md](./Documentation/SPECIFICATION_FIRST_APPROACH.md) — spec methodology
+9. the relevant files under `Specification/runtime/` or `Specification/contracts/`
 
 If the task is runtime-policy-related, read:
 
