@@ -478,23 +478,29 @@ impl PostgresEvalStore {
         let row = sqlx::query(
             r#"
             SELECT
-                eval_run_id,
-                runtime_run_id,
-                iteration_id,
-                subject_received_at,
-                current_stage,
-                status,
-                attempt_count,
-                started_at,
-                completed_at,
-                updated_at,
-                last_error
-            FROM diagnostics.eval_processing_state
-            WHERE eval_run_id = $1::uuid
-              AND current_stage = $2
-              AND status IN ('pending', 'running', 'failed')
-              AND attempt_count < $3
-            ORDER BY subject_received_at ASC, runtime_run_id ASC, iteration_id ASC
+                eps.eval_run_id,
+                eps.runtime_run_id,
+                eps.iteration_id,
+                eps.subject_received_at,
+                eps.current_stage,
+                eps.status,
+                eps.attempt_count,
+                eps.started_at,
+                eps.completed_at,
+                eps.updated_at,
+                eps.last_error
+            FROM diagnostics.eval_processing_state eps
+            JOIN diagnostics.run_iterations ri
+              ON ri.iteration_id = eps.iteration_id
+            WHERE eps.eval_run_id = $1::uuid
+              AND eps.current_stage = $2
+              AND eps.status IN ('pending', 'running', 'failed')
+              AND eps.attempt_count < $3
+            ORDER BY
+                eps.subject_received_at ASC,
+                eps.runtime_run_id ASC,
+                ri.sequence_no ASC,
+                eps.iteration_id ASC
             LIMIT 1
             "#,
         )

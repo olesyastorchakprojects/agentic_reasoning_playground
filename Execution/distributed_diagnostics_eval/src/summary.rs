@@ -467,56 +467,62 @@ pub fn build_run_summary_row(
 ) -> EvalRunSummaryRow {
     let count = iteration_rows.len() as f64;
     let denom = if count > 0.0 { count } else { 1.0 };
+    let initial_rows: Vec<&EvalIterationSummaryRow> = iteration_rows
+        .iter()
+        .filter(|row| row.iteration_kind == "initial")
+        .collect();
+    let initial_count = initial_rows.len() as f64;
+    let initial_denom = if initial_count > 0.0 { initial_count } else { 1.0 };
 
-    let usable_first_response_rate = iteration_rows
+    let usable_first_response_rate = initial_rows
         .iter()
         .filter(|row| row.usable_first_response)
         .count() as f64
-        / denom;
-    let query_structuring_judge_score = iteration_rows
+        / initial_denom;
+    let query_structuring_judge_score = initial_rows
         .iter()
         .map(|row| row.query_structuring_judge_score)
         .sum::<f64>()
-        / denom;
-    let evidence_pack_judge_score = iteration_rows
+        / initial_denom;
+    let evidence_pack_judge_score = initial_rows
         .iter()
         .map(|row| row.evidence_pack_judge_score)
         .sum::<f64>()
-        / denom;
+        / initial_denom;
     let final_answer_judge_score = iteration_rows
         .iter()
         .map(|row| row.final_answer_judge_score)
         .sum::<f64>()
         / denom;
-    let query_structuring_no_hard_fail_rate = iteration_rows
+    let query_structuring_no_hard_fail_rate = initial_rows
         .iter()
         .filter(|row| row.query_structuring_no_hard_fail)
         .count() as f64
-        / denom;
-    let evidence_pack_no_hard_fail_rate = iteration_rows
+        / initial_denom;
+    let evidence_pack_no_hard_fail_rate = initial_rows
         .iter()
         .filter(|row| row.evidence_pack_no_hard_fail)
         .count() as f64
-        / denom;
+        / initial_denom;
     let final_answer_no_hard_fail_rate = iteration_rows
         .iter()
         .filter(|row| row.final_answer_no_hard_fail)
         .count() as f64
         / denom;
-    let query_structuring_strict_pass_rate = iteration_rows
+    let query_structuring_strict_pass_rate = initial_rows
         .iter()
         .filter(|row|
             row.query_structuring_field_boundary_correctness_score == 2
             && row.query_structuring_grounding_conservatism_score == 2
         )
-        .count() as f64 / denom;
-    let evidence_pack_strict_pass_rate = iteration_rows
+        .count() as f64 / initial_denom;
+    let evidence_pack_strict_pass_rate = initial_rows
         .iter()
         .filter(|row|
             row.evidence_pack_role_fit_score == 2
             && row.evidence_pack_sufficiency_score == 2
         )
-        .count() as f64 / denom;
+        .count() as f64 / initial_denom;
     let final_answer_strict_pass_rate = iteration_rows
         .iter()
         .filter(|row|

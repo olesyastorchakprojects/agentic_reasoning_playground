@@ -53,7 +53,7 @@ max_output_tokens = 2200
 
 [observation_boundary_resolver]
 provider = "together"
-model = "openai/gpt-oss-20b"
+model = "openai/gpt-oss-120b"
 prompt_asset_path = "/home/olesia/code/dist_sys_assistant/Specification/runtime/request_pipeline/observation_boundary_resolver/observation_boundary_resolver_prompt_baseline.manual_test.json"
 max_output_tokens = 600
 

@@ -6,11 +6,11 @@
       "observations": [
         {
           "observation_id": "obs_1",
-          "raw": "If we read the same row from the writer endpoint immediately after commit, it is visible there, but the reader endpoint still misses it for a few seconds, and the reader returns the new value only after that delay passes."
+          "raw": "Immediately after commit, the writer shows the new row, but the reader is still several seconds behind and only catches up after that delay passes."
         },
         {
           "observation_id": "obs_2",
-          "raw": "CloudWatch shows replica lag spikes at the same moments when the stale reads from the reader endpoint happen, and the stale-read window shrinks again when the lag returns to normal."
+          "raw": "Whenever the stale reads happen, the reader is behind the writer and the lag spikes at the same time; once that lag returns to normal, the stale-read window shrinks again."
         }
       ]
     }
@@ -22,11 +22,11 @@
       "observations": [
         {
           "observation_id": "obs_1",
-          "raw": "The client kept writing to the external resource even though its etcd lease had already expired and had not been renewed, and another client acquired the same lock during that expired interval."
+          "raw": "At the moment the stale write happens, the original client's etcd lease is already expired, yet it can still update the external resource while another client acquires the same lock."
         },
         {
           "observation_id": "obs_2",
-          "raw": "When we increased the lease TTL substantially, the duplicate-lock-holder behavior became much rarer, and the lost updates to the external resource became much less frequent as well."
+          "raw": "The duplicate-lock-holder and lost-update pattern becomes much less frequent when the lease TTL is increased, which points to the expired-lease window as the trigger."
         }
       ]
     }
@@ -38,11 +38,11 @@
       "observations": [
         {
           "observation_id": "obs_1",
-          "raw": "Both sessions read the same document version before appending, no concurrency exception was raised on either commit, and the final document still contained only one of the appended values."
+          "raw": "Both sessions read the same document version before appending, neither commit raises a concurrency exception, and a fresh reread after both commits still shows only one of the appended values."
         },
         {
           "observation_id": "obs_2",
-          "raw": "When we rerun the same test with optimistic concurrency enabled, one of the concurrent writes is rejected instead of being silently lost, and the final document keeps the surviving append without dropping it later."
+          "raw": "After enabling optimistic concurrency and rerunning the concurrent append test, one write is rejected with a concurrency conflict instead of being silently lost, and the final document keeps the surviving append."
         }
       ]
     }
@@ -54,11 +54,11 @@
       "observations": [
         {
           "observation_id": "obs_1",
-          "raw": "Both transactions observed the key as absent before either commit, both then inserted the first value, and after both commits only one inserted value remained in the row."
+          "raw": "After changing the initial read to SELECT ... FOR UPDATE in both transactions, the second transaction blocks until the first commits, and after both commits the row contains both appended values instead of dropping one."
         },
         {
           "observation_id": "obs_2",
-          "raw": "When we repeat the same workflow using locking reads such as SELECT ... FOR UPDATE, the lost update no longer reproduces, and the second transaction waits instead of racing through the same missing-key path."
+          "raw": "After rerunning the append workflow at SERIALIZABLE without adding FOR UPDATE, both transactions commit and the final row still contains both appended values; the lost update no longer reproduces."
         }
       ]
     }
@@ -70,11 +70,11 @@
       "observations": [
         {
           "observation_id": "obs_1",
-          "raw": "The duplicate writes come from a single cross-range transaction path, the node clock offset stays within the configured bound throughout the test, and the duplicate timestamps are still identical when the anomaly appears."
+          "raw": "For the transactions that produce the duplicate writes, the coordinator's clock uncertainty interval at commit time is effectively zero, the node clock offset stays within the configured bound, and the duplicated rows still carry identical timestamps."
         },
         {
           "observation_id": "obs_2",
-          "raw": "When we constrain the workload to a single range, the duplicate writes stop. When we switch back to a cross-range workload, the duplicate writes with the same timestamp appear again."
+          "raw": "The audit trail shows a single transaction ID and commit path for the duplicate writes rather than two separate commit attempts, yet the duplicated rows still carry the same timestamp."
         }
       ]
     }

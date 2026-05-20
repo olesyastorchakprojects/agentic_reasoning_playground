@@ -1,0 +1,101 @@
+{
+  "eval_run_id": "62287af7-9742-441a-b04c-c919ec3e564e",
+  "run_type": "golden_dataset",
+  "status": "running",
+  "started_at": "2026-05-20T11:56:55.315188929Z",
+  "completed_at": null,
+  "stages": [
+    "judge_request_suites",
+    "build_eval_summary"
+  ],
+  "judge_provider": "together",
+  "judge_base_url": "https://api.together.xyz",
+  "judge_model": "openai/gpt-oss-120b",
+  "suite_versions": {
+    "continuation_hypothesis_update_discipline": "enabled_from_config",
+    "continuation_next_check_progression": "enabled_from_config",
+    "continuation_observation_resolution_context_recovery": "enabled_from_config",
+    "continuation_problem_understanding_update": "enabled_from_config",
+    "evidence_pack_role_fit": "enabled_from_config",
+    "evidence_pack_sufficiency": "enabled_from_config",
+    "final_alternative_context_handling": "enabled_from_config",
+    "final_first_check_discriminates": "enabled_from_config",
+    "final_hypothesis_source_alignment": "enabled_from_config",
+    "final_no_root_cause_claim": "enabled_from_config",
+    "final_result_interpretation_usefulness": "enabled_from_config",
+    "query_structuring_field_boundary_correctness": "enabled_from_config",
+    "query_structuring_grounding_conservatism": "enabled_from_config"
+  },
+  "runtime_run_count": 5,
+  "run_scope_runtime_run_ids": [
+    "16cae338-3773-4cd5-b4d9-4fedaf01f3f6",
+    "28059867-57d6-4b8c-986b-0d0e52eb4a70",
+    "387d547b-b0a8-4389-a97b-f41a83d2fdf1",
+    "839542af-0d73-4d20-bd0c-b1872017ecb6",
+    "889f8164-5f81-4989-8292-842fc8e34993"
+  ],
+  "subject_count": 15,
+  "run_scope_subjects": [
+    {
+      "runtime_run_id": "889f8164-5f81-4989-8292-842fc8e34993",
+      "iteration_id": "0bf66066-596a-4744-a3c9-ce55d2753c47"
+    },
+    {
+      "runtime_run_id": "889f8164-5f81-4989-8292-842fc8e34993",
+      "iteration_id": "ce556c18-9a12-49c0-b3b8-30708253c099"
+    },
+    {
+      "runtime_run_id": "889f8164-5f81-4989-8292-842fc8e34993",
+      "iteration_id": "9ee8cd47-4f4e-48ca-a8ca-c663f0446c72"
+    },
+    {
+      "runtime_run_id": "387d547b-b0a8-4389-a97b-f41a83d2fdf1",
+      "iteration_id": "f485661b-f3ea-4e50-8e06-21fb47675dda"
+    },
+    {
+      "runtime_run_id": "387d547b-b0a8-4389-a97b-f41a83d2fdf1",
+      "iteration_id": "30885e11-7cf4-40bc-81d4-a27d808a8ed7"
+    },
+    {
+      "runtime_run_id": "387d547b-b0a8-4389-a97b-f41a83d2fdf1",
+      "iteration_id": "8874d229-f095-4fd6-be9d-0505a70cfdf9"
+    },
+    {
+      "runtime_run_id": "28059867-57d6-4b8c-986b-0d0e52eb4a70",
+      "iteration_id": "ec651c32-0079-427d-ac5b-387d7add6578"
+    },
+    {
+      "runtime_run_id": "28059867-57d6-4b8c-986b-0d0e52eb4a70",
+      "iteration_id": "85edfe10-47c8-4f25-8f47-27e6eced035d"
+    },
+    {
+      "runtime_run_id": "28059867-57d6-4b8c-986b-0d0e52eb4a70",
+      "iteration_id": "f7b21982-e768-473e-8aef-94b21912abdd"
+    },
+    {
+      "runtime_run_id": "16cae338-3773-4cd5-b4d9-4fedaf01f3f6",
+      "iteration_id": "b14d1e53-8162-4808-a7fc-e5f2702b7444"
+    },
+    {
+      "runtime_run_id": "16cae338-3773-4cd5-b4d9-4fedaf01f3f6",
+      "iteration_id": "b12f433c-9762-4a1b-964b-24592db6fc2e"
+    },
+    {
+      "runtime_run_id": "16cae338-3773-4cd5-b4d9-4fedaf01f3f6",
+      "iteration_id": "04a80edd-e95e-4ad7-8061-e418ccaebf83"
+    },
+    {
+      "runtime_run_id": "839542af-0d73-4d20-bd0c-b1872017ecb6",
+      "iteration_id": "2b92891d-aad0-439f-99cc-e219b9e79888"
+    },
+    {
+      "runtime_run_id": "839542af-0d73-4d20-bd0c-b1872017ecb6",
+      "iteration_id": "f42c1a24-2ffd-4e97-a1d6-073387316f23"
+    },
+    {
+      "runtime_run_id": "839542af-0d73-4d20-bd0c-b1872017ecb6",
+      "iteration_id": "7ea6a80a-ee63-4910-a215-5c5854e44c02"
+    }
+  ],
+  "last_error": null
+}

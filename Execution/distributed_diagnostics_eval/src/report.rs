@@ -124,7 +124,8 @@ fn render_quality_loss_section(
     // Composite scores (0-1)
     let qs_score = (run_summary.query_structuring_judge_score / 2.0
         + run_summary.query_structuring_no_hard_fail_rate
-        + run_summary.runtime_qs_core_success_rate) / 3.0;
+        + run_summary.runtime_qs_macro_precision_soft
+        + run_summary.runtime_qs_grounded_strict_recall) / 4.0;
     let rt_score = (run_summary.runtime_retrieval_all_strict_recall_success_rate
         + run_summary.runtime_retrieval_mean_ndcg) / 2.0;
     let ep_score = (run_summary.evidence_pack_judge_score / 2.0
@@ -150,22 +151,44 @@ fn render_quality_loss_section(
         if gate_fails > 0 {
             parts.push(format!("{} field boundary gate fail(s)", gate_fails));
         }
+        if run_summary.runtime_qs_macro_precision_soft < 0.8 {
+            parts.push(format!(
+                "acceptable-selection precision {:.0}%",
+                run_summary.runtime_qs_macro_precision_soft * 100.0
+            ));
+        }
+        if run_summary.runtime_qs_grounded_strict_recall < 0.8 {
+            parts.push(format!(
+                "grounded strict recall {:.0}%",
+                run_summary.runtime_qs_grounded_strict_recall * 100.0
+            ));
+        }
         if run_summary.runtime_qs_core_success_rate < 0.8 {
-            parts.push(format!("runtime core success {:.0}%", run_summary.runtime_qs_core_success_rate * 100.0));
+            parts.push(format!(
+                "strict contract pass {:.0}%",
+                run_summary.runtime_qs_core_success_rate * 100.0
+            ));
         }
         if parts.is_empty() {
             "structured queries are well-formed and grounded".to_string()
-        } else if gate_fails > 0 && run_summary.runtime_qs_core_success_rate == 0.0 {
-            format!("query structuring was the earliest semantic failure point: field-boundary gate failed in {} run(s) and runtime core success was 0%", gate_fails)
+        } else if gate_fails > 0
+            && run_summary.runtime_qs_macro_precision_soft == 0.0
+            && run_summary.runtime_qs_grounded_strict_recall == 0.0
+        {
+            format!(
+                "query structuring was the earliest semantic failure point: field-boundary gate failed in {} run(s), acceptable-selection precision was 0%, and grounded strict recall was 0%",
+                gate_fails
+            )
         } else {
             parts.join("; ")
         }
     };
     out.push_str(&format!(
-        "| query structuring | judge {:.2}, no-hard-fail {:.0}%, runtime core {:.0}% | {} | {} |\n",
+        "| query structuring | judge {:.2}, no-hard-fail {:.0}%, soft precision {:.0}%, grounded strict {:.0}% | {} | {} |\n",
         run_summary.query_structuring_judge_score,
         run_summary.query_structuring_no_hard_fail_rate * 100.0,
-        run_summary.runtime_qs_core_success_rate * 100.0,
+        run_summary.runtime_qs_macro_precision_soft * 100.0,
+        run_summary.runtime_qs_grounded_strict_recall * 100.0,
         quality_status(qs_score), qs_interp
     ));
 
@@ -280,9 +303,11 @@ fn render_quality_loss_section(
         out.push_str("Soft weaknesses observed:\n\n");
         if run_summary.query_structuring_strict_pass_rate == 0.0 || qs_score < 0.75 {
             out.push_str(&format!(
-                "- **Query structuring**: strict pass rate {:.0}%, no-hard-fail {:.0}%, runtime core {:.0}%\n",
+                "- **Query structuring**: strict pass rate {:.0}%, no-hard-fail {:.0}%, acceptable-selection precision {:.0}%, grounded strict recall {:.0}%, strict contract pass {:.0}%\n",
                 run_summary.query_structuring_strict_pass_rate * 100.0,
                 run_summary.query_structuring_no_hard_fail_rate * 100.0,
+                run_summary.runtime_qs_macro_precision_soft * 100.0,
+                run_summary.runtime_qs_grounded_strict_recall * 100.0,
                 run_summary.runtime_qs_core_success_rate * 100.0,
             ));
         }
@@ -379,8 +404,9 @@ fn render_quality_loss_section(
         } else {
             format!(" {} quality was strong.", other_strong.join(" and "))
         };
-        format!("Main observed weakness: **{}** (composite {:.2}).{}",
-            name, score, others)
+        let _ = score;
+        format!("Main observed weakness: **{}**.{}",
+            name, others)
     } else {
         String::new()
     };
@@ -1216,7 +1242,8 @@ fn render_run_report(
     out.push_str(&format!("| usable_first_response_rate | {:.4} | Share of runs where the final answer can be shown as a first diagnostic response |\n", run_summary.usable_first_response_rate));
     out.push_str(&format!("| gate_pass_rate | {:.4} | Share of runs without critical gate failures |\n", run_summary.gate_pass_rate));
     out.push_str(&format!("| query_structuring_judge_score | {:.4} | Judge-based semantic quality of query structuring |\n", run_summary.query_structuring_judge_score));
-    out.push_str(&format!("| runtime_query_structuring_core_success_rate | {:.4} | Gold-backed runtime success of structured query fields |\n", run_summary.runtime_qs_core_success_rate));
+    out.push_str(&format!("| runtime_query_structuring_macro_precision_soft | {:.4} | Share of selected query-structuring terms that fall within the acceptable semantic set |\n", run_summary.runtime_qs_macro_precision_soft));
+    out.push_str(&format!("| runtime_query_structuring_grounded_strict_recall | {:.4} | Coverage of canonical expected query-structuring terms with valid grounding |\n", run_summary.runtime_qs_grounded_strict_recall));
     out.push_str(&format!("| runtime_retrieval_mean_ndcg | {:.4} | Average ranking quality across retrieval targets and runs |\n", run_summary.runtime_retrieval_mean_ndcg));
     out.push_str(&format!("| runtime_retrieval_all_strict_recall_success_rate | {:.4} | Average per-run share of retrieval targets where strict expected evidence was found |\n", run_summary.runtime_retrieval_all_strict_recall_success_rate));
     out.push_str(&format!("| evidence_pack_judge_score | {:.4} | Judge-based quality of selected evidence pack |\n", run_summary.evidence_pack_judge_score));
@@ -1239,27 +1266,39 @@ fn render_run_report(
     out.push_str("## Runtime Gold Metrics\n\n");
     out.push_str("These metrics are computed from runtime trace spans and compare structured query / retrieval outputs against golden labels.\n\n");
 
-    out.push_str("### Query Structuring Core Metrics\n\n");
+    out.push_str("### Query Structuring Quality Metrics\n\n");
     out.push_str("| metric | value | meaning |\n|---|---:|---|\n");
-    out.push_str(&format!("| runtime_query_structuring_macro_precision_soft | {:.4} | How many selected vocabulary terms are acceptable under soft relevance |\n", run_summary.runtime_qs_macro_precision_soft));
-    out.push_str(&format!("| runtime_query_structuring_macro_recall_strict | {:.4} | Whether strictly expected terms were recovered |\n", run_summary.runtime_qs_macro_recall_strict));
-    out.push_str(&format!("| runtime_query_structuring_macro_recall_soft | {:.4} | Coverage of broader acceptable terms |\n", run_summary.runtime_qs_macro_recall_soft));
-    out.push_str(&format!("| runtime_query_structuring_grounded_strict_recall | {:.4} | Whether strict terms are selected with valid grounding |\n", run_summary.runtime_qs_grounded_strict_recall));
-    out.push_str(&format!("| runtime_query_structuring_core_success_rate | {:.4} | Whether all vocab fields passed their core gold-backed checks |\n\n", run_summary.runtime_qs_core_success_rate));
+    out.push_str(&format!("| runtime_query_structuring_macro_precision_soft | {:.4} | Share of selected vocabulary terms that fall within the acceptable semantic set |\n", run_summary.runtime_qs_macro_precision_soft));
+    out.push_str(&format!("| runtime_query_structuring_macro_recall_soft | {:.4} | Coverage of broader acceptable vocabulary terms |\n", run_summary.runtime_qs_macro_recall_soft));
+    out.push_str(&format!("| runtime_query_structuring_macro_recall_strict | {:.4} | Coverage of canonical expected vocabulary terms |\n", run_summary.runtime_qs_macro_recall_strict));
+    out.push_str(&format!("| runtime_query_structuring_grounded_strict_recall | {:.4} | Coverage of canonical expected terms with valid grounding |\n\n", run_summary.runtime_qs_grounded_strict_recall));
 
-    // Field-level core table
-    out.push_str("#### Query Structuring Field Core Metrics\n\n");
-    out.push_str("| field | precision_soft | recall_strict | recall_soft | grounded_strict_recall | field_core_success | field_grounded_success |\n|---|---:|---:|---:|---:|---:|---:|\n");
+    out.push_str("#### Query Structuring Field Quality Profile\n\n");
+    out.push_str("| field | precision_soft | recall_soft | recall_strict | grounded_strict_recall | field_core_success | field_grounded_success |\n|---|---:|---:|---:|---:|---:|---:|\n");
     for f in ["symptoms", "affected_subsystems", "failure_modes", "system_properties"] {
         out.push_str(&format!("| {} | {} | {} | {} | {} | {} | {} |\n", f,
             fmt_opt(avg_qs_vocab(iteration_rows, f, "precision_soft"), 4),
-            fmt_opt(avg_qs_vocab(iteration_rows, f, "recall_strict"), 4),
             fmt_opt(avg_qs_vocab(iteration_rows, f, "recall_soft"), 4),
+            fmt_opt(avg_qs_vocab(iteration_rows, f, "recall_strict"), 4),
             fmt_opt(avg_qs_vocab(iteration_rows, f, "grounded_strict_recall"), 4),
             fmt_opt(avg_qs_vocab(iteration_rows, f, "field_core_success"), 4),
             fmt_opt(avg_qs_vocab(iteration_rows, f, "field_grounded_success"), 4)));
     }
     out.push('\n');
+
+    out.push_str("#### Query Structuring Field Overreach Signals\n\n");
+    out.push_str("| field | zero_score_selection_count | unsupported_selected_term_rate | invalid_evidence_span_count |\n|---|---:|---:|---:|\n");
+    for f in ["symptoms", "affected_subsystems", "failure_modes", "system_properties"] {
+        out.push_str(&format!("| {} | {} | {} | {} |\n", f,
+            fmt_opt(avg_qs_vocab(iteration_rows, f, "zero_score_selection_count"), 2),
+            fmt_opt(avg_qs_vocab(iteration_rows, f, "unsupported_selected_term_rate"), 4),
+            fmt_opt(avg_qs_vocab(iteration_rows, f, "invalid_evidence_span_count"), 2)));
+    }
+    out.push('\n');
+
+    out.push_str("#### Query Structuring Strict Contract Checks\n\n");
+    out.push_str("| metric | value | meaning |\n|---|---:|---|\n");
+    out.push_str(&format!("| runtime_query_structuring_core_success_rate | {:.4} | Harsh all-fields contract pass rate against strict field expectations |\n\n", run_summary.runtime_qs_core_success_rate));
 
     out.push_str("### Retrieval Core Metrics\n\n");
     out.push_str("> Each value is averaged over runs where the target was evaluated.\n\n");
@@ -1326,18 +1365,28 @@ fn render_run_report(
 
     out.push_str("## Suite Distributions\n\n");
     out.push_str("| suite | score_0 | score_1 | score_2 |\n|---|---:|---:|---:|\n");
-    for (name, getter) in &[
-        ("final_no_root_cause_claim", &(|r: &EvalIterationSummaryRow| r.final_no_root_cause_claim_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16),
-        ("final_first_check_discriminates", &(|r: &EvalIterationSummaryRow| r.final_first_check_discriminates_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16),
-        ("final_alternative_context_handling", &(|r: &EvalIterationSummaryRow| r.final_alternative_context_handling_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16),
-        ("final_result_interpretation_usefulness", &(|r: &EvalIterationSummaryRow| r.final_result_interpretation_usefulness_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16),
-        ("final_hypothesis_source_alignment", &(|r: &EvalIterationSummaryRow| r.final_hypothesis_source_alignment_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16),
-        ("query_structuring_field_boundary_correctness", &(|r: &EvalIterationSummaryRow| r.query_structuring_field_boundary_correctness_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16),
-        ("query_structuring_grounding_conservatism", &(|r: &EvalIterationSummaryRow| r.query_structuring_grounding_conservatism_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16),
-        ("evidence_pack_role_fit", &(|r: &EvalIterationSummaryRow| r.evidence_pack_role_fit_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16),
-        ("evidence_pack_sufficiency", &(|r: &EvalIterationSummaryRow| r.evidence_pack_sufficiency_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16),
+    let initial_rows: Vec<EvalIterationSummaryRow> = iteration_rows
+        .iter()
+        .cloned()
+        .filter(|r| r.iteration_kind == "initial")
+        .collect();
+    for (name, getter, initial_only) in &[
+        ("final_no_root_cause_claim", &(|r: &EvalIterationSummaryRow| r.final_no_root_cause_claim_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16, false),
+        ("final_first_check_discriminates", &(|r: &EvalIterationSummaryRow| r.final_first_check_discriminates_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16, false),
+        ("final_alternative_context_handling", &(|r: &EvalIterationSummaryRow| r.final_alternative_context_handling_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16, false),
+        ("final_result_interpretation_usefulness", &(|r: &EvalIterationSummaryRow| r.final_result_interpretation_usefulness_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16, false),
+        ("final_hypothesis_source_alignment", &(|r: &EvalIterationSummaryRow| r.final_hypothesis_source_alignment_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16, false),
+        ("query_structuring_field_boundary_correctness", &(|r: &EvalIterationSummaryRow| r.query_structuring_field_boundary_correctness_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16, true),
+        ("query_structuring_grounding_conservatism", &(|r: &EvalIterationSummaryRow| r.query_structuring_grounding_conservatism_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16, true),
+        ("evidence_pack_role_fit", &(|r: &EvalIterationSummaryRow| r.evidence_pack_role_fit_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16, true),
+        ("evidence_pack_sufficiency", &(|r: &EvalIterationSummaryRow| r.evidence_pack_sufficiency_score) as &dyn Fn(&EvalIterationSummaryRow) -> i16, true),
     ] {
-        let (s0, s1, s2) = score_dist(iteration_rows, getter);
+        let rows = if *initial_only {
+            initial_rows.as_slice()
+        } else {
+            iteration_rows
+        };
+        let (s0, s1, s2) = score_dist(rows, getter);
         if s0 + s1 + s2 > 0 || *name == "final_no_root_cause_claim" {
             out.push_str(&format!("| {} | {} | {} | {} |\n", name, s0, s1, s2));
         }

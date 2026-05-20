@@ -2,7 +2,7 @@
   "judge_suites": {
     "query_structuring_field_boundary_correctness": {
       "id": "evals.diagnostics.query_structuring_field_boundary_correctness",
-      "version": "v1",
+      "version": "v2",
       "category": "query_structuring",
       "scope": "iteration",
       "applies_to": "initial_only",
@@ -11,7 +11,7 @@
         "raw_user_query",
         "structured_query"
       ],
-      "prompt_template": "You are evaluating a query-structuring output for a distributed-systems diagnostic assistant.\n\nGiven:\n- the original user query\n- the structured output\n\nEvaluate whether the fields respect their intended meanings:\n\nField rules:\n- symptoms must contain only observed user-visible effects or directly described anomalous behavior;\n- affected_subsystems must contain only components or subsystems implicated by the query;\n- failure_modes must contain only hypotheses about what might be wrong, not observations;\n- system_properties must contain only safety, consistency, availability, durability, ordering, or correctness properties at stake, not components and not failure modes.\n\nQuestion:\nAre any terms placed in the wrong field?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"wrong_fields\":[{\"field\":\"string\",\"term\":\"string\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "prompt_template": "You are evaluating a query-structuring output for a distributed-systems diagnostic assistant.\n\nGiven:\n- the original user query\n- the structured output\n\nEvaluate whether the fields respect their intended meanings:\n\nField rules:\n- symptoms must contain only observed user-visible effects or directly described anomalous behavior;\n- affected_subsystems must contain only components or subsystems implicated by the query;\n- failure_modes must contain only hypotheses about what might be wrong, not observations;\n- system_properties must contain only safety, consistency, availability, durability, ordering, or correctness properties at stake, not components and not failure modes.\n\nQuestion:\nAre any terms placed in the wrong field?\n\nScore semantics:\n- 2 = field placement is correct or only has very minor arguable issues; use 2 when wrong_fields is empty;\n- 1 = there is at least one real but limited field-placement issue, while most of the structure is still reasonable;\n- 0 = field placement is clearly poor or materially misleading across the structured output.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"wrong_fields\":[{\"field\":\"string\",\"term\":\"string\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -69,7 +69,7 @@
     },
     "query_structuring_grounding_conservatism": {
       "id": "evals.diagnostics.query_structuring_grounding_conservatism",
-      "version": "v1",
+      "version": "v2",
       "category": "query_structuring",
       "scope": "iteration",
       "applies_to": "initial_only",
@@ -78,7 +78,7 @@
         "raw_user_query",
         "structured_query"
       ],
-      "prompt_template": "You are evaluating whether a query-structuring output is grounded in the user query.\n\nGiven:\n- the original user query\n- the structured output\n- selected vocabulary terms with evidence_span and support_level\n\nFor each selected vocabulary term, check whether the user query explicitly supports it, strongly paraphrases it, or only weakly suggests it.\n\nQuestion:\nDid the model select any terms that are not sufficiently supported by the query?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"unsupported_terms\":[{\"field\":\"string\",\"term\":\"string\",\"claimed_support_level\":\"explicit|strong_paraphrase|weak_inference\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "prompt_template": "You are evaluating whether a query-structuring output is grounded in the user query.\n\nGiven:\n- the original user query\n- the structured output\n- selected vocabulary terms with evidence_span and support_level\n\nFor each selected vocabulary term, check whether the user query explicitly supports it, strongly paraphrases it, weakly suggests it, or naturally licenses it as a close diagnostic abstraction from the described symptom.\n\nDo not require every acceptable term to appear almost literally in the query. Terms can still be sufficiently grounded when they are a close subsystem-, failure-mode-, or system-property abstraction that stays near the observed behavior described by the user.\n\nMark a term as unsupported only when it introduces a mechanism, property, or diagnosis that is not reasonably motivated by the query, or when the claimed support level clearly overstates what the query provides.\n\nQuestion:\nDid the model select any terms that are not sufficiently supported by the query?\n\nScore semantics:\n- 2 = all selected terms are sufficiently supported, including close diagnostic abstractions, or only very minor arguable support issues remain; use 2 when unsupported_terms is empty;\n- 1 = there is at least one limited grounding problem, but most selected terms remain reasonably supported;\n- 0 = grounding is clearly poor, with unsupported selections that materially weaken the structured query.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"unsupported_terms\":[{\"field\":\"string\",\"term\":\"string\",\"claimed_support_level\":\"explicit|strong_paraphrase|weak_inference\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -140,7 +140,7 @@
     },
     "evidence_pack_role_fit": {
       "id": "evals.diagnostics.evidence_pack_role_fit",
-      "version": "v1",
+      "version": "v2",
       "category": "evidence_pack",
       "scope": "iteration",
       "applies_to": "initial_only",
@@ -152,7 +152,7 @@
         "incident_evidence_chunks",
         "theory_chunks"
       ],
-      "prompt_template": "You are evaluating selected evidence chunks for a distributed-systems diagnostic assistant.\n\nGiven:\n- the user query\n- the structured query\n- the selected chunks with their assigned roles\n- the role definitions\n\nRole definitions:\n- evidence_for_match: should explain why the primary incident is similar to the user problem.\n- first_check_hint: should contain a diagnostic step, investigation clue, or lesson useful for choosing the first check.\n- supporting_explanation: should add mechanism, uncertainty, contributing factors, or hypothesis updates for the primary incident.\n- alternative_context: should provide a competing incident context, preferably a different plausible mechanism for similar symptoms.\n- mechanism_explanation: should explain a general distributed-systems mechanism relevant to the case.\n\nQuestion:\nDoes each selected chunk fit its assigned role?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"bad_chunks\":[{\"role\":\"string\",\"chunk_id\":\"string\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "prompt_template": "You are evaluating selected evidence chunks for a distributed-systems diagnostic assistant.\n\nGiven:\n- the user query\n- the structured query\n- the selected chunks with their assigned roles\n- the role definitions\n\nRole definitions:\n- evidence_for_match: should explain why the primary incident is similar to the user problem.\n- first_check_hint: should contain a diagnostic step, investigation clue, or lesson useful for choosing the first check.\n- supporting_explanation: should add mechanism, uncertainty, contributing factors, or hypothesis updates for the primary incident.\n- alternative_context: should provide a competing incident context, preferably a different plausible mechanism for similar symptoms.\n- mechanism_explanation: should explain a general distributed-systems mechanism relevant to the case.\n\nQuestion:\nDoes each selected chunk fit its assigned role?\n\nScore semantics:\n- 2 = chunk-role assignment is correct overall, or only has very minor arguable issues; use 2 when bad_chunks is empty;\n- 1 = there is at least one limited role-fit issue, but the evidence pack is still mostly role-appropriate;\n- 0 = role assignment is clearly poor or materially misleading.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"bad_chunks\":[{\"role\":\"string\",\"chunk_id\":\"string\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -211,7 +211,7 @@
     },
     "evidence_pack_sufficiency": {
       "id": "evals.diagnostics.evidence_pack_sufficiency",
-      "version": "v1",
+      "version": "v2",
       "category": "evidence_pack",
       "scope": "iteration",
       "applies_to": "initial_only",
@@ -223,7 +223,7 @@
         "incident_evidence_chunks",
         "theory_chunks"
       ],
-      "prompt_template": "You are evaluating the evidence pack used to generate a first diagnostic response.\n\nGiven:\n- the user query\n- the structured query\n- the matched primary incident card\n- selected incident evidence chunks\n- selected theory chunks\n\nA useful first diagnostic move requires:\n- understanding the user's observed problem;\n- forming 2 or 3 plausible hypotheses;\n- preserving uncertainty when evidence is not unique;\n- choosing one first check that can distinguish between hypotheses;\n- explaining how the check result should be interpreted.\n\nQuestion:\nIs this evidence pack sufficient to support a useful first diagnostic move?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"missing_support\":[\"string\"],\"explanation\":\"string\"}",
+      "prompt_template": "You are evaluating the evidence pack used to generate a first diagnostic response.\n\nGiven:\n- the user query\n- the structured query\n- the matched primary incident card\n- selected incident evidence chunks\n- selected theory chunks\n\nA useful first diagnostic move requires:\n- understanding the user's observed problem;\n- forming 2 or 3 plausible hypotheses;\n- preserving uncertainty when evidence is not unique;\n- choosing one first check that can distinguish between hypotheses;\n- explaining how the check result should be interpreted.\n\nQuestion:\nIs this evidence pack sufficient to support a useful first diagnostic move?\n\nScore semantics:\n- 2 = the evidence pack is sufficient overall, or only has very minor arguable gaps; use 2 when missing_support is empty;\n- 1 = the evidence pack has some missing support, but still partially enables a useful first diagnostic move;\n- 0 = the evidence pack is clearly insufficient for a useful first diagnostic move.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"missing_support\":[\"string\"],\"explanation\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -267,7 +267,7 @@
     },
     "final_no_root_cause_claim": {
       "id": "evals.diagnostics.final_no_root_cause_claim",
-      "version": "v1",
+      "version": "v2",
       "category": "final_answer",
       "scope": "iteration",
       "applies_to": "shared",
@@ -276,7 +276,7 @@
         "eval_context",
         "final_answer"
       ],
-      "prompt_template": "You are evaluating the final diagnostic response of a distributed-systems diagnostic assistant.\n\nGiven:\n- the JSON context used by the model\n- the model's final JSON answer\n\nThe assistant should produce a first diagnostic move, not a final diagnosis.\n\nQuestion:\nDoes the answer avoid claiming a final root cause or presenting any hypothesis as proven?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"violations\":[{\"field\":\"string\",\"text\":\"string\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "prompt_template": "You are evaluating the final diagnostic response of a distributed-systems diagnostic assistant.\n\nGiven:\n- the JSON context used by the model\n- the model's final JSON answer\n\nThe assistant should produce a first diagnostic move, not a final diagnosis.\n\nQuestion:\nDoes the answer avoid claiming a final root cause or presenting any hypothesis as proven?\n\nScore semantics:\n- 2 = the answer clearly preserves uncertainty and does not claim a final root cause; use 2 when violations is empty;\n- 1 = the answer has limited overstatement or ambiguity, but does not fully collapse into a final-diagnosis answer;\n- 0 = the answer clearly claims, implies, or strongly overstates a final root cause.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"violations\":[{\"field\":\"string\",\"text\":\"string\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -317,7 +317,7 @@
     },
     "final_first_check_discriminates": {
       "id": "evals.diagnostics.final_first_check_discriminates",
-      "version": "v1",
+      "version": "v2",
       "category": "final_answer",
       "scope": "iteration",
       "applies_to": "shared",
@@ -326,7 +326,7 @@
         "eval_context",
         "final_answer"
       ],
-      "prompt_template": "You are evaluating the first_check field of a distributed-systems diagnostic response.\n\nGiven:\n- the JSON context used by the model\n- the final JSON answer\n- active_hypotheses\n- result_interpretation\n\nA good first check:\n- is exactly one next check, not a checklist;\n- is actionable using plausible logs, metrics, traces, configs, or system observations;\n- helps distinguish between at least two active hypotheses or between primary and competing interpretation;\n- does not require destructive action.\n\nQuestion:\nIs first_check a single useful discriminating check?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"is_single_check\":true|false,\"is_discriminating\":true|false,\"reason\":\"string\"}",
+      "prompt_template": "You are evaluating the first_check field of a distributed-systems diagnostic response.\n\nGiven:\n- the JSON context used by the model\n- the final JSON answer\n- active_hypotheses\n- result_interpretation\n\nA good first check:\n- is exactly one next check, not a checklist;\n- is actionable using plausible logs, metrics, traces, configs, or system observations;\n- helps distinguish between at least two active hypotheses or between primary and competing interpretation;\n- does not require destructive action.\n\nQuestion:\nIs first_check a single useful discriminating check?\n\nScore semantics:\n- 2 = first_check is a single, actionable, useful discriminating check;\n- 1 = first_check is partially useful but has a limited issue such as weak discrimination or slight ambiguity;\n- 0 = first_check is not a useful discriminating next check.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"is_single_check\":true|false,\"is_discriminating\":true|false,\"reason\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -371,7 +371,7 @@
     },
     "final_hypothesis_source_alignment": {
       "id": "evals.diagnostics.final_hypothesis_source_alignment",
-      "version": "v1",
+      "version": "v2",
       "category": "final_answer",
       "scope": "iteration",
       "applies_to": "shared",
@@ -383,7 +383,7 @@
         "theory_chunks",
         "final_answer"
       ],
-      "prompt_template": "You are evaluating active_hypotheses in the final diagnostic response.\n\nGiven:\n- evidence_topology\n- matched_incident_card\n- incident_evidence_chunks with roles\n- theory_chunks\n- final answer\n\nFor each hypothesis, check whether its declared source is supported.\n\nQuestion:\nAre the hypotheses aligned with their declared sources?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"misaligned_hypotheses\":[{\"hypothesis\":\"string\",\"declared_source\":\"primary_incident|alternative_context|theory_mechanism\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
+      "prompt_template": "You are evaluating active_hypotheses in the final diagnostic response.\n\nGiven:\n- evidence_topology\n- matched_incident_card\n- incident_evidence_chunks with roles\n- theory_chunks\n- final answer\n\nFor each hypothesis, check whether its declared source is supported.\n\nQuestion:\nAre the hypotheses aligned with their declared sources?\n\nScore semantics:\n- 2 = hypotheses are source-aligned overall, or only have very minor arguable issues; use 2 when misaligned_hypotheses is empty;\n- 1 = there is at least one limited source-alignment problem, but the overall hypothesis set remains mostly aligned;\n- 0 = source alignment is clearly poor or materially misleading.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"misaligned_hypotheses\":[{\"hypothesis\":\"string\",\"declared_source\":\"primary_incident|alternative_context|theory_mechanism\",\"reason\":\"string\"}],\"explanation\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -443,7 +443,7 @@
     },
     "final_alternative_context_handling": {
       "id": "evals.diagnostics.final_alternative_context_handling",
-      "version": "v1",
+      "version": "v2",
       "category": "final_answer",
       "scope": "iteration",
       "applies_to": "shared",
@@ -452,7 +452,7 @@
         "eval_context",
         "final_answer"
       ],
-      "prompt_template": "You are evaluating how the final answer uses alternative_context.\n\nGiven:\n- the JSON context\n- the evidence topology\n- the alternative_context chunks, if present\n- the final answer\n\nQuestion:\nDid the answer handle alternative context correctly?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"used_as_hypothesis_matches_sources\":true|false,\"should_have_used_alternative\":true|false,\"reason\":\"string\"}",
+      "prompt_template": "You are evaluating how the final answer uses alternative_context.\n\nGiven:\n- the JSON context\n- the evidence topology\n- the alternative_context chunks, if present\n- the final answer\n\nQuestion:\nDid the answer handle alternative context correctly?\n\nScore semantics:\n- 2 = alternative context is handled correctly overall;\n- 1 = alternative context handling is mixed or only partially correct;\n- 0 = alternative context is clearly mishandled or materially misused.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"used_as_hypothesis_matches_sources\":true|false,\"should_have_used_alternative\":true|false,\"reason\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -496,7 +496,7 @@
     },
     "final_result_interpretation_usefulness": {
       "id": "evals.diagnostics.final_result_interpretation_usefulness",
-      "version": "v1",
+      "version": "v2",
       "category": "final_answer",
       "scope": "iteration",
       "applies_to": "shared",
@@ -506,7 +506,7 @@
         "active_hypotheses",
         "first_check"
       ],
-      "prompt_template": "You are evaluating result_interpretation in the final diagnostic response.\n\nGiven:\n- the final answer\n- the active_hypotheses\n- the first_check\n\nQuestion:\nWould the user know how to interpret the result of the first check?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"primary_condition_clear\":true|false,\"competing_condition_clear\":true|false,\"uncertainty_preserved\":true|false,\"reason\":\"string\"}",
+      "prompt_template": "You are evaluating result_interpretation in the final diagnostic response.\n\nGiven:\n- the final answer\n- the active_hypotheses\n- the first_check\n\nQuestion:\nWould the user know how to interpret the result of the first check?\n\nScore semantics:\n- 2 = result interpretation is clear and useful overall;\n- 1 = result interpretation is partially useful but has a limited clarity or uncertainty-preservation issue;\n- 0 = result interpretation is not useful enough for the user to understand how to interpret the check result.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"primary_condition_clear\":true|false,\"competing_condition_clear\":true|false,\"uncertainty_preserved\":true|false,\"reason\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -555,7 +555,7 @@
     },
     "continuation_hypothesis_update_discipline": {
       "id": "evals.diagnostics.continuation_hypothesis_update_discipline",
-      "version": "v1",
+      "version": "v2",
       "category": "continuation_update",
       "scope": "iteration",
       "applies_to": "continuation_only",
@@ -568,7 +568,7 @@
         "observations",
         "current_response"
       ],
-      "prompt_template": "You are evaluating the quality of a continuation diagnostic update in a distributed-systems diagnostic assistant.\n\nGiven:\n- the previous validated diagnostic response\n- the previous active hypotheses\n- the previous first_check\n- the new resolved observation text\n- the structured extracted observations\n- the current validated diagnostic response\n\nJudge whether the current response updates the diagnosis with real discipline.\n\nA good continuation update:\n- incorporates the new observation into the updated diagnostic state;\n- changes hypothesis ranking, status, wording, or confidence when the new observation is diagnostically meaningful;\n- weakens at least one competing hypothesis when the new observation clearly favors another explanation;\n- does not merely cosmetically rewrite the previous answer;\n- does not drop previously established useful context without reason.\n\nQuestion:\nDid the model update hypotheses and the surrounding diagnostic frame in a disciplined way after the new observation?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"meaningful_update\":true|false,\"leading_hypothesis_changed_or_reinforced\":true|false,\"competing_hypothesis_explicitly_weakened\":true|false,\"cosmetic_rewrite_only\":true|false,\"dropped_supported_context\":true|false,\"reason\":\"string\"}",
+      "prompt_template": "You are evaluating the quality of a continuation diagnostic update in a distributed-systems diagnostic assistant.\n\nGiven:\n- the previous validated diagnostic response\n- the previous active hypotheses\n- the previous first_check\n- the new resolved observation text\n- the structured extracted observations\n- the current validated diagnostic response\n\nJudge whether the current response updates the diagnosis with real discipline.\n\nA good continuation update:\n- incorporates the new observation into the updated diagnostic state;\n- changes hypothesis ranking, status, wording, or confidence when the new observation is diagnostically meaningful;\n- weakens at least one competing hypothesis when the new observation clearly favors another explanation;\n- does not merely cosmetically rewrite the previous answer;\n- does not drop previously established useful context without reason.\n\nQuestion:\nDid the model update hypotheses and the surrounding diagnostic frame in a disciplined way after the new observation?\n\nScore semantics:\n- 2 = the continuation update is disciplined and diagnostically useful overall;\n- 1 = the update is partially useful but has a limited weakness or missed update signal;\n- 0 = the update is clearly poor, cosmetic, or materially fails to update the diagnostic frame.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"meaningful_update\":true|false,\"leading_hypothesis_changed_or_reinforced\":true|false,\"competing_hypothesis_explicitly_weakened\":true|false,\"cosmetic_rewrite_only\":true|false,\"dropped_supported_context\":true|false,\"reason\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -630,7 +630,7 @@
     },
     "continuation_problem_understanding_update": {
       "id": "evals.diagnostics.continuation_problem_understanding_update",
-      "version": "v1",
+      "version": "v2",
       "category": "continuation_update",
       "scope": "iteration",
       "applies_to": "continuation_only",
@@ -641,7 +641,7 @@
         "observations",
         "current_response"
       ],
-      "prompt_template": "You are evaluating how a continuation diagnostic response updates problem_understanding after a new observation.\n\nGiven:\n- the previous validated diagnostic response\n- the new resolved observation text\n- the structured extracted observations\n- the current validated diagnostic response\n\nA good update to problem_understanding:\n- incorporates the new observation when it materially changes the diagnosis;\n- preserves the direction of the symptom correctly, including which endpoint or component sees newer vs older state;\n- does not ignore an explicit new configuration, mode, or state that now matters;\n- does not become vaguer or less technically faithful than the previous understanding.\n\nQuestion:\nDid the model update problem_understanding correctly and faithfully after the new observation?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"includes_new_observation\":true|false,\"preserves_directionality\":true|false,\"captures_material_configuration_or_state\":true|false,\"became_vaguer_or_less_faithful\":true|false,\"reason\":\"string\"}",
+      "prompt_template": "You are evaluating how a continuation diagnostic response updates problem_understanding after a new observation.\n\nGiven:\n- the previous validated diagnostic response\n- the new resolved observation text\n- the structured extracted observations\n- the current validated diagnostic response\n\nA good update to problem_understanding:\n- incorporates the new observation when it materially changes the diagnosis;\n- preserves the direction of the symptom correctly, including which endpoint or component sees newer vs older state;\n- does not ignore an explicit new configuration, mode, or state that now matters;\n- does not become vaguer or less technically faithful than the previous understanding.\n\nQuestion:\nDid the model update problem_understanding correctly and faithfully after the new observation?\n\nScore semantics:\n- 2 = problem_understanding is updated correctly and faithfully overall;\n- 1 = the update is partially correct but has a limited fidelity or completeness issue;\n- 0 = problem_understanding is clearly wrong, materially incomplete, or degraded.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"includes_new_observation\":true|false,\"preserves_directionality\":true|false,\"captures_material_configuration_or_state\":true|false,\"became_vaguer_or_less_faithful\":true|false,\"reason\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -696,7 +696,7 @@
     },
     "continuation_next_check_progression": {
       "id": "evals.diagnostics.continuation_next_check_progression",
-      "version": "v1",
+      "version": "v2",
       "category": "continuation_update",
       "scope": "iteration",
       "applies_to": "continuation_only",
@@ -708,7 +708,7 @@
         "observations",
         "current_response"
       ],
-      "prompt_template": "You are evaluating whether a continuation diagnostic response proposes a useful next check after a new observation.\n\nGiven:\n- the previous first_check\n- the previous active hypotheses\n- the new resolved observation text\n- the structured extracted observations\n- the current validated diagnostic response\n\nA good continuation next check:\n- remains exactly one next check, not a checklist;\n- responds to the new observation and the updated hypothesis state;\n- does not repeat the previous first_check unless repetition is clearly justified by the new observation;\n- moves the diagnosis forward by testing the newly strengthened mechanism or discriminating between live alternatives.\n\nQuestion:\nDid the model choose a next check that meaningfully progresses the diagnosis after the new observation?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"is_single_check\":true|false,\"responds_to_new_observation\":true|false,\"avoids_unjustified_repetition\":true|false,\"progresses_diagnosis\":true|false,\"reason\":\"string\"}",
+      "prompt_template": "You are evaluating whether a continuation diagnostic response proposes a useful next check after a new observation.\n\nGiven:\n- the previous first_check\n- the previous active hypotheses\n- the new resolved observation text\n- the structured extracted observations\n- the current validated diagnostic response\n\nA good continuation next check:\n- remains exactly one next check, not a checklist;\n- responds to the new observation and the updated hypothesis state;\n- does not repeat the previous first_check unless repetition is clearly justified by the new observation;\n- moves the diagnosis forward by testing the newly strengthened mechanism or discriminating between live alternatives.\n\nQuestion:\nDid the model choose a next check that meaningfully progresses the diagnosis after the new observation?\n\nScore semantics:\n- 2 = the next check meaningfully progresses the diagnosis overall;\n- 1 = the next check is partially useful but has a limited progression or responsiveness issue;\n- 0 = the next check clearly fails to progress the diagnosis after the new observation.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"is_single_check\":true|false,\"responds_to_new_observation\":true|false,\"avoids_unjustified_repetition\":true|false,\"progresses_diagnosis\":true|false,\"reason\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",
@@ -764,7 +764,7 @@
     },
     "continuation_observation_resolution_context_recovery": {
       "id": "evals.diagnostics.continuation_observation_resolution_context_recovery",
-      "version": "v1",
+      "version": "v2",
       "category": "continuation_input",
       "scope": "iteration",
       "applies_to": "continuation_only",
@@ -775,7 +775,7 @@
         "raw_new_observation",
         "resolved_observation"
       ],
-      "prompt_template": "You are evaluating how well a continuation observation resolver reconstructed a short or referential user observation using prior diagnostic context.\n\nGiven:\n- the previous validated diagnostic response\n- the previous active hypotheses\n- the raw new user observation\n- the resolved observation text produced by the system\n\nA good resolved observation:\n- turns a short or referential follow-up into a useful standalone observation when prior context is needed;\n- preserves the meaning of the user's new observation;\n- includes only prior context that is necessary to make the observation understandable;\n- does not invent facts that were not stated by the user or supported by the prior context;\n- does not become vague, over-expanded, or semantically distorted.\n\nQuestion:\nDid the system reconstruct the new observation from prior context in a faithful and useful way?\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"is_usefully_standalone\":true|false,\"preserves_user_meaning\":true|false,\"uses_prior_context_appropriately\":true|false,\"introduced_unsupported_details\":true|false,\"reason\":\"string\"}",
+      "prompt_template": "You are evaluating how well a continuation observation resolver reconstructed a short or referential user observation using prior diagnostic context.\n\nGiven:\n- the previous validated diagnostic response\n- the previous active hypotheses\n- the raw new user observation\n- the resolved observation text produced by the system\n\nA good resolved observation:\n- turns a short or referential follow-up into a useful standalone observation when prior context is needed;\n- preserves the meaning of the user's new observation;\n- includes only prior context that is necessary to make the observation understandable;\n- does not invent facts that were not stated by the user or supported by the prior context;\n- does not become vague, over-expanded, or semantically distorted.\n\nQuestion:\nDid the system reconstruct the new observation from prior context in a faithful and useful way?\n\nScore semantics:\n- 2 = the resolved observation is faithful and useful overall;\n- 1 = the resolved observation is partially useful but has a limited reconstruction issue;\n- 0 = the resolved observation is clearly unfaithful, unsupported, or not useful enough.\n\nReturn strict JSON only:\n{\"score\":0|1|2,\"is_usefully_standalone\":true|false,\"preserves_user_meaning\":true|false,\"uses_prior_context_appropriately\":true|false,\"introduced_unsupported_details\":true|false,\"reason\":\"string\"}",
       "normalized_output_schema_hint": {
         "required": [
           "score",

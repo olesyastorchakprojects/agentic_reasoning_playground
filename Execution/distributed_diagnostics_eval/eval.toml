@@ -6,15 +6,15 @@ max_runtime_runs_per_new_eval_run = 5
 
 [judge]
 provider = "together"
-model_name = "openai/gpt-oss-20b"
+model_name = "openai/gpt-oss-120b"
 tokenizer_source = "Qwen/Qwen2.5-1.5B-Instruct"
 input_cost_per_million_tokens = 0.05
 output_cost_per_million_tokens = 0.20
 
 [judge.together]
 base_url = "https://api.together.xyz"
-timeout_sec = 120
-retry_max_attempts = 3
+timeout_sec = 45
+retry_max_attempts = 2
 retry_backoff = "exponential"
 
 [postgres]

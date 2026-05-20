@@ -42,6 +42,12 @@ must also include:
 
 Optional sections may be added later, but these are the MVP minimum.
 
+When runtime gold metrics are present, the report should distinguish between:
+
+- graded quality signals;
+- overreach / unsupported-selection diagnostics;
+- strict contract pass checks.
+
 ## 4) Run Metadata Section
 
 The run metadata section must include at least:
@@ -174,3 +180,15 @@ The report should make it easy to distinguish:
 - first-response quality problems;
 - continuation-update quality problems;
 - whole-trajectory degradation across later iterations.
+
+When runtime gold metrics are shown for query structuring, the report should
+also make it easy to distinguish:
+
+- acceptable but non-canonical term selection;
+- strict-target misses;
+- real overreach such as zero-score selections or unsupported grounded terms.
+
+When both graded query-structuring metrics and binary strict-contract checks
+are shown, the report should not present the strict-contract checks as the
+primary runtime quality verdict. They should be rendered as stricter
+compliance diagnostics beside the graded quality and overreach views.
