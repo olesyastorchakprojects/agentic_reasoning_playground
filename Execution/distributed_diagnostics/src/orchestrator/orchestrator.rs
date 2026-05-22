@@ -1482,7 +1482,7 @@ mod tests {
         );
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect("drive_to_outcome must succeed");
 
@@ -1522,7 +1522,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![Err(step_error.clone())], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect("drive_to_outcome must succeed");
 
@@ -1673,7 +1673,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect_err("policy failure must bubble up");
 
@@ -1697,7 +1697,7 @@ mod tests {
         let repo = FakeRepository::new(None, Arc::clone(&events))
             .with_append_step_record_results(vec![Err(invalid_repo_state("append step failed"))]);
 
-        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect_err("append_step_record failure must bubble up");
 
@@ -1723,7 +1723,7 @@ mod tests {
         let repo = FakeRepository::new(None, Arc::clone(&events))
             .with_finish_step_record_results(vec![Err(invalid_repo_state("finish step failed"))]);
 
-        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let err = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect_err("finish_step_record failure must bubble up");
 
@@ -1743,7 +1743,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect("must succeed");
 
@@ -1766,7 +1766,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect("must succeed");
 
@@ -1827,7 +1827,7 @@ mod tests {
         );
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect("must succeed");
 
@@ -1937,7 +1937,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect("must succeed");
 
@@ -2032,7 +2032,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![Err(step_error)], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect("must not return OrchestratorError");
 
@@ -2052,7 +2052,7 @@ mod tests {
         let executor = FakeExecutor::new(vec![], Arc::clone(&events));
         let repo = FakeRepository::new(None, Arc::clone(&events));
 
-        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state, None)
+        let outcome = drive_to_outcome_impl(&policy, &executor, &repo, &mut state)
             .await
             .expect("must succeed");
 

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use tracing::{field, info_span};
 
 use crate::shared_types::{
     CandidateCardRetrievalOutput, CardBranchRerankingOutput, CardSelectionContext,
@@ -45,20 +46,53 @@ impl CardBranchReranking {
         fresh_candidates: &CandidateCardRetrievalOutput,
         card_selection_context: &CardSelectionContext,
     ) -> Result<CardBranchRerankingOutput, CardBranchRerankingError> {
+        let span = info_span!(
+            "request_pipeline.card_branch_reranking",
+            module.name = "card_branch_reranking",
+            reranking.fresh_candidates_count = fresh_candidates.ranked_candidates.len() as i64,
+            reranking.previous_primary_card_id = field::Empty,
+            reranking.previous_primary_status = field::Empty,
+            reranking.previous_primary_fresh_rank = field::Empty,
+            reranking.retention_window = field::Empty,
+            reranking.new_primary_card_id = field::Empty,
+            reranking.new_primary_status = field::Empty,
+            reranking.new_primary_retained = field::Empty,
+            reranking.alternatives_count = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+        let _guard = span.enter();
+
         // 1. EmptyCardSelectionHistory
         if card_selection_context.history.is_empty() {
+            span.record("module.outcome", "failure");
+            span.record("status", "error");
+            span.record("error.type", "CardBranchReranking.EmptyCardSelectionHistory");
+            span.record("error.message", "card selection context history must not be empty");
             return Err(CardBranchRerankingError::EmptyCardSelectionHistory);
         }
 
         // 2. MissingFreshPrimary
-        let fresh_primary = fresh_candidates
-            .primary
-            .as_ref()
-            .ok_or(CardBranchRerankingError::MissingFreshPrimary)?;
+        let fresh_primary = match fresh_candidates.primary.as_ref() {
+            Some(p) => p,
+            None => {
+                span.record("module.outcome", "failure");
+                span.record("status", "error");
+                span.record("error.type", "CardBranchReranking.MissingFreshPrimary");
+                span.record("error.message", "fresh candidate retrieval output must contain a primary card");
+                return Err(CardBranchRerankingError::MissingFreshPrimary);
+            }
+        };
 
         // 3. FreshPrimaryMismatch (only when ranked_candidates[0] exists)
         if let Some(first) = fresh_candidates.ranked_candidates.first() {
             if first.case_id != fresh_primary.case_id {
+                span.record("module.outcome", "failure");
+                span.record("status", "error");
+                span.record("error.type", "CardBranchReranking.FreshPrimaryMismatch");
+                span.record("error.message", "fresh primary card does not match ranked_candidates[0]");
                 return Err(CardBranchRerankingError::FreshPrimaryMismatch);
             }
         }
@@ -67,6 +101,11 @@ impl CardBranchReranking {
         let mut seen = std::collections::HashSet::new();
         for card in &fresh_candidates.ranked_candidates {
             if !seen.insert(&card.case_id) {
+                let msg = format!("duplicate card id '{}' in fresh candidate list", card.case_id);
+                span.record("module.outcome", "failure");
+                span.record("status", "error");
+                span.record("error.type", "CardBranchReranking.DuplicateFreshCandidate");
+                span.record("error.message", msg.as_str());
                 return Err(CardBranchRerankingError::DuplicateFreshCandidate {
                     card_id: card.case_id.clone(),
                 });
@@ -84,17 +123,26 @@ impl CardBranchReranking {
         let previous_primary = &last.primary_card_id;
         let previous_status = last.primary_card_status;
 
+        span.record("reranking.previous_primary_card_id", previous_primary.as_str());
+        span.record("reranking.previous_primary_status", format!("{:?}", previous_status).as_str());
+
         // ── Primary selection ─────────────────────────────────────────────────
         let previous_fresh_rank = fresh_ids
             .iter()
             .position(|id| *id == previous_primary.as_str())
             .map(|i| i + 1); // 1-based
 
+        if let Some(rank) = previous_fresh_rank {
+            span.record("reranking.previous_primary_fresh_rank", rank as i64);
+        }
+
         let retention_window = match previous_status {
             PrimaryCardStatus::Tentative => TENTATIVE_RETENTION_WINDOW,
             PrimaryCardStatus::Sticky => STICKY_RETENTION_WINDOW,
         }
         .min(fresh_window_len);
+
+        span.record("reranking.retention_window", retention_window as i64);
 
         let (new_primary_id, new_primary_status) =
             match previous_fresh_rank {
@@ -103,6 +151,11 @@ impl CardBranchReranking {
                 }
                 _ => (fresh_ids[0].to_string(), PrimaryCardStatus::Tentative),
             };
+
+        let new_primary_retained = new_primary_id == *previous_primary;
+        span.record("reranking.new_primary_card_id", new_primary_id.as_str());
+        span.record("reranking.new_primary_status", format!("{:?}", new_primary_status).as_str());
+        span.record("reranking.new_primary_retained", new_primary_retained);
 
         // ── Alternative selection ─────────────────────────────────────────────
 
@@ -137,6 +190,10 @@ impl CardBranchReranking {
 
         // Step 3: trim
         alternatives.truncate(MAX_ALTERNATIVES);
+
+        span.record("reranking.alternatives_count", alternatives.len() as i64);
+        span.record("module.outcome", "success");
+        span.record("status", "ok");
 
         Ok(CardBranchRerankingOutput {
             primary_card_id: new_primary_id,

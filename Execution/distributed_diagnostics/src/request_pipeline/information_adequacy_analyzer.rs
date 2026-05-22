@@ -1,3 +1,5 @@
+use tracing::{field, info_span};
+
 use crate::shared_types::{
     AdequacyAssessment, AdequacyStatus, Confidence, MissingInformationTopic,
     ObservationBoundaryResolution, ObservationBoundaryResolverOutput, ObservationExtractionOutput,
@@ -93,6 +95,26 @@ impl InformationAdequacyAnalyzer {
                 .count()
         };
 
+        let span = info_span!(
+            "request_pipeline.information_adequacy_analysis",
+            module.name = "information_adequacy_analysis",
+            adequacy.mode = "initial",
+            adequacy.input.symptom_signal_count = symptom_signal_count as i64,
+            adequacy.input.diagnostic_anchor_count = diagnostic_anchor_count as i64,
+            adequacy.input.scope_count = scope_count as i64,
+            adequacy.input.trigger_count = trigger_count as i64,
+            adequacy.input.failure_mode_count = failure_mode_count as i64,
+            adequacy.input.unresolved_count = unresolved_count as i64,
+            adequacy.status = field::Empty,
+            adequacy.missing_topics_count = field::Empty,
+            adequacy.summary_reason = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+        let _guard = span.enter();
+
         let weak_inference_term_count = [
             &query.symptoms,
             &query.affected_subsystems,
@@ -122,11 +144,17 @@ impl InformationAdequacyAnalyzer {
                 symptom_signal_count, scope_count, trigger_count, failure_mode_count,
                 diagnostic_anchor_count, unresolved_count,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::Blocking,
                 topics,
                 "The request does not describe any concrete symptom or observable behavior.",
-            ));
+            );
+            span.record("adequacy.status", "Blocking");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         if diagnostic_anchor_count <= 1 {
@@ -134,11 +162,17 @@ impl InformationAdequacyAnalyzer {
                 symptom_signal_count, scope_count, trigger_count, failure_mode_count,
                 diagnostic_anchor_count, unresolved_count,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::Blocking,
                 topics,
                 "The request contains too little anchored diagnostic context to proceed safely.",
-            ));
+            );
+            span.record("adequacy.status", "Blocking");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         if symptom_signal_count > 0 && scope_count == 0 && trigger_count == 0 && failure_mode_count == 0 {
@@ -146,11 +180,17 @@ impl InformationAdequacyAnalyzer {
                 symptom_signal_count, scope_count, trigger_count, failure_mode_count,
                 diagnostic_anchor_count, unresolved_count,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::Blocking,
                 topics,
                 "The request names a symptom but does not anchor it to component, trigger, or failure pattern context.",
-            ));
+            );
+            span.record("adequacy.status", "Blocking");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         if unresolved_count >= 2 && (symptom_signal_count == 0 || diagnostic_anchor_count == 1) {
@@ -158,11 +198,17 @@ impl InformationAdequacyAnalyzer {
                 symptom_signal_count, scope_count, trigger_count, failure_mode_count,
                 diagnostic_anchor_count, unresolved_count,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::Blocking,
                 topics,
                 "The request remains too ambiguous because key terms are unresolved.",
-            ));
+            );
+            span.record("adequacy.status", "Blocking");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         // ── Weak checks ────────────────────────────────────────────────────────
@@ -177,20 +223,32 @@ impl InformationAdequacyAnalyzer {
                 symptom_signal_count, scope_count, trigger_count, failure_mode_count,
                 diagnostic_anchor_count, unresolved_count,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::WeakButRunnable,
                 topics,
                 "The request contains a usable signal but is still diagnostically thin.",
-            ));
+            );
+            span.record("adequacy.status", "WeakButRunnable");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         // ── Sufficient ─────────────────────────────────────────────────────────
 
-        Ok(build_assessment(
+        let assessment = build_assessment(
             AdequacyStatus::Sufficient,
             vec![],
             "The request contains enough diagnostic context to continue.",
-        ))
+        );
+        span.record("adequacy.status", "Sufficient");
+        span.record("adequacy.missing_topics_count", 0_i64);
+        span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+        span.record("module.outcome", "success");
+        span.record("status", "ok");
+        Ok(assessment)
     }
 
     pub fn analyze_supported_observation(
@@ -209,6 +267,24 @@ impl InformationAdequacyAnalyzer {
             .filter(|o| matches!(o.confidence, Confidence::Medium | Confidence::High))
             .count();
 
+        let confidence_str = format!("{:?}", observation.confidence);
+        let span = info_span!(
+            "request_pipeline.information_adequacy_analysis",
+            module.name = "information_adequacy_analysis",
+            adequacy.mode = "supported_observation",
+            adequacy.input.observation_count = observation_count as i64,
+            adequacy.input.needs_more_context = observation.needs_more_context,
+            adequacy.input.confidence = confidence_str.as_str(),
+            adequacy.status = field::Empty,
+            adequacy.missing_topics_count = field::Empty,
+            adequacy.summary_reason = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+        let _guard = span.enter();
+
         // ── Blocking checks ────────────────────────────────────────────────────
 
         if observation_count == 0 {
@@ -216,11 +292,17 @@ impl InformationAdequacyAnalyzer {
                 observation_count, observation.needs_more_context, question_count,
                 present_count, absent_count, corrected_count, &observation.confidence,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::Blocking,
                 topics,
                 "The observation does not contain a concrete new diagnostic fact.",
-            ));
+            );
+            span.record("adequacy.status", "Blocking");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         if observation.needs_more_context {
@@ -228,11 +310,17 @@ impl InformationAdequacyAnalyzer {
                 observation_count, observation.needs_more_context, question_count,
                 present_count, absent_count, corrected_count, &observation.confidence,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::Blocking,
                 topics,
                 "The observation requires more context before diagnostic update can proceed safely.",
-            ));
+            );
+            span.record("adequacy.status", "Blocking");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         if observation_count == 1 && observation.confidence == Confidence::Low {
@@ -240,11 +328,17 @@ impl InformationAdequacyAnalyzer {
                 observation_count, observation.needs_more_context, question_count,
                 present_count, absent_count, corrected_count, &observation.confidence,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::Blocking,
                 topics,
                 "The observation is too weak and low-confidence for a safe diagnostic update.",
-            ));
+            );
+            span.record("adequacy.status", "Blocking");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         if corrected_count > 0
@@ -257,11 +351,17 @@ impl InformationAdequacyAnalyzer {
                 observation_count, observation.needs_more_context, question_count,
                 present_count, absent_count, corrected_count, &observation.confidence,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::Blocking,
                 topics,
                 "The observation only corrects a prior assumption and is still too weak for a safe diagnostic update.",
-            ));
+            );
+            span.record("adequacy.status", "Blocking");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         // ── Weak checks ────────────────────────────────────────────────────────
@@ -276,29 +376,60 @@ impl InformationAdequacyAnalyzer {
                 observation_count, observation.needs_more_context, question_count,
                 present_count, absent_count, corrected_count, &observation.confidence,
             );
-            return Ok(build_assessment(
+            let assessment = build_assessment(
                 AdequacyStatus::WeakButRunnable,
                 topics,
                 "The observation contains a usable update signal but still lacks diagnostic strength.",
-            ));
+            );
+            span.record("adequacy.status", "WeakButRunnable");
+            span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+            span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+            span.record("module.outcome", "success");
+            span.record("status", "ok");
+            return Ok(assessment);
         }
 
         // ── Sufficient ─────────────────────────────────────────────────────────
 
-        Ok(build_assessment(
+        let assessment = build_assessment(
             AdequacyStatus::Sufficient,
             vec![],
             "The observation contains enough concrete diagnostic information to continue.",
-        ))
+        );
+        span.record("adequacy.status", "Sufficient");
+        span.record("adequacy.missing_topics_count", 0_i64);
+        span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+        span.record("module.outcome", "success");
+        span.record("status", "ok");
+        Ok(assessment)
     }
 
     pub fn analyze_unsupported_observation(
         &self,
         boundary_output: &ObservationBoundaryResolverOutput,
     ) -> Result<AdequacyAssessment, InformationAdequacyAnalyzerError> {
+        let span = info_span!(
+            "request_pipeline.information_adequacy_analysis",
+            module.name = "information_adequacy_analysis",
+            adequacy.mode = "unsupported_observation",
+            adequacy.status = field::Empty,
+            adequacy.missing_topics_count = field::Empty,
+            adequacy.summary_reason = field::Empty,
+            module.outcome = field::Empty,
+            status = field::Empty,
+            error.type = field::Empty,
+            error.message = field::Empty,
+        );
+        let _guard = span.enter();
+
         if matches!(boundary_output.resolution, ObservationBoundaryResolution::Supported(_)) {
+            let msg = "boundary_output.resolution is Supported, expected Unsupported";
+            span.record("module.outcome", "failure");
+            span.record("status", "error");
+            span.record("error.type", "InformationAdequacyAnalyzer.InvalidObservationExtractionOutput");
+            span.record("error.message", msg);
             return Err(InformationAdequacyAnalyzerError::InvalidObservationExtractionOutput(
-                "boundary_output.resolution is Supported, expected Unsupported".to_string(),
+                msg.to_string(),
             ));
         }
 
@@ -310,11 +441,17 @@ impl InformationAdequacyAnalyzer {
         ];
         let topics: Vec<MissingInformationTopic> = all_topics.iter().take(2).copied().collect();
 
-        Ok(build_assessment(
+        let assessment = build_assessment(
             AdequacyStatus::Blocking,
             topics,
             "The latest user message is not yet a supported standalone diagnostic observation.",
-        ))
+        );
+        span.record("adequacy.status", "Blocking");
+        span.record("adequacy.missing_topics_count", assessment.missing_information_topics.len() as i64);
+        span.record("adequacy.summary_reason", assessment.summary_reason.as_str());
+        span.record("module.outcome", "success");
+        span.record("status", "ok");
+        Ok(assessment)
     }
 }
 

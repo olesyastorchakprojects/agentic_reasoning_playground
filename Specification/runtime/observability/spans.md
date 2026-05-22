@@ -584,6 +584,8 @@ Bad event use cases:
 # 16) Leaf Hierarchy And Ownership
 
 Leaf-module span ownership is fixed by module:
+- `request_pipeline.card_branch_reranking`
+- `request_pipeline.information_adequacy_analysis`
 - `request_pipeline.input_normalization`
 - `request_pipeline.query_structuring`
 - `request_pipeline.candidate_card_retrieval`
@@ -593,6 +595,9 @@ Leaf-module span ownership is fixed by module:
 - `request_pipeline.prompt_context_assembly`
 - `request_pipeline.llm_structured_generation`
 - `request_pipeline.response_validation_and_normalization`
+- `request_pipeline.observation_boundary_resolver`
+- `request_pipeline.observation_extraction`
+- `request_pipeline.diagnostic_update_prompt_context_assembly`
 
 Leaf child dependency spans are created by the owning module, for example:
 - `llm.call.query_structuring`
@@ -602,6 +607,8 @@ Leaf child dependency spans are created by the owning module, for example:
 - `qdrant.practice_chunks.search.alternatives`
 - `qdrant.theory_chunks.search`
 - `llm.call.diagnostic_response`
+- `llm.call.observation_boundary_resolver`
+- `llm.call.observation_extraction`
 
 Rules:
 - `request_pipeline.*` spans are children of `step_executor.dispatch`;
@@ -996,6 +1003,135 @@ Notes for Qdrant-backed retrieval:
   - `error.message`
 - failure rules:
   - use `error.type` values such as `ResponseValidation.InvalidResponseShape` or `ResponseValidation.BusinessRuleViolation`
+
+`request_pipeline.card_branch_reranking`
+
+- child dependency spans:
+  - none
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `reranking.fresh_candidates_count`
+  - `reranking.previous_primary_card_id`
+  - `reranking.previous_primary_status`
+    - value: `Tentative | Sticky`
+  - `reranking.retention_window`
+  - `reranking.new_primary_card_id`
+  - `reranking.new_primary_status`
+    - value: `Tentative | Sticky`
+  - `reranking.new_primary_retained`
+    - type: boolean; `true` if previous primary was preserved, `false` if replaced
+  - `reranking.alternatives_count`
+- conditional attributes:
+  - `reranking.previous_primary_fresh_rank`
+    - type: integer; 1-based rank of the previous primary in the fresh list
+    - omitted when the previous primary is absent from the fresh list
+- failure rules:
+  - use `error.type` values such as `CardBranchReranking.EmptyCardSelectionHistory`,
+    `CardBranchReranking.MissingFreshPrimary`,
+    `CardBranchReranking.FreshPrimaryMismatch`, or
+    `CardBranchReranking.DuplicateFreshCandidate`
+
+`request_pipeline.information_adequacy_analysis`
+
+- child dependency spans:
+  - none
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `adequacy.mode`
+    - value: `initial | supported_observation | unsupported_observation`
+  - `adequacy.status`
+    - value: `Blocking | WeakButRunnable | Sufficient`
+  - `adequacy.missing_topics_count`
+  - `adequacy.summary_reason`
+- required attributes when `adequacy.mode = "initial"`:
+  - `adequacy.input.symptom_signal_count`
+  - `adequacy.input.diagnostic_anchor_count`
+  - `adequacy.input.scope_count`
+  - `adequacy.input.trigger_count`
+  - `adequacy.input.failure_mode_count`
+  - `adequacy.input.unresolved_count`
+- required attributes when `adequacy.mode = "supported_observation"`:
+  - `adequacy.input.observation_count`
+  - `adequacy.input.needs_more_context`
+  - `adequacy.input.confidence`
+    - value: `Low | Medium | High`
+- failure rules:
+  - use `error.type` values such as
+    `InformationAdequacyAnalyzer.InvalidObservationExtractionOutput`
+  - note: `analyze_initial` and `analyze_supported_observation` have no error paths
+    in the current implementation; only `analyze_unsupported_observation` can fail
+
+`request_pipeline.observation_boundary_resolver`
+
+- child dependency spans:
+  - `llm.call.observation_boundary_resolver`
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `query.normalized`
+  - `asset.prompt.version`
+  - `model.response_mode`
+  - `model.temperature`
+  - `model.max_output_tokens`
+  - `model.finish_reason`
+  - `model.prompt_tokens`
+  - `model.completion_tokens`
+  - `model.total_tokens`
+  - `resolution.supported`
+  - `resolution.confidence`
+- required attributes on `llm.call.observation_boundary_resolver`:
+  - `llm.task = "observation_boundary_resolver"`
+  - `model.finish_reason`
+  - `model.prompt_tokens`
+  - `model.completion_tokens`
+  - `model.total_tokens`
+- failure rules:
+  - use `error.type` values such as `ObservationBoundaryResolver.InvalidContext`,
+    `ObservationBoundaryResolver.ModelClient`, or
+    `ObservationBoundaryResolver.InvalidModelOutput`
+
+`request_pipeline.observation_extraction`
+
+- child dependency spans:
+  - `llm.call.observation_extraction`
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `query.normalized`
+  - `asset.prompt.version`
+  - `model.response_mode`
+  - `model.temperature`
+  - `model.max_output_tokens`
+  - `model.finish_reason`
+  - `model.prompt_tokens`
+  - `model.completion_tokens`
+  - `model.total_tokens`
+  - `extraction.needs_more_context`
+  - `extraction.observations_count`
+- required attributes on `llm.call.observation_extraction`:
+  - `llm.task = "observation_extraction"`
+  - `model.finish_reason`
+  - `model.prompt_tokens`
+  - `model.completion_tokens`
+  - `model.total_tokens`
+- failure rules:
+  - use `error.type` values such as
+    `ObservationExtraction.UnsupportedBoundaryInput`,
+    `ObservationExtraction.ModelClient`, or
+    `ObservationExtraction.InvalidModelOutput`
+
+`request_pipeline.diagnostic_update_prompt_context_assembly`
+
+- child dependency spans:
+  - none required
+- required attributes:
+  - global leaf attributes from section `14)`
+  - `prompt.asset.name`
+  - `prompt.asset.version`
+  - `prompt.selected.total_chunks_count`
+  - `prompt.rendered_chars`
+- failure rules:
+  - use `error.type` values such as
+    `InvalidProblemUnderstanding`, `InvalidResolvedObservation`,
+    `InvalidHypothesisState`, or `JsonSerializationFailed`
 
 # 18) Leaf Acceptance Criteria
 
