@@ -140,6 +140,9 @@ The current mandatory OpenInference hierarchy is:
 - `oi.chain.prompt_context_assembly`
 - `oi.llm.diagnostic_response`
 - `oi.guardrail.response_validation`
+- `oi.llm.observation_boundary_resolver`
+- `oi.llm.observation_extraction`
+- `oi.chain.diagnostic_update_prompt_context_assembly`
 
 Hierarchy rules:
 - every listed span is a descendant of `oi.chain.diagnostic_iteration`;
@@ -168,6 +171,9 @@ Hierarchy rules:
   evidence retrieval metrics were actually computed for the current request;
 - `oi.chain.prompt_context_assembly`, `oi.llm.diagnostic_response`, and
   `oi.guardrail.response_validation` are siblings under
+  `oi.chain.diagnostic_iteration`;
+- `oi.llm.observation_boundary_resolver`, `oi.llm.observation_extraction`, and
+  `oi.chain.diagnostic_update_prompt_context_assembly` are siblings under
   `oi.chain.diagnostic_iteration`;
 - no additional OpenInference root span may be introduced under the same
   iteration without updating this document.
@@ -198,7 +204,13 @@ Ownership is fixed by module:
 - `oi.llm.diagnostic_response` belongs to
   `request_pipeline::llm_structured_generation`;
 - `oi.guardrail.response_validation` belongs to
-  `request_pipeline::response_validation_and_normalization`.
+  `request_pipeline::response_validation_and_normalization`;
+- `oi.llm.observation_boundary_resolver` belongs to
+  `request_pipeline::observation_boundary_resolver`;
+- `oi.llm.observation_extraction` belongs to
+  `request_pipeline::observation_extraction`;
+- `oi.chain.diagnostic_update_prompt_context_assembly` belongs to
+  `request_pipeline::diagnostic_update_prompt_context_assembly`.
 
 Ownership rules:
 - a module creates only its own OpenInference spans;
@@ -247,6 +259,11 @@ Common rules:
   - `output.mime_type`
   - `run.outcome`
   - `status`
+- conditional attributes:
+  - `runtime.total_cost_usd`
+    - type: float
+    - source: orchestrator-derived cost accumulation
+    - emitted when total LLM cost for the iteration is available
 
 Input payload contract:
 - `input.mime_type = "application/json"`
@@ -967,6 +984,7 @@ Required LLM metadata:
 - `llm.token_count.prompt`
 - `llm.token_count.completion`
 - `llm.token_count.total`
+- `llm.raw_response`
 
 Current invocation-parameters contract:
 - `llm.invocation_parameters` must serialize the effective response-generation
@@ -1007,6 +1025,127 @@ Error rules:
 - if normalization fails before a normalized response exists, `output.value` is
   not required.
 
+## 9.11 `oi.llm.observation_boundary_resolver`
+
+- `openinference.span.kind`
+  - value: `LLM`
+
+Input payload contract:
+- `input.mime_type = "application/json"`
+- `input.value` is a JSON object with:
+  - `normalized_user_input`
+  - `problem_understanding`
+  - `active_hypotheses`
+  - `latest_suggested_check`
+- input is recorded before the model call begins
+
+Required LLM metadata:
+- `llm.model_name`
+- `llm.provider`
+- `llm.invocation_parameters`
+- `llm.token_count.prompt`
+- `llm.token_count.completion`
+- `llm.token_count.total`
+- `llm.raw_response`
+
+Current invocation-parameters contract:
+- `llm.invocation_parameters` must serialize the effective boundary-resolver
+  LLM call settings;
+- the current implementation records:
+  - `temperature`
+  - `response_format`
+  - `max_output_tokens`
+
+Output payload contract:
+- `output.mime_type = "application/json"`
+- `output.value` is the serialized `ObservationBoundaryResolverOutput` JSON
+  returned on successful parsing and validation.
+
+Error rules:
+- model-call failures, invalid finish reasons, JSON parse failures, and invalid
+  model output shape must record:
+  - `status = "error"`
+  - `error.type`
+  - `error.message`
+- `llm.raw_response` may still be recorded when the model returned content even
+  if output validation subsequently failed.
+
+## 9.12 `oi.llm.observation_extraction`
+
+- `openinference.span.kind`
+  - value: `LLM`
+
+Input payload contract:
+- `input.mime_type = "text/plain"`
+  - this span is an authorized exception to the general `application/json`
+    rule in section `11)`: the full rendered system + user prompt is recorded
+    as plain text
+- `input.value` is the concatenated prompt in the format:
+  `"SYSTEM:\n{system_prompt}\n\nUSER:\n{user_message}"`
+
+Required LLM metadata:
+- `llm.model_name`
+- `llm.provider`
+- `llm.invocation_parameters`
+- `llm.token_count.prompt`
+- `llm.token_count.completion`
+- `llm.token_count.total`
+- `llm.raw_response`
+
+Current invocation-parameters contract:
+- `llm.invocation_parameters` must serialize the effective extraction LLM
+  call settings;
+- the current implementation records:
+  - `temperature`
+  - `response_format`
+  - `max_output_tokens`
+
+Output payload contract:
+- `output.mime_type = "application/json"`
+- `output.value` is the serialized `ObservationExtractionOutput` JSON returned
+  on successful parsing and validation.
+
+Error rules:
+- unsupported boundary input (when the upstream resolution is `Unsupported`),
+  model-call failures, invalid finish reasons, JSON parse failures, and invalid
+  model output shape must record:
+  - `status = "error"`
+  - `error.type`
+  - `error.message`
+- `llm.raw_response` may still be recorded when the model returned content even
+  if output validation subsequently failed.
+
+## 9.13 `oi.chain.diagnostic_update_prompt_context_assembly`
+
+- `openinference.span.kind`
+  - value: `CHAIN`
+
+Input payload contract:
+- `input.value` is not currently recorded by the implementation;
+- `input.mime_type` is not currently set;
+- this is an known gap in the current contract — the fields are predeclared
+  as `field::Empty` in the span factory but not yet populated.
+
+Output payload contract:
+- `output.mime_type = "application/json"`
+- `output.value` is a JSON object with:
+  - `selected_counts`
+  - `prompt_chars`
+- `selected_counts` contains:
+  - `evidence_for_match`
+  - `next_check_hint`
+  - `supporting_explanation`
+  - `alternative_context`
+  - `mechanism_explanation`
+  - `total`
+
+Error rules:
+- invalid problem understanding, invalid resolved observation, invalid
+  hypothesis state, and JSON serialization failures must record:
+  - `status = "error"`
+  - `error.type`
+  - `error.message`
+
 # 10) Success And Error Recording Rules
 
 Success rules:
@@ -1029,12 +1168,14 @@ Error rules:
 # 11) Input / Output MIME Rules
 
 For the current contract:
-- every OpenInference span uses `application/json` for `input.mime_type`;
+- every OpenInference span uses `application/json` for `input.mime_type`,
+  with the following authorized exception:
+  - `oi.llm.observation_extraction` uses `input.mime_type = "text/plain"`
+    because the current implementation records the full rendered system + user
+    prompt as the input payload;
 - every successful OpenInference span with output uses `application/json` for
   `output.mime_type`;
-- this document does not authorize raw-text payload mime types for
-  OpenInference, even when the underlying business stage temporarily handles raw
-  model text internally.
+- no other raw-text payload mime types are authorized for OpenInference spans.
 
 # 12) Safety Constraints
 
@@ -1050,6 +1191,14 @@ Current stage-specific rules:
   `oi.llm.query_structuring` as an explicit exception to the general raw-model-
   output prohibition, because that stage expects one JSON-object response that
   is later parsed into `StructuredUserQuery`;
+- the current contract allows `llm.raw_response` on `oi.llm.diagnostic_response`,
+  `oi.llm.observation_boundary_resolver`, and `oi.llm.observation_extraction`
+  for the same reason: bounded single-object model responses that are
+  subsequently parsed and validated;
+- the current contract allows `oi.llm.observation_extraction` to record the
+  full rendered prompt as `input.value` with `input.mime_type = "text/plain"`;
+  this is an authorized exception to the general `application/json` rule for
+  that span only;
 - future tightening of prompt/document redaction rules must update both
   `observability.md` and this document together.
 

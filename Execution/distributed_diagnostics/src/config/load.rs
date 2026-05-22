@@ -1659,7 +1659,7 @@ vector_name = "dense"
     fn missing_llm_structured_generation_section_fails_with_load_error() {
         let env = default_env();
         let bad_rt = RUNTIME_TOML.replace(
-            "\n[llm_structured_generation]\nmax_output_tokens = 1200\n",
+            "\n[llm_structured_generation]\nprovider = \"ollama\"\nmodel = \"qwen2.5:1.5b-instruct\"\nmax_output_tokens = 1200\n",
             "",
         );
         let rt = write_temp(&bad_rt);
