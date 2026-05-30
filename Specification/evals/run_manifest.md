@@ -1,47 +1,39 @@
 ## 1) Purpose
 
-This document defines the eval-run manifest contract for the new diagnostics
+This document defines the current eval-run manifest contract for the diagnostics
 eval engine.
 
-The manifest is the canonical artifact that records:
+The manifest records:
 
 - eval-run identity;
 - frozen runtime-run membership;
-- judge suite versions;
+- frozen subject scope;
 - judge runtime metadata;
-- terminal run status;
-- resume eligibility.
-
-The manifest must be sufficient to:
-
-- resume a failed eval run;
-- reconstruct which runtime runs belong to that eval run;
-- rebuild or inspect the corresponding report artifacts later;
-- support auditability of eval configuration and scope.
+- declared stage list;
+- best-effort suite-version metadata.
 
 ## 2) Artifact Location
 
-Each eval run must write artifacts under:
+Each eval run writes artifacts under:
 
 - `Evidence/evals/runs/<eval_run_started_at>_<eval_run_id>/`
 
-That directory must contain at least:
+That directory currently contains at least:
 
 - `run_manifest.json`
 - `run_report.md`
 
-The folder name is a filesystem-safe convenience only.
-
-The canonical run identity remains `eval_run_id`.
+The canonical run identity is still `eval_run_id`, not the folder name.
 
 ## 3) Required Manifest Fields
 
-The manifest must contain at least:
+The current manifest contains at least:
 
 - `eval_run_id`
 - `run_type`
 - `status`
 - `started_at`
+- `completed_at`
 - `stages`
 - `judge_provider`
 - `judge_base_url`
@@ -51,192 +43,103 @@ The manifest must contain at least:
 - `run_scope_runtime_run_ids`
 - `subject_count`
 - `run_scope_subjects`
-
-Terminal manifests must also contain:
-
-- `completed_at`
-
-Failed terminal manifests must also contain:
-
 - `last_error`
 
-## 4) Semantic Field Rules
+## 4) Current Field Semantics
 
-### 4.1) `eval_run_id`
+### 4.1) `status`
 
-- unique id for the eval run;
-- generated once at bootstrap;
-- reused during resume;
-- must not be replaced on retry.
-
-### 4.2) `run_type`
-
-For the current MVP this identifies the batch-eval mode, such as:
-
-- golden dataset experiment;
-- offline validation batch;
-- local dev eval batch.
-
-### 4.3) `status`
-
-Allowed statuses:
+Allowed values:
 
 - `running`
 - `completed`
 - `failed`
 
-The manifest must not be considered terminal while `status = running`.
+Current implementation note:
 
-### 4.4) `stages`
+- bootstrap writes `status = running`;
+- full terminal status transitions are not yet comprehensively orchestrated in
+  the current code path and remain an area for future tightening.
 
-For the current MVP the manifest must record:
+### 4.2) `stages`
+
+The current ordered stage list is:
 
 - `judge_request_suites`
 - `build_eval_summary`
 
-The ordered stage list is part of the run contract and documents what the
-eval-run lifecycle consists of.
+### 4.3) `suite_versions`
 
-### 4.5) `suite_versions`
+The current implementation writes a map keyed by enabled suite name.
 
-`suite_versions` must record the prompt version used for each suite name in the
-current eval run.
+Current value semantics:
 
-This field exists so that later report comparisons can distinguish score shifts
-caused by rubric/prompt changes from score shifts caused by runtime changes.
+- when suite enablement comes from config/CLI, the value is currently a marker
+  string such as `enabled_from_config`.
 
-### 4.6) `runtime_run_count`
+This field is therefore presently best treated as enabled-suite metadata rather
+than as a fully trustworthy persisted prompt-version map.
 
-- must equal the count of ids in `run_scope_runtime_run_ids`;
-- must remain stable for the life of the eval run.
+### 4.4) `run_scope_runtime_run_ids`
 
-### 4.7) `run_scope_runtime_run_ids`
+Current implementation semantics:
 
-This is the frozen runtime-run membership of the eval run.
+- runtime run ids are derived from the discovered frozen subjects;
+- the list is sorted and deduplicated before writing;
+- `runtime_run_count` equals the deduplicated length.
 
-Rules:
+### 4.5) `run_scope_subjects`
 
-- the field must be written at bootstrap;
-- it must be non-empty for a non-trivial eval run;
-- it must not change during resume;
-- newly created eligible runtime runs must not be appended to it later.
-
-### 4.8) `subject_count`
-
-- must equal the count of entries in `run_scope_subjects`;
-- must remain stable for the life of the eval run.
-
-### 4.9) `run_scope_subjects`
-
-This is the frozen evaluated subject scope of the eval run.
-
-Each entry must record at least:
+Each subject entry records:
 
 - `runtime_run_id`
 - `iteration_id`
 
-Rules:
-
-- the field must be written at bootstrap;
-- it must be derived from the selected target iteration for each runtime run;
-- it must not change during resume;
-- resume must not recompute iteration selection from current runtime state.
+Current implementation allows multiple frozen subjects from the same runtime
+run when multiple iterations satisfy eligibility.
 
 ## 5) Bootstrap Rule
 
-At new eval-run bootstrap the orchestrator must:
+At new eval-run bootstrap the system must:
 
-1. select eligible runtime runs;
-2. freeze them into one ordered scope;
-3. freeze the target iteration subject for each runtime run into one ordered
-   subject scope;
-4. generate one `eval_run_id`;
-5. write the initial manifest with `status = running`.
+1. discover frozen subjects;
+2. derive the corresponding runtime-run membership from those subjects;
+3. build the initial manifest with `status = running`;
+4. write `run_manifest.json` into the eval-run artifact directory.
 
-The bootstrap order of runtime runs must be stable and deterministic.
+## 6) Lookup Rule
 
-For MVP, that stable order should be defined by a persisted runtime-run
-timestamp plus `runtime_run_id` as a tiebreaker.
+Current resume lookup behavior:
 
-## 6) Resume Rule
+- artifact lookup scans directories under the artifact root;
+- for each candidate directory, the engine reads `run_manifest.json`;
+- the matching directory is the one whose manifest `eval_run_id` matches the
+  requested id.
 
-When resuming a failed eval run:
+This lookup is artifact-based convenience, not a second source of truth for the
+eval run itself.
 
-- the eval engine must locate the existing manifest for the requested
-  `eval_run_id`;
-- the manifest must be in `running` or `failed` state;
-- the engine must reuse the exact same `run_scope_runtime_run_ids`;
-- the engine must reuse the exact same `run_scope_subjects`;
-- the engine must not generate a new `eval_run_id`;
-- the engine must set manifest `status = running` again before re-entry;
-- any previous `completed_at` must be cleared for resumed non-terminal state;
-- any previous `last_error` may be cleared before resume attempt begins.
+## 7) Resume Rule
 
-Resume must preserve identity and scope.
+When resuming an existing eval run:
 
-## 7) Completion Rule
+- the manifest is used to recover artifact identity and frozen-scope metadata;
+- the same `eval_run_id` must be reused;
+- no new subject discovery may be mixed into that run.
 
-An eval run may be marked `completed` only when:
+Current implementation note:
 
-- every runtime run in `run_scope_runtime_run_ids` has satisfied all required
-  judge suites for the target iteration(s);
-- iteration-level summaries have been built for all required subjects;
-- eval-run-level summaries have been built successfully;
-- the final run report has been written successfully.
+- the manifest is read during resume, but the authoritative per-subject workset
+  is still the persisted `eval_processing_state` table.
 
-The manifest must then record:
+## 8) Recommended Future Tightening
 
-- `status = completed`
-- `completed_at`
+The manifest contract should eventually be strengthened so that:
 
-## 8) Failure Rule
+- `suite_versions` stores actual prompt or catalog versions;
+- terminal success/failure transitions are always written explicitly;
+- resume reasserts manifest status and clears stale terminal fields when
+  appropriate.
 
-If the eval engine hits a run-level failure boundary, the terminal manifest
-must record:
-
-- `status = failed`
-- `completed_at`
-- `last_error`
-
-Stage-local failures that are resumable must not automatically imply that the
-entire eval run is permanently unrecoverable.
-
-But once the orchestrator exits through its terminal failure boundary, the
-manifest must make that failure explicit.
-
-## 9) Recommended MVP Shape
-
-The following shape is recommended for the current MVP:
-
-```json
-{
-  "eval_run_id": "string",
-  "run_type": "string",
-  "status": "running|completed|failed",
-  "started_at": "RFC3339 timestamp",
-  "completed_at": "RFC3339 timestamp",
-  "stages": [
-    "judge_request_suites",
-    "build_eval_summary"
-  ],
-  "judge_provider": "string",
-  "judge_base_url": "string",
-  "judge_model": "string",
-  "suite_versions": {
-    "suite_name": "version"
-  },
-  "runtime_run_count": 10,
-  "subject_count": 10,
-  "run_scope_runtime_run_ids": [
-    "runtime-run-id-1",
-    "runtime-run-id-2"
-  ],
-  "run_scope_subjects": [
-    {
-      "runtime_run_id": "runtime-run-id-1",
-      "iteration_id": "iteration-1"
-    }
-  ],
-  "last_error": "string"
-}
-```
+Those are desired future behaviors, but they are not yet the full current
+implementation truth.

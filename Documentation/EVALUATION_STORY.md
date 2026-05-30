@@ -10,7 +10,7 @@ That is the role of the eval layer. It turns runtime history into a stable quali
 
 The runtime and the eval layer are separate systems.
 
-The runtime produces persisted diagnostic runs in `RunState`. The eval layer reads completed runtime runs, selects the iterations that should be judged, and produces derived artifacts about their quality. `RunState` remains the source of truth for what the application actually did. The eval layer adds interpretation, scoring, aggregation, and reporting on top of that runtime history.
+The runtime produces persisted diagnostic runs in `RunState`. The eval layer reads completed runtime runs, freezes the iteration subjects that should be judged, and produces derived artifacts about their quality. `RunState` remains the source of truth for what the application actually did. The eval layer adds interpretation, scoring, aggregation, and reporting on top of that runtime history.
 
 The main evaluation subject is one iteration inside one runtime run. That choice is deliberate. Even when many runs currently contain only one useful first-response iteration, the system itself is iteration-based, and continuation behavior is one of the central product behaviors. Evaluation therefore treats an iteration, not the whole run, as the basic unit of judgment.
 
@@ -33,25 +33,25 @@ This distinction matters because continuation quality is not the same as first-r
 
 ## Eval Inputs
 
-One eval run operates on a frozen set of completed runtime runs, usually from a golden-dataset batch.
+One eval run operates on a frozen scope derived from completed runtime runs, usually from a golden-dataset batch.
 
 Its main inputs are:
 
 - persisted runtime runs and their iteration history;
-- the selected target `(runtime_run_id, iteration_id)` subjects;
+- the frozen runtime-run membership and frozen `(runtime_run_id, iteration_id)` subjects selected from that membership;
 - golden expectations for those subjects;
 - judge suite definitions and prompts;
 - runtime-produced artifacts needed to judge the subject, such as structured query outputs, selected evidence, validated responses, and continuation-specific update artifacts.
 
-The frozen-scope rule is important. An eval run should keep the same membership for its entire lifetime, including resume after failure. That makes the resulting report reproducible and keeps comparisons between eval runs meaningful.
+The frozen-scope rule is important. An eval run should keep the same runtime-run membership and the same frozen subject set for its entire lifetime, including resume after failure. That makes the resulting report reproducible and keeps comparisons between eval runs meaningful.
 
 ## Evaluation Flow
 
 At a high level, the current eval flow looks like this:
 
 1. discover the eligible completed runtime runs;
-2. freeze the eval-run scope and the target iteration subjects;
-3. load each runtime run and project the selected iteration into an eval snapshot;
+2. freeze the eval-run scope and the eligible iteration subjects within that scope;
+3. load each runtime run and project each frozen subject iteration into an eval snapshot;
 4. execute the required judge suites for that snapshot;
 5. persist factual judge-call usage and normalized judge verdicts;
 6. compute iteration summaries;
@@ -59,6 +59,8 @@ At a high level, the current eval flow looks like this:
 8. materialize the final eval report.
 
 The eval layer is therefore not just a batch of judge prompts. It is a pipeline that turns runtime history into a stable, interpretable quality slice of the application.
+
+In the current implementation, one runtime run can contribute more than one frozen eval subject when more than one iteration satisfies the eligibility rules. The evaluation unit remains one iteration, but the frozen scope is best understood as runtime-run membership plus subject membership rather than as a one-run-one-iteration batch.
 
 ## Metric Layers
 
@@ -91,7 +93,7 @@ This design keeps failure attribution visible. A weak application result should 
 
 That attribution view is one of the most important parts of the project. The evaluation layer is designed to separate failures in query interpretation, retrieval quality, evidence packing, first-response construction, and later continuation updates rather than flattening them into one generic score.
 
-The current suite set can be seen in the latest eval report: [run_report.md](../Evidence/evals/runs/2026-05-13T12-55-23.083192284+00-00_42a1f939-caea-4d1c-ba4e-fa62900d6cbe/run_report.md).
+The current suite set can be seen in a recent eval report: [run_report.md](../Evidence/evals/runs/2026-05-20T17-15-49.392945768+00-00_8340dd54-c0ad-4b4c-a333-76fade947233/run_report.md).
 
 | Suite | Applies To | What It Checks |
 |---|---|---|
@@ -119,6 +121,9 @@ At iteration level, the system stores compact summary rows with:
 - category rollups;
 - critical gate outcomes;
 - usability signals;
+- continuation-specific no-hard-fail signals when continuation subjects are present;
+- runtime gold and retrieval diagnostics;
+- runtime model and prompt-version metadata;
 - runtime usage;
 - judge usage;
 - combined token and cost totals.
@@ -131,6 +136,8 @@ At eval-run level, those iteration summaries are aggregated into a reportable qu
 - usable continuation-response rate when continuation suites are enabled;
 - gate-failure breakdowns;
 - failure-attribution aggregates;
+- runtime gold and retrieval aggregates;
+- runtime model and prompt-version rollups;
 - runtime, judge, and total usage/cost.
 
 These aggregates are meant to answer concrete questions such as:
@@ -150,7 +157,7 @@ That is why the report emphasizes both category scores and gate breakdowns. The 
 
 ## Outputs
 
-One completed eval run produces several outputs:
+The current eval pipeline materializes several outputs for one eval run:
 
 - normalized judge-result rows;
 - factual judge-usage rows;
@@ -158,6 +165,8 @@ One completed eval run produces several outputs:
 - eval-run-level summary rows and aggregates;
 - a run manifest that records the frozen scope and run metadata;
 - a readable `run_report.md`.
+
+In the current implementation, stage draining and final report materialization are still separate responsibilities. The judge and summary stages run first, then the run-level summary row and `run_report.md` are rebuilt from the persisted eval artifacts.
 
 The report is the main report artifact. It is meant to show:
 
@@ -170,7 +179,7 @@ The report is the main report artifact. It is meant to show:
 
 In practice, `run_report.md` is more than a final score sheet. It is the main report artifact of the evaluation layer: a compact overview of stage quality, initial-versus-continuation behavior, weakest cases, and the cost of running the analysis.
 
-A recent full report example can be opened here: [run_report.md](../Evidence/evals/runs/2026-05-13T12-55-23.083192284+00-00_42a1f939-caea-4d1c-ba4e-fa62900d6cbe/run_report.md).
+A recent full report example can be opened here: [run_report.md](../Evidence/evals/runs/2026-05-20T17-15-49.392945768+00-00_8340dd54-c0ad-4b4c-a333-76fade947233/run_report.md).
 
 The eval layer also exposes operational and comparison views outside the report:
 
@@ -206,7 +215,7 @@ Phoenix traces rooted at `eval.run` are the execution-debugging view of the eval
 
 ![Phoenix Eval Run Trace](images/Screenshot%202026-05-13%20173014.png)
 
-The Phoenix trace shows the eval execution hierarchy, including `eval.run`, `eval.judge_request_suites.subject`, and `eval.judge_request_suites.suite`. This makes it possible to inspect which subjects were evaluated, which suite calls dominated latency or cost, and how the total eval bill was built up from individual judge invocations.
+The Phoenix trace shows the current eval execution hierarchy, including `eval.run`, `eval.judge_request_suites.subject`, `eval.judge_request_suites.suite`, and `eval.build_eval_summary`. This makes it possible to inspect which subjects were evaluated, which suite calls dominated latency or cost, and how the total eval bill was built up from individual judge invocations.
 
 ## How To Read The Current Quality Slice
 

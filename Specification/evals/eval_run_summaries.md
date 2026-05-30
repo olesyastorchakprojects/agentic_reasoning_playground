@@ -1,28 +1,17 @@
 ## 1) Purpose
 
-This document defines the eval-run-level summary storage contract for the
-diagnostic eval engine.
+This document defines the current eval-run-level summary storage contract for
+the diagnostics eval engine.
 
-`eval_run_summaries` is the canonical aggregate table for one completed or
-in-progress eval run.
-
-Its role is to support:
-
-- dashboard listing of eval runs;
-- comparison between eval runs;
-- aggregate quality metrics for a whole batch;
-- aggregate token and cost totals;
-- report metadata materialization.
+`eval_run_summaries` is the canonical aggregate row for one eval run.
 
 ## 2) Granularity
 
-One `eval_run_summaries` row represents exactly one `eval_run_id`.
-
-The table must not mix multiple eval runs into one row.
+One row represents exactly one `eval_run_id`.
 
 ## 3) Required Metadata Fields
 
-Each row must contain at least:
+Each row contains at least:
 
 - `eval_run_id`
 - `run_type`
@@ -33,18 +22,31 @@ Each row must contain at least:
 - `iterations_evaluated_count`
 - `judge_provider`
 - `judge_model`
-- `created_at`
-- `updated_at`
 
-## 4) Required Quality Aggregate Fields
+## 4) Runtime Configuration Rollups
 
-Each row must contain at least:
+The current row also preserves runtime-facing rollups including:
+
+- `runtime_query_structuring_model`
+- `runtime_observation_boundary_resolver_model`
+- `runtime_observation_extraction_model`
+- `runtime_llm_structured_generation_model`
+- prompt-version fields for the same runtime stages
+
+These fields are part of the current contract because the report and comparison
+surfaces use them directly.
+
+## 5) Quality Aggregate Fields
+
+The current row contains at least:
 
 - `usable_first_response_rate`
-- `usable_continuation_response_rate`
 - `query_structuring_judge_score`
 - `evidence_pack_judge_score`
 - `final_answer_judge_score`
+- `query_structuring_no_hard_fail_rate`
+- `evidence_pack_no_hard_fail_rate`
+- `final_answer_no_hard_fail_rate`
 - `query_structuring_strict_pass_rate`
 - `evidence_pack_strict_pass_rate`
 - `final_answer_strict_pass_rate`
@@ -54,68 +56,55 @@ Each row must contain at least:
 - `bad_final_due_to_evidence_rate`
 - `bad_final_with_good_query_and_evidence_rate`
 
-When continuation suites are enabled, the row must additionally preserve
-continuation-oriented aggregates sufficient to distinguish:
+## 6) Continuation Aggregate Fields
 
-- observation-understanding degradation;
-- diagnostic-update degradation;
-- continuation-response usability degradation.
+When continuation iterations are present, the row also stores optional
+continuation aggregates including:
 
-The exact formulas are defined by the aggregate spec.
+- `usable_continuation_response_rate`
+- `continuation_update_judge_score`
+- `continuation_input_judge_score`
+- `continuation_update_no_hard_fail_rate`
+- `continuation_update_strict_pass_rate`
+- `continuation_input_no_hard_fail_rate`
+- `continuation_input_strict_pass_rate`
+- per-suite continuation score averages
 
-Run-level quality aggregation must not collapse initial and continuation
-iterations into one usability signal only.
+These remain `NULL` when no continuation iterations were evaluated.
 
-## 5) Required Usage And Cost Fields
+## 7) Runtime Gold And Retrieval Aggregates
 
-Each row must contain at least:
+The current row also stores runtime aggregate diagnostics including:
 
-- `runtime_prompt_tokens`
-- `runtime_completion_tokens`
-- `runtime_total_tokens`
-- `runtime_total_cost_usd`
-- `judge_prompt_tokens`
-- `judge_completion_tokens`
-- `judge_total_tokens`
-- `judge_total_cost_usd`
-- `run_total_tokens`
-- `run_total_cost_usd`
+- query-structuring core success rate;
+- query-structuring macro precision/recall style metrics;
+- grounded strict recall;
+- retrieval mean nDCG;
+- strict and soft retrieval recall success rates;
+- retrieval zero-hit rate;
+- branch-level strict recall aggregates for candidate cards, primary incident,
+  alternative incident, and theory evidence.
 
-These fields are required because eval-run comparison dashboards explicitly
-depend on aggregated token and cost totals.
+These are part of the current run-summary contract, not merely dashboard-only
+derived values.
 
-## 6) Report-Facing Metadata
+## 8) Usage And Cost Fields
 
-The row should also preserve enough report-facing metadata to support concise
-run comparisons, including where available:
+The row contains:
 
-- suite version map;
-- runtime model metadata rolled up from the run scope;
-- optional golden dataset identifier or batch label.
+- runtime token/cost totals;
+- judge token/cost totals;
+- run-total token/cost totals;
+- stage-level runtime token/cost totals for major runtime model stages.
 
-The MVP does not require component-comparison-heavy metadata beyond what is
-useful for the current project.
+## 9) Report-Facing Metadata
 
-## 7) Write Rule
+The current row also stores:
 
-The summary builder must upsert one row for the eval run whenever it computes a
-fresh consistent run-level aggregate state.
+- `suite_versions` as JSON;
+- runtime metadata needed by `run_report.md`.
 
-At terminal success, the row must represent the final aggregate state for the
-completed eval run.
+Current implementation note:
 
-The row must remain resumable and idempotent for the same `eval_run_id`.
-
-## 8) Dashboard Role
-
-`eval_run_summaries` is the primary relational source for:
-
-- listing eval runs by time range;
-- comparing eval runs on quality and usage;
-- showing total runtime usage, judge usage, and run totals.
-
-It is not a replacement for:
-
-- raw `judge_results`;
-- raw `judge_llm_calls`;
-- markdown `run_report.md`.
+- `suite_versions` currently reflects enabled-suite metadata and should not yet
+  be interpreted as a perfectly audited prompt-version record.

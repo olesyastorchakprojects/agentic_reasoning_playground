@@ -1,7 +1,7 @@
 ## 1) Purpose
 
-This document defines the module contract for the eval crate's `snapshot`
-module.
+This document defines the current module contract for the eval crate's
+`snapshot` module.
 
 This module is the adapter boundary between runtime-owned `RunState` and the
 eval-owned `DiagnosticEvalIterationSnapshot`.
@@ -11,89 +11,108 @@ eval-owned `DiagnosticEvalIterationSnapshot`.
 The snapshot module owns:
 
 - selecting the target iteration from a `RunState`;
-- reading finished step outputs from that iteration;
-- validating required fields for MVP snapshot construction;
+- reading required finished step outputs from that iteration;
+- classifying the iteration as `initial` or `continuation`;
 - building `DiagnosticEvalIterationSnapshot`;
-- exposing suite-payload helper views derived from the snapshot.
+- recovering prior-iteration context for continuation subjects;
+- projecting runtime token/cost usage into eval-owned summary structures.
 
-## 3) Non-Responsibilities
+## 3) Public Types
 
-The snapshot module must not own:
-
-- SQL persistence;
-- judge transport;
-- orchestration state transitions;
-- markdown rendering.
-
-## 4) Public Types
-
-The module should expose at least:
+The current public boundary includes at least:
 
 - `DiagnosticEvalIterationSnapshot`
 - `SnapshotBuildError`
-- `TargetIterationSelector`
+- `SnapshotIterationSelector`
+- `RuntimeTokenUsageSummary`
+- `RuntimeLlmStageUsageSummary`
 
-It may also expose narrower payload-builder helper types if that keeps the
-judge module simpler.
+## 4) Target Selection
 
-## 5) Public Interfaces
+The current selector set is:
 
-The module should expose one primary build entrypoint conceptually equivalent
-to:
+- `LastCompletedIteration`
+- `ExactIteration(iteration_id)`
+
+The primary build boundary is equivalent to:
 
 ```rust
 fn build_snapshot(
     run_state: &RunState,
-    selector: &TargetIterationSelector,
+    selector: SnapshotIterationSelector,
 ) -> Result<DiagnosticEvalIterationSnapshot, SnapshotBuildError>
 ```
 
-The implementation may also expose:
+## 5) Iteration-Kind Detection
 
-- `select_target_iteration(...)`
-- `build_eval_context(...)`
+The current implementation classifies an iteration as `continuation` when the
+iteration contains a finished `ObservationBoundaryResolver` step record.
 
-## 6) Input Boundary
+Otherwise the iteration is classified as `initial`.
 
-The snapshot module consumes runtime-domain types from
-`distributed_diagnostics`, especially:
+This detection rule is part of the current snapshot contract.
 
-- `RunState`
-- `RunIteration`
-- `StepKind`
-- `StepResultEnvelope`
+## 6) Snapshot Shape
 
-It should not require eval-owned SQL rows to build the snapshot.
+The current snapshot contains at least:
 
-## 7) Output Boundary
+- run identity and timestamps;
+- `user_request`;
+- optional `golden_question`;
+- `normalized_user_request`;
+- retrieval and prompt-context outputs;
+- final validated response output;
+- optional continuation-only outputs:
+  - `observation_boundary_resolver_output`
+  - `observation_extraction_output`
+- optional `previous_snapshot`;
+- optional runtime `config_snapshot`;
+- aggregated runtime token/cost usage.
 
-The snapshot output must be stable enough that:
+## 7) Continuation Semantics
 
-- judge suites consume snapshot-derived values rather than raw `RunState`;
-- future additions to runtime internals do not force widespread judge code
-  churn.
+For continuation iterations, snapshot construction must additionally:
 
-The snapshot is therefore the eval crate's main in-memory boundary type.
+- find the directly preceding completed iteration in the same run;
+- recursively build the previous snapshot for that iteration;
+- require continuation-specific step outputs;
+- use `DiagnosticUpdatePromptContextAssembly` output instead of the initial
+  prompt-context assembly path.
 
-## 8) Dependency Rules
+Current implementation detail:
 
-The snapshot module may depend on:
+- for continuation iterations, `query_structuring_output` is taken from the
+  previous completed snapshot rather than recomputed from the current
+  continuation iteration.
 
-- runtime-domain types from `distributed_diagnostics`
+## 8) Runtime Usage Projection
 
-It should not depend on:
+The snapshot module is currently the owner of projected runtime usage fields
+used later by summary materialization.
 
-- `storage`
-- `orchestrator`
-- `report`
+The projection includes stage-level usage for:
 
-The `judge` module may depend on `snapshot`, not the other way around.
+- `query_structuring`
+- `observation_boundary_resolver`
+- `observation_extraction`
+- `llm_structured_generation`
+- `total`
+
+Current continuation rule:
+
+- continuation snapshots record zero token usage for `query_structuring` in the
+  current iteration, because the current iteration reuses the prior structured
+  query rather than executing a fresh query-structuring step.
 
 ## 9) Failure Semantics
 
-If required runtime step outputs are missing or malformed for the targeted
-subject, the snapshot module must fail explicitly with structured error
-information.
+Snapshot construction must fail explicitly when:
 
-It must not fabricate partial successful snapshots for required MVP suites.
+- no completed iteration exists for `LastCompletedIteration`;
+- the exact requested iteration does not exist;
+- a continuation iteration has no previous completed iteration;
+- a required step is missing;
+- a required step failed;
+- a step produced an unexpected payload type.
 
+The module must not fabricate partial successful snapshots for required suites.

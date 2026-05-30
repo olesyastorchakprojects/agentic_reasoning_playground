@@ -1,121 +1,111 @@
 ## 1) Purpose
 
-This document defines the observability contract for the new diagnostics eval
-engine.
+This document defines the current observability contract for the diagnostics
+eval engine.
 
-The eval engine must emit traces and operator-facing logs that make long-running
-batch judge work understandable without dumping full payloads into telemetry.
+The eval engine emits OTLP traces and lightweight console-visible progress so
+that long-running batch work can be reconstructed and debugged.
 
 ## 2) Required Signal Types
 
-For the current MVP the eval engine must emit:
+The current required signal types are:
 
 - traces through OTLP;
-- operator-facing console logs.
+- console-visible progress output.
 
-Metrics may be added later, but traces and logs are required now.
+The current implementation does not expose a separate metrics pipeline in eval
+config.
 
-## 3) Trace Goals
+## 3) Required Span Hierarchy
 
-Eval traces exist to support exactly these goals:
-
-- reconstruct one eval run end-to-end;
-- show which runtime run / iteration / suite is currently in progress;
-- show where the engine is blocked or failing;
-- support debugging of resume behavior and partial completion.
-
-## 4) Required Span Hierarchy
-
-The required span hierarchy is:
+The current span hierarchy is:
 
 - `eval.run`
-  - one root span per eval run
 - `eval.judge_request_suites.subject`
-  - one child span per evaluated subject
 - `eval.judge_request_suites.suite`
-  - one child span per executed suite call
 - `eval.build_eval_summary`
-  - one child span for summary/report construction
 
-## 5) Required Span Attributes
+The spans are emitted with OpenInference-compatible attributes.
 
-### 5.1) On `eval.run`
+## 4) Current Span Attribute Names
 
-Required attributes:
+### 4.1) `eval.run`
 
-- `eval_run_id`
-- `run_type`
-- `status`
-- `runtime_run_count`
-- `judge_model`
+Current attributes include:
 
-### 5.2) On `eval.judge_request_suites.subject`
+- `openinference.span.kind = "CHAIN"`
+- `eval.run_id`
+- `eval.run_type`
+- `eval.judge_model`
+- `eval.status`
+- `eval.runtime_run_count`
+- `eval.iterations_evaluated_count`
+- `error.type`
+- `error.message`
 
-Required attributes:
+### 4.2) `eval.judge_request_suites.subject`
 
-- `eval_run_id`
-- `runtime_run_id`
-- `iteration_id`
-- `subject_status`
+Current attributes include:
 
-### 5.3) On `eval.judge_request_suites.suite`
+- `openinference.span.kind = "CHAIN"`
+- `eval.run_id`
+- `eval.runtime_run_id`
+- `eval.iteration_id`
+- `eval.subject_status`
+- `error.type`
+- `error.message`
 
-Required attributes:
+### 4.3) `eval.judge_request_suites.suite`
 
-- `eval_run_id`
-- `runtime_run_id`
-- `iteration_id`
-- `suite_name`
-- `suite_category`
-- `suite_scope`
-- `judge_model`
+Current attributes include:
 
-If available after call completion, the suite span should also record:
+- `openinference.span.kind = "LLM"`
+- `eval.run_id`
+- `eval.runtime_run_id`
+- `eval.iteration_id`
+- `eval.suite_name`
+- `eval.suite_category`
+- `eval.suite_scope`
+- `llm.model_name`
+- `llm.token_count.prompt`
+- `llm.token_count.completion`
+- `llm.token_count.total`
+- `eval.total_cost_usd`
+- `eval.score`
+- `input.value`
+- `input.mime_type`
+- `output.value`
+- `output.mime_type`
+- `error.type`
+- `error.message`
 
-- `prompt_tokens`
-- `completion_tokens`
-- `total_tokens`
-- `total_cost_usd`
+### 4.4) `eval.build_eval_summary`
 
-### 5.4) On `eval.build_eval_summary`
+Current attributes include:
 
-Required attributes:
+- `openinference.span.kind = "CHAIN"`
+- `eval.run_id`
+- `eval.runtime_run_count`
+- `eval.iterations_evaluated_count`
+- `error.type`
+- `error.message`
 
-- `eval_run_id`
-- `runtime_run_count`
-- `iterations_evaluated_count`
+## 5) Runtime Initialization
 
-## 6) Console Logging Goals
+Current observability initialization behavior:
 
-Console logs exist to:
+- tracing is enabled only when `observability.tracing_enabled = true`;
+- service name comes from config;
+- OTLP endpoint comes from resolved observability settings;
+- the tracer provider uses `AlwaysOn` sampling;
+- batch export scheduled delay is currently `250ms`;
+- the runtime force-flushes on process completion and shuts down on drop.
 
-- keep the CLI visibly alive during long-running eval work;
-- show which eval run, runtime run, iteration, or suite is currently active;
-- show whether the engine is selecting work, waiting on the judge model,
-  writing results, building summaries, or failing.
+## 6) Sensitive Data Note
 
-## 7) Required Console Events
+The current implementation records prompt text and model output content into
+suite-span attributes through `input.value` and `output.value`.
 
-At minimum the engine must log:
-
-- eval run start;
-- eval run completion;
-- eval run failure;
-- subject evaluation start;
-- subject evaluation completion;
-- suite execution start;
-- suite execution completion;
-- summary build start;
-- summary build completion.
-
-## 8) Sensitive Data Rule
-
-The following must not be written into trace attributes:
-
-- full raw prompt payloads;
-- full snapshots;
-- full raw judge responses;
-- full `RunState` dumps.
-
-Those artifacts may be preserved in storage where required, but not as broad
-trace attribute payloads.
+This is the current implementation truth and therefore must be documented here,
+even though a stricter future policy may choose to reduce payload visibility in
+trace attributes.

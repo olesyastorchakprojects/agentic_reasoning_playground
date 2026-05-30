@@ -1,173 +1,167 @@
 ## 1) Purpose
 
-`eval_orchestrator` coordinates one complete diagnostics eval run.
+`eval_orchestrator` coordinates the eval-owned execution stages for one
+diagnostics eval run.
 
-It owns:
+It currently owns:
 
-- eval-run bootstrap;
-- manifest lifecycle;
-- frozen runtime-run scope creation;
+- new-run bootstrap;
+- frozen subject discovery handoff through storage;
 - eval processing-state bootstrap;
-- stage invocation in pipeline order;
-- stage promotion between eval-owned stages;
-- run completion detection;
-- final report materialization boundary.
+- one-subject stage execution;
+- stage draining for the current eval run;
+- subject promotion from judge stage to summary stage.
 
-It must not:
+Final CLI-level report writing and run-summary refresh currently happen outside
+the orchestrator in `main.rs`.
 
-- execute suite prompts inline;
-- normalize judge results inline;
-- build logical iteration snapshots inline;
-- mutate runtime-owned `RunState`.
+## 2) Current Public Interface
 
-## 2) Public Interface
+The current orchestrator exposes stage-oriented methods rather than one single
+`run_eval_orchestrator(...)` entrypoint.
 
-The orchestrator must expose one top-level eval-run entrypoint.
+The important current boundaries are equivalent in ownership to:
 
-The canonical current-version boundary should be equivalent in ownership to:
+- `bootstrap_new_eval_run() -> BootstrapResult`
+- `drain_judge_request_suites_for_eval_run(eval_run_id, ...) -> JudgeDrainResult`
+- `drain_build_eval_summary_for_eval_run(eval_run_id, ...) -> SummaryDrainResult`
 
-```python
-run_eval_orchestrator(params: EvalOrchestratorParams) -> str
-```
+## 3) Required Parameters And Dependencies
 
-The returned string is the `eval_run_id` of the completed or resumed eval run.
+The orchestrator is constructed from:
 
-## 3) Required Parameters
+- fully resolved `EvalSettings`;
+- an eval-owned storage implementation.
 
-The orchestrator must receive explicit parameters including at least:
+Its stage methods additionally receive:
 
-- `postgres_url`
-- `run_type`
-- `eval_config_path`
-- `resume_eval_run_id`
+- `eval_run_id`
+- runtime-run loader
+- suite catalog
+- judge client
 
-The orchestrator must resolve judge runtime settings from the eval config and
-must write the effective judge metadata into the run manifest.
+depending on the stage.
 
 ## 4) Bootstrap Contract
 
 At bootstrap for a new eval run, the orchestrator must:
 
-1. discover eligible runtime runs for batch evaluation;
-2. derive the target iteration subject for each runtime run;
-3. freeze the resulting subject scope;
-4. generate one `eval_run_id`;
-5. create the initial manifest;
-6. create the corresponding `eval_processing_state` rows.
+1. generate one `eval_run_id`;
+2. ask storage to discover eligible frozen subjects;
+3. fail if no eligible subjects exist;
+4. build the initial manifest view;
+5. create the artifact directory;
+6. write the initial `run_manifest.json`;
+7. bootstrap the corresponding `eval_processing_state` rows.
 
-The frozen scope must be persisted in the manifest as
-`run_scope_runtime_run_ids` and `run_scope_subjects`.
+The returned `BootstrapResult` must include at least:
 
-## 5) Runtime-Run Eligibility
+- `eval_run_id`
+- `started_at`
+- `artifact_dir`
+- `manifest_path`
+- `runtime_run_count`
+- `subject_count`
 
-For the current MVP, the orchestrator must discover eligible runtime runs from
-the completed golden-dataset batch outputs.
+## 5) Discovery Semantics
 
-The exact SQL/storage source may evolve, but the semantic rule is:
+The current frozen-scope discovery behavior is storage-defined and must be
+reflected accurately here.
 
-- a runtime run is eligible for a new eval run only if it is a completed
-  golden-dataset runtime run with the required final validated output for the
-  target iteration;
-- and it has not already been absorbed into another eval run's frozen scope.
+Current implementation semantics:
 
-The orchestrator must not create overlapping batch membership silently.
+- discovery starts from runtime runs that contain at least one iteration with a
+  finished `ResponseValidationAndNormalization` result;
+- runtime runs are ordered by runtime-run creation time descending, then
+  `runtime_run_id` descending;
+- the optional limit applies at runtime-run selection time;
+- after selecting eligible runtime runs, all completed iterations inside those
+  runs that satisfy the same final-output condition become frozen eval subjects.
 
-## 5.1) Target Iteration Rule
+Important note:
 
-For the current MVP, the orchestrator must select exactly one target iteration
-per runtime run:
-
-- default selector: the last completed iteration in the runtime run;
-- the selected `(runtime_run_id, iteration_id)` pairs must be frozen into the
-  manifest as `run_scope_subjects`;
-- resume must reuse this exact subject scope rather than recomputing it from
-  mutated runtime state.
+- this differs from the older one-target-iteration-per-run design;
+- the current implementation freezes one or more iteration subjects per
+  selected runtime run.
 
 ## 6) Resume Contract
 
-When `resume_eval_run_id` is provided, the orchestrator must:
+The current implementation re-enters stage draining through the CLI, using the
+existing `eval_run_id`.
 
-- load the existing manifest;
-- require that its status is `running` or `failed`;
-- reuse the exact frozen runtime-run scope and frozen subject scope from the
-  manifest;
-- reuse the same `eval_run_id`;
-- reuse existing `eval_processing_state` rows for that eval run;
-- re-enter the stage pipeline without redefining batch membership.
+Required semantics:
 
-The orchestrator must not add newly created runtime runs to a resumed eval run.
+- resume must reuse the same `eval_run_id`;
+- resume must reuse existing `eval_processing_state` rows;
+- resume must not bootstrap a new frozen scope;
+- stage drains must operate only on subjects already belonging to that eval run.
+
+The current orchestrator does not itself load or rewrite the manifest before
+resume; that work is currently coordinated by the CLI.
 
 ## 7) Stage Order
 
-The current MVP stage order is:
+The current stage order remains:
 
 1. `judge_request_suites`
 2. `build_eval_summary`
 
-The orchestrator must invoke stages in that order and must not skip an
-intermediate stage in a normal run.
+Promotion from the first stage to the second is orchestrator-owned.
 
 ## 8) Stage Drain Rule
 
-The orchestrator may invoke a stage repeatedly until no eligible work remains
-for that stage in the current eval run.
+The orchestrator may invoke a stage repeatedly until storage returns no next
+eligible subject for that stage.
 
-For the current MVP, no work remains for a stage iff there are no
-`eval_processing_state` rows for the current `eval_run_id` and `current_stage`
-with:
+For the current implementation, a subject is considered stage-eligible when:
 
-- `status = pending`
-- or `status = running`
-- or `status = failed`
+- `current_stage` matches the requested stage;
+- `status` is one of `pending`, `running`, or `failed`;
+- `attempt_count` is below the stage retry ceiling.
 
-that still require work after downstream idempotency checks.
+Current retry ceiling:
 
-## 9) Promotion Rule
+- `MAX_ATTEMPTS_PER_STAGE = 2`
 
-After a subject reaches:
+## 9) Judge Stage Promotion Rule
 
-- `current_stage = judge_request_suites`
-- `status = completed`
-
-the orchestrator must promote that subject to:
+After all required applicable suites for a subject are complete, the
+orchestrator promotes that subject to:
 
 - `current_stage = build_eval_summary`
 - `status = pending`
+- `attempt_count = 0`
 
-unless that subject has already been promoted or already completed later-stage
-work in a previous partial attempt.
+This promotion is keyed by the same frozen subject identity:
 
-Promotion must respect the same frozen subject identity.
+- `eval_run_id`
+- `runtime_run_id`
+- `iteration_id`
 
-## 10) Run Completion Rule
+## 10) Subject Failure Handling
 
-The orchestrator may mark the eval run completed only when:
+During stage execution:
 
-- every subject in the frozen scope has reached
-  `current_stage = build_eval_summary` and `status = completed`;
-- final eval-run summaries have been materialized successfully;
-- `run_report.md` has been written successfully from the final frozen-scope
-  aggregate state;
-- the manifest has been updated to terminal success.
+- subject-preparation failures mark the subject `failed` in the current stage;
+- judge execution failures mark the subject `failed` in the current stage;
+- stage drains continue to the next subject unless a non-stage-local storage or
+  manifest failure aborts the run.
 
-## 11) Failure Boundary
+This means a drain result may contain both completed and failed subject counts
+for the same pass.
 
-The orchestrator must expose a clear run-level failure boundary.
+## 11) Current Completion Boundary
 
-When the orchestrator exits through terminal failure:
+The orchestrator currently owns subject-level completion for both stages, but
+run-level completion is still finalized outside the orchestrator.
 
-- the manifest must be updated to `status = failed`;
-- `last_error` must be non-empty;
-- partial downstream artifacts already written must remain preserved;
-- the eval run must remain resumable if the underlying failure mode is
-  operationally recoverable.
+Today the end-to-end success path is:
 
-## 12) Required MVP Responsibilities
+1. orchestrator bootstraps a new eval run;
+2. orchestrator drains `judge_request_suites`;
+3. orchestrator drains `build_eval_summary`;
+4. CLI rebuilds the run-level summary row;
+5. CLI writes `run_report.md`.
 
-The current MVP orchestrator must also own:
-
-- writing `run_manifest.json`;
-- validating its structure before writing;
-- writing `run_report.md` after summary completion;
-- preserving token/cost visibility through the summary/report layer;
-- keeping batch membership reproducible and inspectable.
+This is the current source of truth and should be reflected in the spec even if
+future refactoring consolidates finalization back into the orchestrator.

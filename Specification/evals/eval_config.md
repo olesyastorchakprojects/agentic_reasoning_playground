@@ -1,7 +1,7 @@
 ## 1) Purpose
 
-This document defines the configuration contract for the new diagnostics eval
-engine crate.
+This document defines the current configuration contract for the diagnostics
+eval engine crate.
 
 The eval config is the canonical file-based source for:
 
@@ -9,33 +9,24 @@ The eval config is the canonical file-based source for:
 - storage connectivity;
 - suite selection;
 - artifact output settings;
-- offline batch-eval behavior defaults.
-
-The config must be stable enough for reproducible eval runs and explicit enough
-to support resume and report auditability.
+- offline batch-eval behavior defaults;
+- eval-engine observability settings.
 
 ## 2) Configuration Boundary
 
-The eval engine must use one dedicated config file rather than reusing the
-runtime's `runtime.toml` directly.
+The eval engine uses one dedicated config file rather than reusing the runtime's
+`runtime.toml` directly.
 
-Reasoning:
+The config loader is also responsible for:
 
-- the eval crate has different concerns from the runtime crate;
-- eval settings should evolve independently of request-execution settings;
-- the same runtime outputs may later be evaluated by different judge settings
-  without mutating runtime configuration.
-
-The eval config may still reference runtime-owned assets such as:
-
-- suite catalog paths;
-- prompt files;
-- report artifact roots;
-- shared database connection sources.
+- resolving env-backed secrets and endpoints;
+- applying CLI overrides;
+- resolving relative paths against the config file directory;
+- validating that required fields are non-empty.
 
 ## 3) Required Top-Level Sections
 
-The current MVP config should contain at least:
+The current config contains at least:
 
 - `[eval]`
 - `[judge]`
@@ -44,19 +35,16 @@ The current MVP config should contain at least:
 - `[suites]`
 - `[observability]`
 
-Optional sections may be added later, but these are the current contract
-minimum.
-
 ## 4) `[eval]` Section
 
 The `[eval]` section defines batch-level engine behavior.
 
-It must contain at least:
+Required fields:
 
 - `config_version`
 - `run_type`
 
-It may also contain:
+Optional fields:
 
 - `mode`
 - `resume_eval_run_id`
@@ -65,36 +53,35 @@ It may also contain:
 
 ### 4.1) `config_version`
 
-- required
-- string
-- used only for config evolution and explicit versioning
+- required string;
+- used for explicit config evolution.
 
 ### 4.2) `run_type`
 
-- required
-- string
-- identifies the semantic batch type for the eval run, such as:
-  - `golden_dataset`
-  - `offline_validation`
-  - `local_dev_eval`
+- required non-empty string;
+- identifies the semantic batch type for the eval run.
 
 ### 4.3) `mode`
 
-Recommended MVP default:
+Current default:
 
 - `batch_golden`
 
-This field exists to leave room for later modes such as:
+This field remains forward-compatible with later modes, but the current code
+still operates as a batch eval engine.
 
-- `single_run`
-- `adhoc_run_id_list`
+### 4.4) `max_runtime_runs_per_new_eval_run`
+
+- optional integer;
+- limits new-run bootstrap discovery;
+- may be overridden by CLI `--limit`.
 
 ## 5) `[judge]` Section
 
 The `[judge]` section defines model transport and pricing inputs for judge
 calls.
 
-It must contain at least:
+Required fields:
 
 - `provider`
 - `model_name`
@@ -102,22 +89,17 @@ It must contain at least:
 - `input_cost_per_million_tokens`
 - `output_cost_per_million_tokens`
 
-It should also contain one provider-specific subsection for the active
-transport.
+### 5.1) Supported Provider Set
 
-This mirrors the useful parts of the previous eval engine config while staying
-small for MVP.
+Current implementation supports exactly:
 
-### 5.1) Supported MVP Providers
-
-The config should support at least:
-
-- `ollama`
 - `together`
 
-### 5.2) Provider-Specific Subsections
+If another provider name is supplied, config loading must fail early.
 
-Recommended pattern:
+### 5.2) `[judge.together]`
+
+The active provider-specific subsection is:
 
 ```toml
 [judge]
@@ -129,177 +111,117 @@ output_cost_per_million_tokens = 0.20
 
 [judge.together]
 base_url = "https://api.together.xyz"
+api_key_env = "TOGETHER_API_KEY"
 timeout_sec = 120
 retry_max_attempts = 3
 retry_backoff = "exponential"
 ```
 
-For `ollama`, the subsection should similarly include:
+Required semantic behavior:
 
-- `base_url`
-- `timeout_sec`
-- retry settings
-
-### 5.3) Secrets
-
-Provider secrets such as API keys must not be committed into the TOML file.
-
-They should be sourced from environment variables and resolved during config
-loading.
-
-The config contract must document which environment variables are required for
-which providers.
+- `api_key` must be resolved from `api_key_env`;
+- `retry_max_attempts` defaults to `3`;
+- `retry_backoff` defaults to `exponential`.
 
 ## 6) `[postgres]` Section
 
-The `[postgres]` section defines the eval engine's database connection source.
-
-It must contain at least:
+Required fields:
 
 - `url_env`
 
-It may optionally allow:
+Optional fields:
 
 - `url`
 
-Recommended rule:
+Resolution rules:
 
-- prefer environment-driven URL resolution for local and CI safety;
-- allow explicit `url` only for controlled local development if desired.
-
-Recommended shape:
-
-```toml
-[postgres]
-url_env = "POSTGRES_URL"
-```
+- if explicit `url` is present, it wins;
+- otherwise the loader resolves `url_env`;
+- missing env vars must fail config loading.
 
 ## 7) `[artifacts]` Section
 
-The `[artifacts]` section defines where eval-run artifacts are written.
-
-It must contain at least:
+Required fields:
 
 - `root_dir`
 
-Recommended MVP default:
+Optional fields:
 
-- `Evidence/evals/runs`
+- `write_manifest`
+- `write_markdown_report`
 
-It may also contain:
+Current defaults:
 
-- `write_markdown_report = true`
 - `write_manifest = true`
+- `write_markdown_report = true`
 
-The current MVP expects both manifest and markdown report output.
+Path semantics:
+
+- artifact paths are resolved relative to the config file directory unless
+  overridden by CLI.
 
 ## 8) `[suites]` Section
 
-The `[suites]` section defines suite-catalog loading and enablement.
-
-It must contain at least:
+Required fields:
 
 - `catalog_path`
 
-It may also contain:
+Optional fields:
 
 - `enabled`
 - `required_for_mvp_only`
 
-Recommended shape:
+Resolution rules:
 
-```toml
-[suites]
-catalog_path = "Specification/evals/prompts.json"
-required_for_mvp_only = true
-enabled = [
-  "query_structuring_field_boundary_correctness",
-  "query_structuring_grounding_conservatism",
-  "evidence_pack_role_fit",
-  "evidence_pack_sufficiency",
-  "final_no_root_cause_claim",
-  "final_first_check_discriminates",
-  "final_hypothesis_source_alignment",
-  "final_alternative_context_handling",
-  "final_result_interpretation_usefulness",
-]
-```
-
-If `required_for_mvp_only = true`, the implementation may validate that the
-enabled set matches the required suite set from the catalog.
+- `catalog_path` is resolved relative to the config file directory;
+- the path must exist or config loading fails;
+- `enabled` may be overridden by repeatable CLI `--enabled-suite`;
+- empty suite names are invalid.
 
 ## 9) `[observability]` Section
 
-The eval engine should have its own observability subsection even if it reuses
-shared observability infrastructure patterns.
-
-It should contain at least:
+Current required field set:
 
 - `tracing_enabled`
-- `metrics_enabled`
 
-It may also contain:
+Current optional fields:
 
 - `service_name`
-- `trace_batch_scheduled_delay_ms`
-- `metrics_export_interval_ms`
+- `tracing_endpoint`
+- `tracing_endpoint_env`
 
-The intent is to keep eval-engine observability configurable without coupling
-it to runtime request-execution settings.
+Current defaults:
 
-## 10) Configuration Loading Rules
+- `service_name = "distributed_diagnostics_eval"`
+- `tracing_endpoint_env = "TRACING_ENDPOINT"`
+- if neither explicit endpoint nor env var is present, fallback endpoint is
+  `http://localhost:4317`
+
+The current config contract does not include a separate metrics subsection.
+
+## 10) Loader Behavior
 
 The loader must:
 
 1. read the TOML file;
-2. resolve environment-backed secrets and connection values;
-3. validate provider-specific required fields;
-4. validate suite-catalog path existence;
-5. return a fully resolved typed settings struct.
+2. load `.env` when present;
+3. resolve CLI overrides;
+4. resolve relative paths against the config file directory;
+5. resolve env-backed secrets and connection values;
+6. validate provider-specific required fields;
+7. validate non-empty strings for required fields;
+8. validate suite-catalog path existence;
+9. return a fully resolved typed settings struct.
 
-Configuration loading must fail early if:
+## 11) Effective Precedence
 
-- the provider is unknown;
-- a required environment variable is missing;
-- the suite catalog path is invalid;
-- a required section is missing.
+The effective precedence order is:
 
-## 11) Example MVP Config
+1. explicit CLI overrides;
+2. config-file values;
+3. documented defaults;
+4. env-backed fallback resolution where explicitly defined by field contract.
 
-```toml
-[eval]
-config_version = "v1"
-run_type = "golden_dataset"
-mode = "batch_golden"
-
-[judge]
-provider = "together"
-model_name = "openai/gpt-oss-20b"
-tokenizer_source = "Qwen/Qwen2.5-1.5B-Instruct"
-input_cost_per_million_tokens = 0.05
-output_cost_per_million_tokens = 0.20
-
-[judge.together]
-base_url = "https://api.together.xyz"
-timeout_sec = 120
-retry_max_attempts = 3
-retry_backoff = "exponential"
-
-[postgres]
-url_env = "POSTGRES_URL"
-
-[artifacts]
-root_dir = "Evidence/evals/runs"
-write_manifest = true
-write_markdown_report = true
-
-[suites]
-catalog_path = "Specification/evals/prompts.json"
-required_for_mvp_only = true
-
-[observability]
-tracing_enabled = true
-metrics_enabled = true
-service_name = "distributed_diagnostics_eval"
-```
-
+For resume, this precedence still applies to operational settings, while frozen
+eval-run identity and subject scope remain artifact-owned rather than
+config-owned.
