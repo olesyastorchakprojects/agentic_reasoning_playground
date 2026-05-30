@@ -1,99 +1,132 @@
 ## 1) Purpose
 
-This document defines the module contract for the eval crate's `storage`
-module.
+This document defines the current module contract for the eval crate's
+`storage` module.
 
-This module is the database access boundary for eval-owned relational state.
+This module is the database access boundary for eval-owned relational state and
+the source of truth for scheduling semantics used by the current eval engine.
 
 ## 2) Responsibilities
 
 The storage module owns:
 
-- PostgreSQL connection setup used by the eval crate;
-- repository interfaces and implementations;
-- SQL row models for eval-owned tables;
-- query helpers for selection and upsert;
-- transaction boundaries where needed for eval persistence.
-
-It is the code-level home for the tables described in the storage and DDL
-specifications.
+- PostgreSQL connection setup for the eval crate;
+- row/domain types for eval-owned tables;
+- subject discovery queries;
+- processing-state bootstrap and updates;
+- FIFO-like subject selection for stage workers;
+- idempotent upserts for judge rows and summary rows;
+- list/read helpers used by CLI finalization and reporting.
 
 ## 3) Non-Responsibilities
 
 The storage module must not own:
 
-- `RunState` business interpretation;
-- judge prompt logic;
-- aggregate formulas;
-- markdown rendering;
-- CLI parsing.
+- `RunState` interpretation beyond query predicates;
+- judge prompt construction;
+- markdown formatting;
+- process-wide CLI wiring.
 
-## 4) Required Repository Areas
+## 4) Required Public Row Types
 
-The module should expose repositories or repository traits for at least:
+The current module exposes row/domain types including:
 
-- `eval_processing_state`
-- `judge_results`
-- `judge_llm_calls`
-- `eval_iteration_summaries`
-- `eval_run_summaries`
-
-It may also expose manifest artifact helpers if the implementation chooses to
-persist manifest-related metadata through storage-oriented code paths.
-
-## 5) Public Types
-
-Recommended public row/domain types include:
-
+- `EvalSubjectKey`
+- `FrozenEvalSubject`
 - `EvalProcessingStateRow`
 - `JudgeResultRow`
 - `JudgeLlmCallRow`
 - `EvalIterationSummaryRow`
 - `EvalRunSummaryRow`
 
-Recommended public repository interfaces include types or traits conceptually
-equivalent to:
+## 5) Discovery Semantics
 
-- `EvalProcessingStateRepository`
-- `JudgeResultsRepository`
-- `JudgeLlmCallsRepository`
-- `EvalIterationSummariesRepository`
-- `EvalRunSummariesRepository`
+The current storage module owns frozen-subject discovery for new eval runs.
 
-## 6) Query Ownership
+Current query semantics:
 
-The storage module owns:
+- discover runtime runs that contain at least one iteration with a finished
+  `ResponseValidationAndNormalization` result;
+- order those runtime runs by runtime-run creation time descending, then
+  `runtime_run_id` descending;
+- apply the optional limit at the runtime-run level;
+- from those selected runtime runs, return every iteration that satisfies the
+  same final-output condition as a frozen eval subject.
 
-- FIFO subject selection queries;
-- existence checks for already-satisfied suites;
-- idempotent upserts;
-- aggregate-row persistence;
-- dashboard-facing summary row persistence.
+Each discovered subject is materialized as:
 
-The orchestrator may decide when these queries are used, but it should not own
-their SQL details.
+- `eval_run_id`
+- `runtime_run_id`
+- `iteration_id`
+- `subject_received_at`
 
-## 7) Dependency Rules
+## 6) Processing-State Ownership
 
-The storage module may depend on:
+The storage module owns persistence for `eval_processing_state`, including:
 
-- `config` for postgres settings
-- shared runtime id types if needed
+- bootstrap inserts for frozen subjects;
+- next-subject selection for a stage;
+- stage/status/attempt updates;
+- ordered listing for inspection and debugging.
 
-It must not depend on:
+Current status set:
 
-- `orchestrator`
-- `report`
+- `pending`
+- `running`
+- `completed`
+- `failed`
 
-This keeps storage reusable from tests and stage workers.
+Current stage set:
 
-## 8) Testing Boundary
+- `judge_request_suites`
+- `build_eval_summary`
 
-The storage module should be testable in two layers:
+## 7) Scheduling Rule
 
-- unit tests around row mapping and query-shape helpers where practical;
-- postgres integration tests for real DDL-backed behavior.
+The current `fetch_next_subject_for_stage(...)` behavior selects the next
+eligible subject when:
 
-Because DDL already exists, storage integration tests should eventually become
-the source of truth for repo behavior.
+- `eval_run_id` matches;
+- `current_stage` matches;
+- `status` is in `pending|running|failed`;
+- `attempt_count < MAX_ATTEMPTS_PER_STAGE`.
 
+Current retry ceiling:
+
+- `MAX_ATTEMPTS_PER_STAGE = 2`
+
+Current ordering:
+
+- `subject_received_at ASC`
+- `runtime_run_id ASC`
+- `sequence_no ASC`
+- `iteration_id ASC`
+
+This is the current scheduling contract even though the bootstrap discovery
+order is descending by recency.
+
+## 8) Idempotency Rules
+
+The storage module owns idempotent writes for:
+
+- `judge_results`
+- `judge_llm_calls`
+- `eval_iteration_summaries`
+- `eval_run_summaries`
+
+Current write semantics include:
+
+- `judge_results` upsert on subject key plus `suite_name`;
+- `judge_llm_calls` insert with `ON CONFLICT (call_id) DO NOTHING`;
+- summary rows are upserted by their natural eval-owned keys.
+
+## 9) Important Current Limitation
+
+The current new-run discovery query only checks that the subject is absent from
+`eval_processing_state` for the freshly generated `eval_run_id`.
+
+That means the query does not yet fully enforce the stronger design goal of
+excluding subjects already absorbed into any other eval run.
+
+The spec should describe this as the current implementation truth rather than
+claiming stronger behavior that does not yet exist in code.
